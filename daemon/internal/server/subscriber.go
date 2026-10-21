@@ -7,6 +7,17 @@ import (
 	"github.com/zeikar/vaquita/daemon/internal/session"
 )
 
+// maxUnacked bounds the output a subscriber has been sent and not yet
+// acknowledged. A GUI acks once xterm.js has written the bytes, so this is
+// also how much can pile up in the webview's write queue, which would
+// otherwise grow without bound behind a fast program.
+const maxUnacked = 1 << 20
+
+// A replay is sent whatever the acks, as it starts with nothing
+// unacknowledged; it stays within maxUnacked only because the ring is no
+// larger. This fails to compile otherwise.
+const _ uint = maxUnacked - session.DefaultRingCap
+
 // subscriber is one connection's subscription to one session. conn, e and
 // sid are fixed; the rest is guarded by the session lock.
 //
@@ -30,16 +41,20 @@ type subscriber struct {
 	// it must not send anything more.
 	dropped bool
 	// writable is whether input and resizes from this subscriber are
-	// taken. Every subscriber is writable for now.
+	// taken; setWriter keeps it.
 	writable bool
+	// toldRO is the ro the client was last told, by live or an ro event.
+	// The pump sends an ro whenever it differs from !writable.
+	toldRO bool
 }
 
 // newSubscriber returns a subscription of c to e in generation 1 that starts
 // with a replay of nothing at offset 0, which is right for a session that has
 // not written anything yet. Subscribing to an existing session takes a
-// snapshot on top.
+// snapshot on top. It is read-only until setWriter has run with it in
+// e.subs.
 func newSubscriber(c *conn, e *entry) *subscriber {
-	return &subscriber{conn: c, e: e, sid: e.sid, gen: 1, needReplay: true, writable: true}
+	return &subscriber{conn: c, e: e, sid: e.sid, gen: 1, needReplay: true}
 }
 
 // snapshot schedules a replay of everything now in the ring. It requires the
@@ -67,6 +82,37 @@ func (e *entry) detach(sub *subscriber) {
 	sub.dropped = true
 	e.subs = slices.DeleteFunc(e.subs, func(x *subscriber) bool { return x == sub })
 	sub.conn.removeSub(sub)
+	e.setWriter()
+}
+
+// setWriter makes the earliest GUI subscriber the session's one writer, or
+// the earliest subscriber when no GUI is subscribed: two terminals must
+// never both answer the queries in the output. e.subs is in the order of
+// subscribing; setWriter runs whenever it changes, and requires the session
+// lock (or, for a session's creator, that nobody else can see the session
+// yet).
+//
+// It only sets the flags and wakes the writers: the pump tells each client,
+// so that the news is ordered with the subscription's own messages.
+func (e *entry) setWriter() {
+	var w *subscriber
+	for _, sub := range e.subs {
+		if sub.conn.client == protocol.ClientGUI {
+			w = sub
+			break
+		}
+	}
+	if w == nil && len(e.subs) > 0 {
+		w = e.subs[0]
+	}
+	for _, sub := range e.subs {
+		writable := sub == w
+		if sub.writable == writable {
+			continue
+		}
+		sub.writable = writable
+		sub.conn.wakeWriter()
+	}
 }
 
 // replay is a replay copied out of the ring, to be sent without the lock.
@@ -83,12 +129,13 @@ func (sub *subscriber) takeReplay(s *session.Session) replay {
 	out := s.Output()
 	ring := out.Ring()
 	cols, rows := s.Size()
+	sub.toldRO = !sub.writable
 	r := replay{
 		msg: protocol.Replay{T: protocol.TReplay, SID: sub.sid, Gen: sub.gen, From: sub.from, To: sub.replayTo, Cols: cols, Rows: rows},
 		// from is the ring start (pumpStep resets a subscription whose
 		// from has been evicted), which is what the prefix is for.
 		prefix: out.ReplayPrefix(),
-		live:   protocol.Live{T: protocol.TLive, SID: sub.sid, Gen: sub.gen, Off: sub.replayTo, RO: !sub.writable},
+		live:   protocol.Live{T: protocol.TLive, SID: sub.sid, Gen: sub.gen, Off: sub.replayTo, RO: sub.toldRO},
 	}
 	for off := sub.from; off < sub.replayTo; {
 		end := min(sub.replayTo, off+protocol.MaxPayload)
@@ -136,12 +183,23 @@ func (sub *subscriber) next() func(*conn) error {
 	case sub.needReplay:
 		r := sub.takeReplay(s)
 		return func(c *conn) error { return c.writeReplay(sid, r) }
+	case sub.toldRO == sub.writable:
+		// The writer has changed since the client was told. Sent here
+		// rather than queued, it can come neither before the live that
+		// first tells the client nor after the exit that ends the
+		// subscription, and changes made in between collapse into one.
+		// The acks do not hold it up.
+		sub.toldRO = !sub.writable
+		m := protocol.RO{T: protocol.TRO, SID: sid, RO: sub.toldRO}
+		return func(c *conn) error { return c.writeMessage(m) }
 	case sub.sentOff < ring.Start():
 		// Waiting for the acks, as above.
-	case sub.sentOff < ring.End():
-		// Live output goes as fast as the connection takes it; nothing yet
-		// bounds how far sentOff may run ahead of ackedOff.
-		end := min(ring.End(), sub.sentOff+protocol.MaxPayload)
+	case sub.sentOff < ring.End() && sub.sentOff-sub.ackedOff < maxUnacked:
+		// Live output stops while maxUnacked bytes are unacknowledged and
+		// the chunk is cut to stay within it; with the replay bound above,
+		// no more than maxUnacked bytes are ever unacknowledged. Only this
+		// subscriber waits; the ring goes on filling.
+		end := min(ring.End(), sub.sentOff+protocol.MaxPayload, sub.ackedOff+maxUnacked)
 		p := ring.CopyRange(sub.sentOff, end, nil)
 		sub.sentOff = end
 		gen := sub.gen

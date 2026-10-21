@@ -262,6 +262,7 @@ func (c *conn) create(m protocol.Create) {
 	e := &entry{sid: t.allocSID(), inc: newInc(), listed: make(chan struct{})}
 	sub := newSubscriber(c, e)
 	e.subs = []*subscriber{sub}
+	e.setWriter()
 	s, err := session.Start(session.Config{
 		SID:      int(e.sid),
 		Shell:    c.srv.opts.Shell,
@@ -315,6 +316,7 @@ func (c *conn) subscribe(sid uint32) {
 	sub.snapshot(s.Output().Ring())
 	e.subs = append(e.subs, sub)
 	c.addSub(sub)
+	e.setWriter()
 	c.wakeWriter()
 }
 
@@ -366,6 +368,9 @@ func (c *conn) writer(sid uint32) *subscriber {
 	writable := sub.writable
 	s.Unlock()
 	if !writable {
+		// Dropped without an error: the client has been told it is
+		// read-only, and a terminal sends input on every keystroke.
+		slog.Debug("request from a read-only subscription dropped", "sid", sid, "remote", c.remote)
 		return nil
 	}
 	return sub

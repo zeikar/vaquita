@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"maps"
+	"math"
 	"slices"
 	"testing"
 	"time"
@@ -21,6 +22,9 @@ type tclient struct {
 	lists   [][]protocol.SessionInfo // every sessions message, the hello's first
 	errs    []protocol.Error
 	streams map[uint32]*stream
+	// noAck makes it a terminal that has stopped consuming output: it acks
+	// only when the test does.
+	noAck bool
 }
 
 // stream is what a tclient has received of one session.
@@ -36,11 +40,30 @@ type stream struct {
 	lives     []protocol.Live
 	live      []byte // bytes from live frames
 	exit      *protocol.Exit
+	ended     bool   // the exit has ended the subscription
+	ro        bool   // as last told, by live or an ro event
+	ros       []bool // ro events
+}
+
+// received counts the payload bytes of every output frame, mode prefixes
+// included.
+func (st *stream) received() int {
+	n := len(st.replayed) + len(st.live)
+	for _, p := range st.prefixes {
+		n += len(p)
+	}
+	return n
 }
 
 func dialClient(t *testing.T, srv *Server) *tclient {
 	t.Helper()
-	c, list, err := client.Dial(testCtx(t), state.Endpoint{URL: srv.URL(), Token: testToken}, protocol.ClientGUI)
+	return dialKind(t, srv, protocol.ClientGUI)
+}
+
+// dialKind connects a tclient that says in its hello it is a client of kind.
+func dialKind(t *testing.T, srv *Server, kind string) *tclient {
+	t.Helper()
+	c, list, err := client.Dial(testCtx(t), state.Endpoint{URL: srv.URL(), Token: testToken}, kind)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,18 +96,63 @@ func (tc *tclient) waitFor(what string, cond func() bool) {
 	tc.t.Helper()
 	deadline := time.After(sessTimeout)
 	for !cond() {
-		select {
-		case ev, ok := <-tc.c.Events():
-			if !ok {
-				tc.t.Fatalf("connection closed while waiting for %s", what)
-			}
-			if ev.Err != nil {
-				tc.t.Fatalf("connection failed while waiting for %s: %v", what, ev.Err)
-			}
-			tc.apply(ev)
-		case <-deadline:
+		if !tc.handleNext(what, deadline) {
 			tc.t.Fatalf("no %s within %v", what, sessTimeout)
 		}
+	}
+}
+
+// handleFor handles whatever arrives within d, for tests that show nothing
+// more is sent.
+func (tc *tclient) handleFor(d time.Duration) {
+	tc.t.Helper()
+	deadline := time.After(d)
+	for tc.handleNext("the end of the wait", deadline) {
+	}
+}
+
+// handleNext handles one event, or reports false once deadline has passed.
+func (tc *tclient) handleNext(what string, deadline <-chan time.Time) bool {
+	tc.t.Helper()
+	select {
+	case ev, ok := <-tc.c.Events():
+		if !ok {
+			tc.t.Fatalf("connection closed while waiting for %s", what)
+		}
+		if ev.Err != nil {
+			tc.t.Fatalf("connection failed while waiting for %s: %v", what, ev.Err)
+		}
+		tc.apply(ev)
+		return true
+	case <-deadline:
+		return false
+	}
+}
+
+// sync returns once the daemon has handled everything tc sent before it:
+// a connection's requests are handled in order, and an unsubscribe from a
+// session that does not exist is answered. Only that answer is taken out of
+// errs.
+func (tc *tclient) sync() {
+	tc.t.Helper()
+	isSync := func(e protocol.Error) bool { return e.Code == protocol.CodeNoSession && e.SID == math.MaxUint32 }
+	if err := tc.c.Unsubscribe(math.MaxUint32); err != nil {
+		tc.t.Fatal(err)
+	}
+	tc.waitFor("answer to the sync", func() bool { return slices.ContainsFunc(tc.errs, isSync) })
+	tc.errs = slices.DeleteFunc(tc.errs, isSync)
+}
+
+// settle returns once tc, subscribed to one session, has every ro the
+// daemon decided on before the call. The ro goes out at the subscription's
+// next pump step, and before that step the writer can send control
+// messages twice: after the step under way, and at the start of its next
+// pass. Each sync is answered in a later batch than the one before, so the
+// third answer comes after the ro.
+func (tc *tclient) settle() {
+	tc.t.Helper()
+	for range 3 {
+		tc.sync()
 	}
 }
 
@@ -110,6 +178,9 @@ func (tc *tclient) apply(ev client.Event) {
 			t.Errorf("sid %d: frame type %#x with replaying %v", f.SID, f.Type, st.replaying)
 		}
 		st.off += uint64(len(f.Payload))
+		if tc.noAck {
+			return
+		}
 		if err := tc.c.Ack(f.SID, f.Gen, st.off); err != nil {
 			t.Errorf("ack: %v", err)
 		}
@@ -125,7 +196,7 @@ func (tc *tclient) apply(ev client.Event) {
 		if st.replaying {
 			t.Errorf("sid %d: %+v inside a replay", m.SID, m)
 		}
-		st.gen, st.off, st.replaying, st.prefixDue = m.Gen, m.From, true, true
+		st.gen, st.off, st.replaying, st.prefixDue, st.ended = m.Gen, m.From, true, true, false
 		st.msgs = append(st.msgs, m.T)
 		st.replays = append(st.replays, m)
 	case protocol.Live:
@@ -134,12 +205,22 @@ func (tc *tclient) apply(ev client.Event) {
 			t.Errorf("sid %d: %+v with replaying %v, prefix due %v, generation %d, offset %d", m.SID, m, st.replaying, st.prefixDue, st.gen, st.off)
 		}
 		st.replaying = false
+		st.ro = m.RO
 		st.msgs = append(st.msgs, m.T)
 		st.lives = append(st.lives, m)
+	case protocol.RO:
+		// A subscriber yet to be sent its live learns the flag from it.
+		st := tc.stream(m.SID)
+		if st.replaying || len(st.lives) == 0 || st.ended {
+			t.Errorf("sid %d: %+v outside a subscription's live output (replaying %v, ended %v)", m.SID, m, st.replaying, st.ended)
+		}
+		st.ro = m.RO
+		st.msgs = append(st.msgs, m.T)
+		st.ros = append(st.ros, m.RO)
 	case protocol.Exit:
 		st := tc.stream(m.SID)
 		st.msgs = append(st.msgs, m.T)
-		st.exit = &m
+		st.exit, st.ended = &m, true
 	default:
 		t.Errorf("unexpected message %+v", m)
 	}
@@ -164,6 +245,17 @@ func (tc *tclient) create(cmd string) uint32 {
 		return false
 	})
 	return sid
+}
+
+// subscribe subscribes to sid and waits for the live that ends the replay.
+func (tc *tclient) subscribe(sid uint32) protocol.Live {
+	tc.t.Helper()
+	n := len(tc.stream(sid).lives)
+	if err := tc.c.Subscribe(sid); err != nil {
+		tc.t.Fatal(err)
+	}
+	tc.waitFor("live", func() bool { return len(tc.stream(sid).lives) > n })
+	return tc.stream(sid).lives[n]
 }
 
 func (tc *tclient) waitLive(sid uint32, want string) {
