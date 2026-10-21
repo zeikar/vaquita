@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -29,6 +30,8 @@ type testSession struct {
 	output     chan struct{} // wakes waitOutput; cap 1
 	exit       chan exitResult
 	goroutines int // before Start
+	// atExit, when set, runs inside OnExit before the result is sent.
+	atExit atomic.Pointer[func()]
 }
 
 // startSession starts cmd as session 1 at 80x24, calling onOutput (if not
@@ -60,6 +63,9 @@ func startSession(t *testing.T, cmd string, onOutput func()) *testSession {
 		},
 		OnExit: func(code int) {
 			s := <-ready
+			if f := ts.atExit.Load(); f != nil {
+				(*f)()
+			}
 			ts.exit <- exitResult{code: code, ring: ringText(s)}
 		},
 	})
@@ -69,6 +75,17 @@ func startSession(t *testing.T, cmd string, onOutput func()) *testSession {
 	ready <- s
 	ts.Session = s
 	t.Cleanup(func() {
+		// Whatever the session started must not outlive the test, whether the
+		// test failed or it left a child running on purpose.
+		pids, _, err := SessionPIDs(s.PID())
+		if err != nil {
+			t.Errorf("scan for leftover processes: %v", err)
+		}
+		for _, pid := range pids {
+			if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+				t.Errorf("kill session member %d: %v", pid, err)
+			}
+		}
 		s.Lock()
 		exited, _ := s.State()
 		s.Unlock()
@@ -175,10 +192,10 @@ func TestSessionExitAfterOutput(t *testing.T) {
 	}
 	ts.Lock()
 	exited, code := ts.State()
-	orphans := ts.Orphans()
+	orphans, err := ts.Orphans()
 	ts.Unlock()
-	if !exited || code != 3 || orphans != nil {
-		t.Errorf("State() = %v, %d, Orphans() = %v; want true, 3, nil", exited, code, orphans)
+	if !exited || code != 3 || orphans != nil || err != nil {
+		t.Errorf("State() = %v, %d, Orphans() = %v, %v; want true, 3, nil, nil", exited, code, orphans, err)
 	}
 
 	ts.waitClosed(t)

@@ -1,3 +1,4 @@
+// Package session runs shells on PTYs; like the rest of vaquitad it is macOS-only.
 package session
 
 import (
@@ -38,9 +39,12 @@ var (
 )
 
 // scanSession lists the processes still in the PTY session whose leader has
-// pid sid. The exit goroutine calls it once, after the shell exited; nil
-// reports none.
-var scanSession func(sid int) []int
+// pid sid, and killProcedure ends them all. They are variables so that tests
+// can observe the exit path.
+var (
+	scanSession   = SessionPIDs
+	killProcedure = killSession
+)
 
 // Config describes a session to start.
 type Config struct {
@@ -59,8 +63,9 @@ type Config struct {
 	OnOutput func()
 	// OnExit is called once with the shell's exit status, or 128 plus the
 	// signal number if a signal killed it. By then the reader has reached EOF
-	// (or drainTimeout has passed), so all output is in the ring; State
-	// reports the exit and the master is still open.
+	// (or drainTimeout has passed), so all output is in the ring; a kill
+	// started by Kill has finished; State reports the exit, Orphans what is
+	// left of the PTY session, and the master is still open.
 	OnExit func(code int)
 }
 
@@ -71,8 +76,9 @@ type Config struct {
 // callers hold it while using them. Appending output to the ring happens
 // under it as well, so a consumer that reads the ring and records how far it
 // got under the lock never misses an append. OnOutput and OnExit are called
-// without the lock held and may take it. Resize takes the lock itself, so it
-// must not be called with the lock held; Write never touches it.
+// without the lock held and may take it. Resize and Kill take the lock
+// themselves, so they must not be called with the lock held; Write never
+// touches it.
 type Session struct {
 	pid      int
 	started  time.Time
@@ -90,6 +96,7 @@ type Session struct {
 	exited     bool
 	code       int
 	orphans    []int
+	orphansErr error // the scan for orphans failed
 	// killDone is closed when an in-progress kill has finished; nil when
 	// none was started.
 	killDone chan struct{}
@@ -197,8 +204,32 @@ func (s *Session) State() (exited bool, code int) { return s.exited, s.code }
 func (s *Session) Size() (cols, rows int) { return s.cols, s.rows }
 
 // Orphans lists the processes found still in the PTY session after the shell
-// exited. It requires the session lock and is nil before the exit.
-func (s *Session) Orphans() []int { return s.orphans }
+// exited and any kill had finished. It requires the session lock and is nil
+// before the exit. An error means the scan failed and the session may still
+// have members: a caller must then treat it as having orphans and keep its
+// record rather than remove it.
+func (s *Session) Orphans() ([]int, error) { return s.orphans, s.orphansErr }
+
+// Kill ends every process in the shell's PTY session, as killSession
+// describes, without blocking the caller. The exit is reported only after the
+// kill has finished, so Orphans then lists what survived it. Once the exit
+// has been reported Kill does nothing: the pids in Orphans are never
+// signalled, as they may have been reused by then.
+func (s *Session) Kill() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.exited || s.killDone != nil {
+		return
+	}
+	done := make(chan struct{})
+	s.killDone = done
+	Go("session "+strconv.Itoa(s.pid)+" kill", func() {
+		defer close(done)
+		if survivors := killProcedure(s.pid); len(survivors) > 0 {
+			slog.Warn("session: processes survived the kill", "pid", s.pid, "survivors", survivors)
+		}
+	})
+}
 
 // Write queues p as input to the PTY and never blocks: a program that stops
 // reading must not stall the caller. It fails with ErrInputOverflow when the
@@ -350,19 +381,27 @@ func (s *Session) waitExit() {
 	case <-time.After(drainTimeout):
 		slog.Warn("session: output not drained; reporting exit anyway", "pid", s.pid)
 	}
+	// A kill under way may still be SIGKILLing what the shell left behind,
+	// so the exit waits for it and scans after it. Kill decides under the
+	// lock whether the exit is reported yet, so a kill that started during
+	// the scan shows up in the re-check and is waited for in turn.
 	s.mu.Lock()
-	killDone := s.killDone
-	s.mu.Unlock()
-	if killDone != nil {
-		<-killDone
+	for {
+		killDone := s.killDone
+		s.mu.Unlock()
+		if killDone != nil {
+			<-killDone
+		}
+		orphans, _, err := scanSession(s.pid)
+		if err != nil {
+			slog.Error("session: scan for orphans", "pid", s.pid, "err", err)
+		}
+		s.mu.Lock()
+		if s.killDone == killDone {
+			s.exited, s.code, s.orphans, s.orphansErr = true, code, orphans, err
+			break
+		}
 	}
-	var orphans []int
-	if scanSession != nil {
-		orphans = scanSession(s.pid)
-	}
-
-	s.mu.Lock()
-	s.exited, s.code, s.orphans = true, code, orphans
 	s.mu.Unlock()
 	if s.onExit != nil {
 		s.onExit(code)
