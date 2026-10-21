@@ -25,7 +25,27 @@ const (
 
 func startServer(t *testing.T, allowOrigins ...string) *Server {
 	t.Helper()
-	srv, err := Listen(Options{Token: testToken, AllowOrigins: allowOrigins, HelloTimeout: testHelloTimeout, Shell: "/bin/sh"})
+	return listen(t, Options{AllowOrigins: allowOrigins})
+}
+
+// listen starts a server with opts, filling in the test token, hello
+// timeout, /bin/sh and a fresh home where opts leaves them out, and closes
+// it when the test ends.
+func listen(t *testing.T, opts Options) *Server {
+	t.Helper()
+	if opts.Token == "" {
+		opts.Token = testToken
+	}
+	if opts.HelloTimeout == 0 {
+		opts.HelloTimeout = testHelloTimeout
+	}
+	if opts.Shell == "" {
+		opts.Shell = "/bin/sh"
+	}
+	if opts.Home == "" {
+		opts.Home = t.TempDir()
+	}
+	srv, err := Listen(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,9 +160,12 @@ func handshake(t *testing.T, ws *websocket.Conn) {
 	}
 }
 
-func TestListenRequiresToken(t *testing.T) {
-	if _, err := Listen(Options{}); err == nil {
+func TestListenRequiresTokenAndHome(t *testing.T) {
+	if _, err := Listen(Options{Home: t.TempDir()}); err == nil {
 		t.Fatal("Listen with an empty token succeeded")
+	}
+	if _, err := Listen(Options{Token: testToken}); err == nil {
+		t.Fatal("Listen with an empty home succeeded")
 	}
 }
 
@@ -340,7 +363,7 @@ func TestOversizeFrameCloses(t *testing.T) {
 }
 
 func TestCloseSendsGoingAway(t *testing.T) {
-	srv, err := Listen(Options{Token: testToken, HelloTimeout: testHelloTimeout})
+	srv, err := Listen(Options{Token: testToken, HelloTimeout: testHelloTimeout, Home: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}

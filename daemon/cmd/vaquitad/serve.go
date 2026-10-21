@@ -5,12 +5,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/url"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/zeikar/vaquita/daemon/internal/server"
 	"github.com/zeikar/vaquita/daemon/internal/session"
@@ -80,16 +82,13 @@ func serve(args []string) error {
 	}()
 	log.Info("vaquitad started", "home", home, "pid", os.Getpid())
 
-	st, err := state.Load(home)
+	st, err := loadState(log, home)
 	if err != nil {
-		// Left in place for inspection; Load fell back to the defaults.
-		log.Error("load state", "err", err)
-	} else if err := pruneState(log, home, &st); err != nil {
 		return err
 	}
 
 	token := server.NewToken()
-	srv, err := server.Listen(server.Options{Token: token, AllowOrigins: allow, Shell: st.Shell, State: st})
+	srv, err := server.Listen(server.Options{Token: token, AllowOrigins: allow, Shell: st.Shell, Home: home, State: st})
 	if err != nil {
 		return err
 	}
@@ -109,6 +108,29 @@ func serve(args []string) error {
 	s := <-sig
 	log.Info("vaquitad stopping", "signal", s.String())
 	return nil
+}
+
+// loadState reads state.json and prunes the records of sessions that are
+// gone. A file that cannot be loaded is moved aside for inspection and the
+// daemon starts from the defaults: every change to the sessions saves
+// state.json, which would overwrite it and lose the records and settings it
+// holds, even when the failure was only a passing read error. If it cannot
+// be moved aside, the daemon does not start.
+func loadState(log *slog.Logger, home string) (state.State, error) {
+	st, err := state.Load(home)
+	if err == nil {
+		return st, pruneState(log, home, &st)
+	}
+	path := state.StatePath(home)
+	aside := fmt.Sprintf("%s.bad-%d", path, time.Now().Unix())
+	if rerr := os.Rename(path, aside); errors.Is(rerr, fs.ErrNotExist) {
+		log.Error("load state; the file has gone since", "err", err)
+	} else if rerr != nil {
+		return st, fmt.Errorf("load state: %w; cannot move it aside, so it is not overwritten: %w", err, rerr)
+	} else {
+		log.Error("load state; moved it aside and starting from the defaults", "err", err, "moved_to", aside)
+	}
+	return st, nil
 }
 
 // pruneState drops the records of sessions from a previous run that are

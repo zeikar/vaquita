@@ -23,9 +23,9 @@ const helloReadLimit = 4 << 10
 // small and rare, so a client this far behind has stopped reading.
 const maxControlQueue = 256
 
-// conn is one client connection. The goroutine running serve reads; after
-// the hello a writer goroutine makes every write, so nothing else ever
-// blocks on a slow client.
+// conn is one client connection. The goroutine running serve reads and
+// handles requests; after the hello a writer goroutine makes every write,
+// so nothing else ever blocks on a slow client.
 type conn struct {
 	srv    *Server
 	ws     *websocket.Conn
@@ -37,6 +37,7 @@ type conn struct {
 	mu         sync.Mutex
 	queue      []any         // control messages for the writer, in order
 	overflowed bool          // the queue filled up; the connection is closing
+	subs       []*subscriber // this connection's subscriptions, in the order made
 	wake       chan struct{} // cap 1; tells the writer there is something to send
 
 	closeOnce sync.Once
@@ -66,6 +67,7 @@ func (c *conn) serve() {
 			c.writeLoop()
 		})
 		c.readLoop()
+		c.srv.table.leave(c)
 	}
 	// Whatever ended the reader has started closing the socket or found it
 	// closed, so this is normally a no-op. The close handshake must finish
@@ -129,9 +131,7 @@ func (c *conn) hello() bool {
 	}
 	c.client = h.Client
 	c.ws.SetReadLimit(protocol.MaxMessage)
-	c.send(protocol.Hello{T: protocol.THello, V: protocol.Version})
-	// An empty list rather than null, so clients can always iterate it.
-	c.send(protocol.Sessions{T: protocol.TSessions, List: []protocol.SessionInfo{}})
+	c.srv.table.join(c)
 	slog.Info("client connected", "remote", c.remote, "client", c.client)
 	return true
 }
@@ -169,16 +169,34 @@ func (c *conn) readLoop() {
 	}
 }
 
-// handle acts on a control message after the hello. No session requests
-// are served yet, so each is answered as a bad request.
+// handle acts on a control message after the hello.
 func (c *conn) handle(m any) {
-	c.send(protocol.Error{T: protocol.TError, Code: protocol.CodeBadRequest})
+	switch m := m.(type) {
+	case protocol.Create:
+		c.create(m)
+	case protocol.Subscribe:
+		c.subscribe(m.SID)
+	case protocol.Unsubscribe:
+		c.unsubscribe(m.SID)
+	case protocol.Ack:
+		c.ack(m)
+	case protocol.Resize:
+		c.resize(m)
+	case protocol.Kill:
+		c.kill(m.SID)
+	default:
+		c.send(protocol.Error{T: protocol.TError, Code: protocol.CodeBadRequest})
+	}
 }
 
-// handleFrame acts on a binary frame after the hello; like handle, it
-// serves nothing yet.
+// handleFrame acts on a binary frame after the hello; clients only send
+// input.
 func (c *conn) handleFrame(f protocol.Frame) {
-	c.send(protocol.Error{T: protocol.TError, Code: protocol.CodeBadRequest})
+	if f.Type != protocol.FrameInput {
+		c.send(badRequest(f.SID))
+		return
+	}
+	c.input(f)
 }
 
 // send queues a control message for the writer. It never blocks, so it may
@@ -198,34 +216,86 @@ func (c *conn) send(m any) {
 	}
 	c.queue = append(c.queue, m)
 	c.mu.Unlock()
+	c.wakeWriter()
+}
+
+// wakeWriter tells the writer to look for work. It never blocks, so the PTY
+// reader may call it with the session lock held.
+func (c *conn) wakeWriter() {
 	select {
 	case c.wake <- struct{}{}:
 	default:
 	}
 }
 
+// writeLoop makes every write after the hello. Each pass sends the queued
+// control messages and then gives every subscription one pump step, sending
+// control messages again after each, so that a busy session neither starves
+// the others nor holds up control messages. It parks only after a pass that
+// found nothing to send; anything that makes work afterwards wakes it.
 func (c *conn) writeLoop() {
+	// However the writer ends, a panic included, the connection ends with
+	// it, so that the reader does not go on serving a client nothing is
+	// sent to. Usually a close is already under way and this does nothing.
+	defer c.closeWith(websocket.StatusInternalError, "writer stopped")
 	for {
+		busy, err := c.writePass()
+		if err != nil {
+			slog.Debug("write to client", "remote", c.remote, "err", err)
+			return
+		}
+		if busy {
+			continue
+		}
 		select {
 		case <-c.ctx.Done():
 			return
 		case <-c.wake:
 		}
-		c.mu.Lock()
-		batch := c.queue
-		c.queue = nil
-		c.mu.Unlock()
-		for _, m := range batch {
-			if err := wsjson.Write(c.ctx, c.ws, m); err != nil {
-				slog.Debug("write to client", "remote", c.remote, "err", err)
-				// Usually a close is already under way; otherwise this
-				// makes sure the reader is not left waiting on a broken
-				// connection.
-				c.closeWith(websocket.StatusInternalError, "write failed")
-				return
-			}
+	}
+}
+
+func (c *conn) writePass() (busy bool, err error) {
+	if err := c.flushControl(); err != nil {
+		return false, err
+	}
+	for _, sub := range c.subscriptions() {
+		sent, err := c.pumpStep(sub)
+		if err != nil {
+			return false, err
+		}
+		if !sent {
+			continue
+		}
+		busy = true
+		if err := c.flushControl(); err != nil {
+			return false, err
 		}
 	}
+	return busy, nil
+}
+
+func (c *conn) flushControl() error {
+	c.mu.Lock()
+	batch := c.queue
+	c.queue = nil
+	c.mu.Unlock()
+	for _, m := range batch {
+		if err := c.writeMessage(m); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *conn) writeMessage(m any) error { return wsjson.Write(c.ctx, c.ws, m) }
+
+func (c *conn) writeFrame(typ byte, sid, gen uint32, p []byte) error {
+	b, err := protocol.Encode(protocol.Frame{Type: typ, SID: sid, Gen: gen, Payload: p})
+	if err != nil {
+		return err
+	}
+	return c.ws.Write(c.ctx, websocket.MessageBinary, b)
 }
 
 // closeWith starts the close handshake with code unless one has already

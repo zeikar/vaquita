@@ -38,7 +38,13 @@ type Options struct {
 	// hello; 0 means 5s.
 	HelloTimeout time.Duration
 	Shell        string // absolute path of the shell sessions run
-	State        state.State
+	// Home is the instance directory, where state.json is saved on every
+	// change to the sessions.
+	Home string
+	// State is state.json as loaded. Its records are of a previous run's
+	// sessions, which have no PTY here: they are listed as exited until a
+	// kill finds them gone.
+	State state.State
 }
 
 // Server accepts WebSocket connections on 127.0.0.1.
@@ -47,6 +53,7 @@ type Server struct {
 	origins []string
 	ln      net.Listener
 	hs      *http.Server
+	table   *table
 
 	mu      sync.Mutex
 	conns   map[*conn]struct{}
@@ -67,6 +74,11 @@ func Listen(opts Options) (*Server, error) {
 	if opts.Token == "" {
 		return nil, errors.New("server: empty token")
 	}
+	// Saving with an empty home would write state.json to the working
+	// directory.
+	if opts.Home == "" {
+		return nil, errors.New("server: empty home")
+	}
 	if opts.HelloTimeout <= 0 {
 		opts.HelloTimeout = defaultHelloTimeout
 	}
@@ -78,6 +90,7 @@ func Listen(opts Options) (*Server, error) {
 		opts:    opts,
 		origins: append([]string{tauriOrigin}, opts.AllowOrigins...),
 		ln:      ln,
+		table:   newTable(opts.Home, opts.State),
 		conns:   make(map[*conn]struct{}),
 	}
 	mux := http.NewServeMux()

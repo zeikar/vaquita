@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -40,9 +42,13 @@ func ls(args []string) error {
 	defer c.Close()
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "SID\tSTATE\tPID\tCWD\tCMD\tNAME")
+	fmt.Fprintln(tw, "SID\tSTATE\tPID\tCWD\tCMD\tNAME\tORPHANS")
 	for _, s := range list {
-		fmt.Fprintf(tw, "%d\t%s\t%d\t%s\t%s\t%s\n", s.SID, s.State, s.PID, s.Cwd, s.Cmd, s.Name)
+		orphans := make([]string, len(s.Orphans))
+		for i, pid := range s.Orphans {
+			orphans[i] = strconv.Itoa(pid)
+		}
+		fmt.Fprintf(tw, "%d\t%s\t%d\t%s\t%s\t%s\t%s\n", s.SID, s.State, s.PID, s.Cwd, s.Cmd, s.Name, strings.Join(orphans, ","))
 	}
 	return tw.Flush()
 }
