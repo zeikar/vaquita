@@ -2,6 +2,9 @@ package session
 
 import (
 	"bytes"
+	"encoding/base64"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -145,5 +148,82 @@ func TestOutputFeedDoesNotAllocate(t *testing.T) {
 	feedText(o, DefaultRingCap) // from here on every Feed evicts
 	if n := testing.AllocsPerRun(100, func() { o.Feed(chunk) }); n != 0 {
 		t.Fatalf("Feed allocates %v times per call", n)
+	}
+}
+
+func TestOutputStatusReportSplitAcrossFeeds(t *testing.T) {
+	o := NewOutput()
+	msg := base64.StdEncoding.EncodeToString([]byte("Need approval"))
+	seq := "\x1b]7501;state=blocked:kind=permission:app=claude-code:msg=" + msg + "\x1b\\"
+	for k := 1; k < len(seq); k++ {
+		o = NewOutput()
+		o.Feed([]byte(seq[:k]))
+		if n := len(o.Status().Records); n != 0 {
+			t.Fatalf("split %d: %d records before the sequence ended", k, n)
+		}
+		o.Feed([]byte(seq[k:]))
+		recs := o.Status().Records
+		if len(recs) != 1 || recs[0].State != "blocked" || recs[0].Msg != "Need approval" || recs[0].App != "claude-code" {
+			t.Fatalf("split %d: records %+v", k, recs)
+		}
+	}
+}
+
+func TestOutputStatusIgnoresQueryAndOversized(t *testing.T) {
+	o := NewOutput()
+	o.Feed([]byte("\x1b]7501;?\x07"))
+	o.Feed([]byte("\x1b]7501;state=working:app=" + strings.Repeat("x", 5000) + "\x07"))
+	if recs := o.Status().Records; len(recs) != 0 {
+		t.Fatalf("records %+v", recs)
+	}
+}
+
+func TestOutputStatusLifetimes(t *testing.T) {
+	o := NewOutput()
+	o.Feed([]byte("\x1b]7501;state=working\x07\x1b]7501;id=a:state=x\x07\x1b]7501;state=done:id=b\x07"))
+	if n := len(o.Status().Records); n != 2 {
+		t.Fatalf("%d records, want 2 (invalid state dropped)", n)
+	}
+	o.Feed([]byte("\x1b]133;A\x07"))
+	if recs := o.Status().Records; len(recs) != 1 || recs[0].ID != "b" {
+		t.Fatalf("after prompt start: %+v", recs)
+	}
+	// Only A, not B or an A that merely starts a longer word.
+	o.Feed([]byte("\x1b]133;B\x07\x1b]133;Ax\x07"))
+	if n := len(o.Status().Records); n != 1 {
+		t.Fatalf("%d records after 133;B", n)
+	}
+	o.Feed([]byte("\x1bc"))
+	if n := len(o.Status().Records); n != 0 {
+		t.Fatalf("%d records after RIS", n)
+	}
+}
+
+func TestOutputNotifications(t *testing.T) {
+	o := NewOutput()
+	if o.Status().LastNotify != nil {
+		t.Fatal("notification before any output")
+	}
+	o.Feed([]byte("\x1b]777;notify;Claude Code;Claude needs your permission\x07"))
+	o.Feed([]byte("\x1b]777;precmd\x07"))
+	st := o.Status()
+	if st.LastNotify == nil || st.LastNotify.Title != "Claude Code" || len(st.Recent) != 1 {
+		t.Fatalf("status %+v", st)
+	}
+	for i := 0; i < 20; i++ {
+		o.Feed([]byte(fmt.Sprintf("\x1b]9;n%d\x1b\\", i)))
+	}
+	st = o.Status()
+	if len(st.Recent) != maxRecentNotifies || st.Recent[0].Body != "n4" || st.LastNotify.Body != "n19" {
+		t.Fatalf("recent %d, first %q, last %+v", len(st.Recent), st.Recent[0].Body, st.LastNotify)
+	}
+}
+
+func TestOutputReplaceScannerKeepsStatusSink(t *testing.T) {
+	o := NewOutput()
+	o.ReplaceScanner()
+	o.Feed([]byte("\x1b]7501;state=idle\x07"))
+	if n := len(o.Status().Records); n != 1 {
+		t.Fatalf("%d records", n)
 	}
 }

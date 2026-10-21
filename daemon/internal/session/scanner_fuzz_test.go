@@ -1,10 +1,13 @@
 package session
 
 import (
+	"encoding/base64"
 	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/zeikar/vaquita/daemon/internal/status"
 )
 
 // withoutSink returns a copy of the scanner's state for comparison.
@@ -27,6 +30,9 @@ func FuzzScanner(f *testing.F) {
 	// dropping bytes one at a time, which at that size stalls fuzzing for
 	// longer than a typical run. The unit tests cover abandonment.
 	f.Add([]byte("\x1b]7501;"+strings.Repeat("p", 5<<10)+"\x07"), uint32(maxOSCRetain))
+	for _, s := range statusSeeds {
+		f.Add([]byte(s), uint32(len(s)/2))
+	}
 	f.Add([]byte("\x1b["+strings.Repeat(" ", 200)+"m"), uint32(70))
 	f.Add([]byte("\xff\x80\xc3(\xe3\x81a\xf0\xf0\x9f\x98\x80"), uint32(5))
 
@@ -102,6 +108,35 @@ func FuzzScanner(f *testing.F) {
 				t.Fatalf("%s (at %d): final state %d/%d, whole %d/%d", feed.name, k,
 					feed.s.state, feed.s.utf8Pending, ws.state, ws.utf8Pending)
 			}
+		}
+	})
+}
+
+// statusSeeds are status sequences as real agents emit them.
+var statusSeeds = []string{
+	"\x1b]7501;state=working:app=claude-code:msg=" + base64.StdEncoding.EncodeToString([]byte("Reading files")) + "\x07",
+	"\x1b]7501;state=blocked:kind=permission:id=sub/1:title=VGl0bGU\x1b\\",
+	"\x1b]7501;state=clear\x07\x1b]7501;?\x07\x1b]7501;state=idle:progress=50:progress=x\x07",
+	"\x1b]777;notify;Claude Code;Claude needs your permission\x07",
+	"\x1b]9;Approval requested: rm -rf build\x1b\\",
+	"\x1b]133;A\x07\x1bc",
+}
+
+// FuzzOutput feeds arbitrary bytes through the real Output sink in two reads
+// and checks that nothing panics and what it stores stays bounded.
+func FuzzOutput(f *testing.F) {
+	for _, s := range statusSeeds {
+		f.Add([]byte(s), uint32(len(s)/2))
+	}
+	f.Add([]byte("\x1b]7501;state=working:id=a/b/c\x07\x1b]7501;state=clear:id=a\x07"), uint32(10))
+	f.Fuzz(func(t *testing.T, in []byte, split uint32) {
+		o := NewOutput()
+		k := int(split % uint32(len(in)+1))
+		o.Feed(in[:k])
+		o.Feed(in[k:])
+		st := o.Status()
+		if len(st.Records) > status.MaxRecords || len(st.Recent) > maxRecentNotifies {
+			t.Fatalf("%d records, %d notifications", len(st.Records), len(st.Recent))
 		}
 	})
 }
