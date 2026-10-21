@@ -1,3 +1,4 @@
 node_modules/
 .DS_Store
 tools/probe/vqtest.app/
+/daemon/vaquitad
