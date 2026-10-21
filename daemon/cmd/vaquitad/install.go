@@ -91,19 +91,36 @@ func checkExeStable(exe string) error {
 	return nil
 }
 
-// writeAgentPlist writes <dir>/<label>.plist and lints it; a plist that fails
-// the lint is removed so launchd never sees it.
+// writeAgentPlist writes <dir>/<label>.plist. The plist is linted as a
+// temporary file in dir and renamed into place only if it passes, so a
+// failed reinstall leaves the installed plist as it was and launchd never
+// sees a half-written or invalid one.
 func writeAgentPlist(dir, label string, plist []byte) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create %s: %w", dir, err)
 	}
 	path := filepath.Join(dir, label+".plist")
-	if err := os.WriteFile(path, plist, 0o644); err != nil {
+	f, err := os.CreateTemp(dir, label+".*.tmp")
+	if err != nil {
 		return "", fmt.Errorf("write %s: %w", path, err)
 	}
-	if out, err := exec.Command("plutil", "-lint", path).CombinedOutput(); err != nil {
-		os.Remove(path)
-		return "", fmt.Errorf("plutil -lint %s failed: %w\n%s", path, err, out)
+	tmp := f.Name()
+	defer os.Remove(tmp) // a no-op once renamed
+	_, err = f.Write(plist)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(tmp, 0o644)
+	}
+	if err != nil {
+		return "", fmt.Errorf("write %s: %w", path, err)
+	}
+	if out, err := exec.Command("plutil", "-lint", tmp).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("plutil -lint of the new %s failed: %w\n%s", path, err, out)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return "", fmt.Errorf("install %s: %w", path, err)
 	}
 	return path, nil
 }

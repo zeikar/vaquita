@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -76,13 +77,21 @@ func TestWriteAgentPlist(t *testing.T) {
 	}
 }
 
-func TestWriteAgentPlistRemovesInvalid(t *testing.T) {
+func TestWriteAgentPlistKeepsInstalledOnInvalid(t *testing.T) {
 	dir := t.TempDir()
+	good := renderPlist("bad", "/e", "/h")
+	if _, err := writeAgentPlist(dir, "bad", good); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := writeAgentPlist(dir, "bad", []byte("not a plist")); err == nil {
 		t.Fatal("expected lint failure")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "bad.plist")); !os.IsNotExist(err) {
-		t.Fatalf("invalid plist left behind: %v", err)
+	got, err := os.ReadFile(filepath.Join(dir, "bad.plist"))
+	if err != nil || !bytes.Equal(got, good) {
+		t.Fatalf("installed plist = %q, %v; want it untouched", got, err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, "*.tmp")); len(left) != 0 {
+		t.Fatalf("temporary files left behind: %v", left)
 	}
 }
 

@@ -40,12 +40,15 @@ type subscriber struct {
 	// connection gone, or its exit sent. A pump step already under way for
 	// it must not send anything more.
 	dropped bool
-	// writable is whether input and resizes from this subscriber are
-	// taken; setWriter keeps it.
+	// writable is whether this subscriber is the session's writer, as
+	// setWriter last decided. Input and resizes are taken only from it, and
+	// live tells the client.
 	writable bool
-	// toldRO is the ro the client was last told, by live or an ro event.
-	// The pump sends an ro whenever it differs from !writable.
-	toldRO bool
+	// needReset is set when writable has flipped on a subscription that
+	// is already under way: it is sent no more live output and takes no
+	// input until the pump has restarted it in a new generation, which it
+	// does once everything sent has been acknowledged.
+	needReset bool
 }
 
 // newSubscriber returns a subscription of c to e in generation 1 that starts
@@ -82,7 +85,7 @@ func (e *entry) detach(sub *subscriber) {
 	sub.dropped = true
 	e.subs = slices.DeleteFunc(e.subs, func(x *subscriber) bool { return x == sub })
 	sub.conn.removeSub(sub)
-	e.setWriter()
+	e.setWriter(nil)
 }
 
 // setWriter makes the earliest GUI subscriber the session's one writer, or
@@ -92,9 +95,18 @@ func (e *entry) detach(sub *subscriber) {
 // lock (or, for a session's creator, that nobody else can see the session
 // yet).
 //
-// It only sets the flags and wakes the writers: the pump tells each client,
-// so that the news is ordered with the subscription's own messages.
-func (e *entry) setWriter() {
+// fresh is the subscription whose snapshot was taken in the same locked
+// section, if any.
+//
+// A subscription whose flag changes is paused (needReset) and restarted by
+// the pump in a new generation, with a snapshot of the ring as it is then and
+// the flag in its live, once it has acknowledged what it was sent: the cap
+// on unacknowledged output holds. Output it had not been sent becomes part
+// of that replay, which nobody answers, so no frame can straddle the change
+// and a byte is never answered by two terminals. The price is that a query
+// the losing side had rendered but not yet answered may go unanswered, as
+// replayed ones do.
+func (e *entry) setWriter(fresh *subscriber) {
 	var w *subscriber
 	for _, sub := range e.subs {
 		if sub.conn.client == protocol.ClientGUI {
@@ -111,6 +123,9 @@ func (e *entry) setWriter() {
 			continue
 		}
 		sub.writable = writable
+		// fresh took its snapshot in this same locked section, so its
+		// replay carries the flag.
+		sub.needReset = sub != fresh
 		sub.conn.wakeWriter()
 	}
 }
@@ -129,13 +144,12 @@ func (sub *subscriber) takeReplay(s *session.Session) replay {
 	out := s.Output()
 	ring := out.Ring()
 	cols, rows := s.Size()
-	sub.toldRO = !sub.writable
 	r := replay{
 		msg: protocol.Replay{T: protocol.TReplay, SID: sub.sid, Gen: sub.gen, From: sub.from, To: sub.replayTo, Cols: cols, Rows: rows},
 		// from is the ring start (pumpStep resets a subscription whose
 		// from has been evicted), which is what the prefix is for.
 		prefix: out.ReplayPrefix(),
-		live:   protocol.Live{T: protocol.TLive, SID: sub.sid, Gen: sub.gen, Off: sub.replayTo, RO: sub.toldRO},
+		live:   protocol.Live{T: protocol.TLive, SID: sub.sid, Gen: sub.gen, Off: sub.replayTo, RO: !sub.writable},
 	}
 	for off := sub.from; off < sub.replayTo; {
 		end := min(sub.replayTo, off+protocol.MaxPayload)
@@ -175,7 +189,8 @@ func (sub *subscriber) next() func(*conn) error {
 	// sent output is unacknowledged: the subscription waits for its acks, so
 	// a client that never acks cannot be sent a full replay every time the
 	// ring wraps.
-	if sub.sentOff < ring.Start() && sub.ackedOff == sub.sentOff {
+	if (sub.needReset || sub.sentOff < ring.Start()) && sub.ackedOff == sub.sentOff {
+		sub.needReset = false
 		sub.reset(ring)
 	}
 	sid := sub.sid
@@ -183,16 +198,7 @@ func (sub *subscriber) next() func(*conn) error {
 	case sub.needReplay:
 		r := sub.takeReplay(s)
 		return func(c *conn) error { return c.writeReplay(sid, r) }
-	case sub.toldRO == sub.writable:
-		// The writer has changed since the client was told. Sent here
-		// rather than queued, it can come neither before the live that
-		// first tells the client nor after the exit that ends the
-		// subscription, and changes made in between collapse into one.
-		// The acks do not hold it up.
-		sub.toldRO = !sub.writable
-		m := protocol.RO{T: protocol.TRO, SID: sid, RO: sub.toldRO}
-		return func(c *conn) error { return c.writeMessage(m) }
-	case sub.sentOff < ring.Start():
+	case sub.needReset, sub.sentOff < ring.Start():
 		// Waiting for the acks, as above.
 	case sub.sentOff < ring.End() && sub.sentOff-sub.ackedOff < maxUnacked:
 		// Live output stops while maxUnacked bytes are unacknowledged and

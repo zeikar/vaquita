@@ -36,6 +36,9 @@ func TestKeyScannerDetach(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var k keyScanner
 			fwd, detach := k.scan([]byte(tc.in))
+			if !detach {
+				fwd = append(fwd, k.flush()...)
+			}
 			if string(fwd) != tc.fwd || detach != tc.detach {
 				t.Errorf("scan(%q) = %q, %v; want %q, %v", tc.in, fwd, detach, tc.fwd, tc.detach)
 			}
@@ -53,9 +56,8 @@ func TestKeyScannerSplit(t *testing.T) {
 	}{
 		{"detach", []string{"a\x1b[92;", "5u"}, []string{"a", ""}, true},
 		{"detach byte by byte", []string{"\x1b[9", "2", ";", "5", "u"}, []string{"", "", "", "", ""}, true},
-		// A bare ESC or ESC [ at the end of a read goes out at once: it is
-		// the Escape key (or Alt-[), which programs tell apart by timing.
-		{"after ESC [", []string{"\x1b[", "92;5u"}, []string{"\x1b[", "92;5u"}, false},
+		{"after ESC [", []string{"\x1b[", "92;5u"}, []string{"", ""}, true},
+		{"after ESC", []string{"\x1b", "[92;5u"}, []string{"", ""}, true},
 		{"release", []string{"\x1b[92;5:", "3uz"}, []string{"", "z"}, false},
 		{"other key", []string{"\x1b[1;", "5Ab"}, []string{"", "\x1b[1;5Ab"}, false},
 	} {
@@ -78,5 +80,36 @@ func TestKeyScannerOverlong(t *testing.T) {
 	in := "\x1b[" + strings.Repeat("1;", 40) + "u"
 	if fwd, detach := k.scan([]byte(in)); string(fwd) != in || detach {
 		t.Errorf("scan = %q, %v", fwd, detach)
+	}
+}
+
+// Every supported encoding of the detach key is found wherever the terminal's
+// write is split.
+func TestKeyScannerEverySplit(t *testing.T) {
+	for _, enc := range []string{"\x1b[92;5u", "\x1b[92;5:1u", "\x1b[27;5;92~"} {
+		for i := 0; i <= len(enc); i++ {
+			var k keyScanner
+			var fwd []byte
+			var detach bool
+			for _, r := range []string{enc[:i], enc[i:]} {
+				f, d := k.scan([]byte(r))
+				fwd, detach = append(fwd, f...), detach || d
+			}
+			if !detach || len(fwd) != 0 {
+				t.Errorf("%q split at %d: got %q, %v; want detach and nothing passed on", enc, i, fwd, detach)
+			}
+		}
+	}
+}
+
+func TestKeyScannerBareEscape(t *testing.T) {
+	var k keyScanner
+	for _, in := range []string{"\x1b", "\x1b["} {
+		if fwd, detach := k.scan([]byte(in)); len(fwd) != 0 || detach || !k.bare() {
+			t.Fatalf("scan(%q) = %q, %v, bare %v; want it held", in, fwd, detach, k.bare())
+		}
+		if got := k.flush(); string(got) != in || k.bare() {
+			t.Errorf("flush = %q, want %q", got, in)
+		}
 	}
 }

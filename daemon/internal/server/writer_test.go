@@ -16,13 +16,32 @@ func sessSize(srv *Server, sid uint32) (cols, rows int) {
 	return s.Size()
 }
 
+// roSeq is the ro of each live tc has had for sid, one per generation.
+func (tc *tclient) roSeq(sid uint32) []bool {
+	var seq []bool
+	for _, l := range tc.stream(sid).lives {
+		seq = append(seq, l.RO)
+	}
+	return seq
+}
+
+// waitROs waits until tc has had n lives for sid, then checks that no more
+// follow.
+func (tc *tclient) waitROs(sid uint32, n int) []bool {
+	tc.t.Helper()
+	tc.waitFor("live", func() bool { return len(tc.stream(sid).lives) >= n })
+	tc.settle()
+	return tc.roSeq(sid)
+}
+
 // While a GUI is subscribed, an attach client is read-only: its input and
 // resizes are dropped, so that only the GUI answers the terminal queries in
-// the output. It gets the session back when the GUI goes.
+// the output. It gets the session back when the GUI goes. Each change starts
+// the attach over in a new generation.
 func TestAttachReadOnlyWhileGUISubscribed(t *testing.T) {
 	srv := startSessionServer(t, Options{})
 	a := dialKind(t, srv, protocol.ClientAttach)
-	sid := a.create("read l; printf got:$l; read l; printf got:$l")
+	sid := a.create("read l; printf got:$l; read l; printf got:$l; read l; printf got:$l")
 	sa := a.stream(sid)
 	a.waitFor("live", func() bool { return len(sa.lives) > 0 })
 	if sa.lives[0].RO {
@@ -33,14 +52,19 @@ func TestAttachReadOnlyWhileGUISubscribed(t *testing.T) {
 	if l := g.subscribe(sid); l.RO {
 		t.Errorf("GUI got %+v, want writable", l)
 	}
-	a.waitFor("ro event", func() bool { return len(sa.ros) == 1 })
-	if !sa.ros[0] {
-		t.Errorf("attach client's ro events %v, want [true]", sa.ros)
+	a.waitFor("replay of generation 2", func() bool { return len(sa.lives) == 2 })
+	if sa.replays[1].Gen != 2 || !sa.lives[1].RO {
+		t.Errorf("attach client got %+v then %+v, want generation 2 and read-only", sa.replays[1], sa.lives[1])
 	}
 
 	// The attach client's requests are handled before the GUI sends its
 	// line, so had its line been taken, it would be echoed and read first.
-	if err := a.c.Input(sid, sa.gen, []byte("attach\n")); err != nil {
+	// The first is of the generation before the change, the second of the
+	// current one.
+	if err := a.c.Input(sid, 1, []byte("old\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.c.Input(sid, 2, []byte("attach\n")); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.c.Resize(sid, 100, 30); err != nil {
@@ -51,8 +75,8 @@ func TestAttachReadOnlyWhileGUISubscribed(t *testing.T) {
 		t.Fatal(err)
 	}
 	g.waitLive(sid, "got:gui")
-	if out := g.stream(sid).live; bytes.Contains(out, []byte("attach")) {
-		t.Errorf("read-only input reached the shell: %q", out)
+	if out := g.stream(sid).live; bytes.Contains(out, []byte("old")) || bytes.Contains(out, []byte("attach")) {
+		t.Errorf("read-only or stale input reached the shell: %q", out)
 	}
 	if cols, rows := sessSize(srv, sid); cols != 80 || rows != 24 {
 		t.Errorf("session is %dx%d after a read-only resize, want 80x24", cols, rows)
@@ -64,19 +88,25 @@ func TestAttachReadOnlyWhileGUISubscribed(t *testing.T) {
 	if err := g.c.Unsubscribe(sid); err != nil {
 		t.Fatal(err)
 	}
-	a.waitFor("second ro event", func() bool { return len(sa.ros) == 2 })
-	if !slices.Equal(sa.ros, []bool{true, false}) {
-		t.Errorf("attach client's ro events %v, want [true false]", sa.ros)
+	a.waitFor("replay of generation 3", func() bool { return len(sa.lives) == 3 })
+	if sa.replays[2].Gen != 3 || sa.lives[2].RO {
+		t.Errorf("attach client got %+v then %+v, want generation 3 and writable", sa.replays[2], sa.lives[2])
 	}
-	if err := a.c.Input(sid, sa.gen, []byte("attach\n")); err != nil {
+	if err := a.c.Input(sid, 2, []byte("older\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.c.Input(sid, 3, []byte("attach\n")); err != nil {
 		t.Fatal(err)
 	}
 	a.waitLive(sid, "got:attach")
+	if bytes.Contains(sa.live, []byte("older")) {
+		t.Errorf("input of an earlier generation reached the shell: %q", sa.live)
+	}
 }
 
 // The writer is the earliest GUI subscriber, else the earliest subscriber,
 // and it passes on as subscribers disconnect or unsubscribe. Only the
-// subscribers whose flag changes are told.
+// subscribers whose flag changes start over.
 func TestWriterIsEarliestSubscriber(t *testing.T) {
 	srv := startSessionServer(t, Options{})
 	a1 := dialKind(t, srv, protocol.ClientAttach)
@@ -94,62 +124,27 @@ func TestWriterIsEarliestSubscriber(t *testing.T) {
 			t.Errorf("%s got %+v, want ro %v", c.name, l, c.ro)
 		}
 	}
-	// ros returns the ro events tc has had, including any sent in error by
-	// a change already made.
-	ros := func(tc *tclient) []bool {
-		tc.settle()
-		return tc.stream(sid).ros
-	}
-	waitRO := func(tc *tclient, n int) []bool {
-		tc.waitFor("ro event", func() bool { return len(tc.stream(sid).ros) >= n })
-		return ros(tc)
-	}
 	check := func(step, name string, got, want []bool) {
 		t.Helper()
 		if !slices.Equal(got, want) {
-			t.Errorf("%s: %s has had ro events %v, want %v", step, name, got, want)
+			t.Errorf("%s: %s has had ro %v, want %v", step, name, got, want)
 		}
 	}
 
-	check("first GUI subscribed", "first attach", waitRO(a1, 1), []bool{true})
-	check("first GUI subscribed", "second attach", ros(a2), nil)
+	check("first GUI subscribed", "first attach", a1.waitROs(sid, 2), []bool{false, true})
+	check("first GUI subscribed", "second attach", a2.waitROs(sid, 1), []bool{true})
 
 	g1.c.Close()
-	check("first GUI gone", "second GUI", waitRO(g2, 1), []bool{false})
-	check("first GUI gone", "first attach", ros(a1), []bool{true})
-	check("first GUI gone", "second attach", ros(a2), nil)
+	check("first GUI gone", "second GUI", g2.waitROs(sid, 2), []bool{true, false})
+	check("first GUI gone", "first attach", a1.waitROs(sid, 2), []bool{false, true})
+	check("first GUI gone", "second attach", a2.waitROs(sid, 1), []bool{true})
 
 	if err := g2.c.Unsubscribe(sid); err != nil {
 		t.Fatal(err)
 	}
-	check("second GUI unsubscribed", "first attach", waitRO(a1, 2), []bool{true, false})
-	check("second GUI unsubscribed", "second attach", ros(a2), nil)
-	check("second GUI unsubscribed", "second GUI", ros(g2), []bool{false})
+	check("second GUI unsubscribed", "first attach", a1.waitROs(sid, 3), []bool{false, true, false})
+	check("second GUI unsubscribed", "second attach", a2.waitROs(sid, 1), []bool{true})
 
 	a1.c.Close()
-	check("first attach gone", "second attach", waitRO(a2, 1), []bool{false})
-}
-
-// At the exit each subscription ends as its own exit goes out. When the
-// GUI's goes first, the attach client becomes the writer just as its own
-// exit is due; it may be told so before its exit, but never after it, where
-// the ro would read as news about its next subscription to the session.
-//
-// The pump makes this hold by construction; the test is a regression guard
-// for it, and a probabilistic one: which exit goes first varies from run to
-// run, and an ro sent out of turn shows only in some of them.
-func TestNoROAfterExit(t *testing.T) {
-	srv := startSessionServer(t, Options{})
-	g := dialClient(t, srv)
-	sid := g.create("read l; exit 0")
-	a := dialKind(t, srv, protocol.ClientAttach)
-	if l := a.subscribe(sid); !l.RO {
-		t.Errorf("attach client got %+v beside the GUI, want read-only", l)
-	}
-	if err := g.c.Input(sid, g.stream(sid).gen, []byte("\n")); err != nil {
-		t.Fatal(err)
-	}
-	a.waitExit(sid)
-	// apply reports an ro after the exit.
-	a.settle()
+	check("first attach gone", "second attach", a2.waitROs(sid, 2), []bool{true, false})
 }

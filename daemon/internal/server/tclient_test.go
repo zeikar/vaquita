@@ -40,9 +40,7 @@ type stream struct {
 	lives     []protocol.Live
 	live      []byte // bytes from live frames
 	exit      *protocol.Exit
-	ended     bool   // the exit has ended the subscription
-	ro        bool   // as last told, by live or an ro event
-	ros       []bool // ro events
+	ended     bool // the exit has ended the subscription
 }
 
 // received counts the payload bytes of every output frame, mode prefixes
@@ -205,18 +203,8 @@ func (tc *tclient) apply(ev client.Event) {
 			t.Errorf("sid %d: %+v with replaying %v, prefix due %v, generation %d, offset %d", m.SID, m, st.replaying, st.prefixDue, st.gen, st.off)
 		}
 		st.replaying = false
-		st.ro = m.RO
 		st.msgs = append(st.msgs, m.T)
 		st.lives = append(st.lives, m)
-	case protocol.RO:
-		// A subscriber yet to be sent its live learns the flag from it.
-		st := tc.stream(m.SID)
-		if st.replaying || len(st.lives) == 0 || st.ended {
-			t.Errorf("sid %d: %+v outside a subscription's live output (replaying %v, ended %v)", m.SID, m, st.replaying, st.ended)
-		}
-		st.ro = m.RO
-		st.msgs = append(st.msgs, m.T)
-		st.ros = append(st.ros, m.RO)
 	case protocol.Exit:
 		st := tc.stream(m.SID)
 		st.msgs = append(st.msgs, m.T)

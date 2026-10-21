@@ -103,6 +103,78 @@ func TestAttachReadOnlyWhileGUISubscribed(t *testing.T) {
 	wantEnding(t, r.wait(), endDetached)
 }
 
+// The terminal answers a query rendered before the attach became the writer
+// after the reset that made it so: the reply must not reach the session,
+// which has no use for it and would show it as typed garbage. The replay
+// closes the gate and a new fence follows it.
+func TestAttachLateReplyAfterBecomingWriterDiscarded(t *testing.T) {
+	srv := startDaemon(t)
+	tty := newFakeTTY()
+	r := startAttach(t, srv, tty, attachConfig{create: true, cwd: t.TempDir(), cmd: echoCmd + `read -r x; printf '\033[c'; exec cat -v`})
+	tty.waitQueries(t, 1)
+
+	gui, list := dialDaemonTest(t, srv, protocol.ClientGUI)
+	defer gui.Close()
+	go func() {
+		for range gui.Events() {
+		}
+	}()
+	sid := list[0].SID
+	if err := gui.Subscribe(sid); err != nil {
+		t.Fatal(err)
+	}
+	tty.waitFor(t, "the read-only notice", contains("\r\n[vaquita] read-only: "))
+	tty.waitQueries(t, 2) // the replay's fence
+	// Slow enough for the reply to come after the writer has changed.
+	tty.setSlow(300 * time.Millisecond)
+	// The GUI's replay is generation 1.
+	if err := gui.Input(sid, 1, []byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	tty.waitQueries(t, 3)
+	if err := gui.Unsubscribe(sid); err != nil {
+		t.Fatal(err)
+	}
+	tty.waitFor(t, "the writable notice", contains("\r\n[vaquita] writable again\r\n"))
+	// The new replay holds the query again, and the fence follows it.
+	tty.waitQueries(t, 5)
+	fenceEnd := tty.queryEnd(4)
+	tty.typeIn("after\r")
+	tty.waitFor(t, "input typed after the fence echoed", func(out string) bool { return strings.Contains(out[fenceEnd:], "after") })
+	if out := tty.output(); strings.Contains(out, da1Text) {
+		t.Errorf("a reply owed before the reset reached the session; output %q", out)
+	}
+	tty.typeIn(string(rune(detachKey)))
+	wantEnding(t, r.wait(), endDetached)
+}
+
+// An Escape key press reaches the session once nothing follows it, and a
+// detach key report split right after its ESC [ still detaches.
+func TestAttachHoldsEscapePrefix(t *testing.T) {
+	srv := startDaemon(t)
+	tty := newFakeTTY()
+	r := startAttach(t, srv, tty, attachConfig{create: true, cwd: t.TempDir(), cmd: echoCmd + "exec cat -v", escWait: time.Second})
+	tty.waitQueries(t, 1)
+	tty.typeIn("x")
+	tty.waitFor(t, "x echoed", contains("x"))
+	tty.typeIn("\x1b[")
+	tty.typeIn("92;5u")
+	wantEnding(t, r.wait(), endDetached)
+	if out := tty.output(); strings.Contains(out, "^[") {
+		t.Errorf("part of the detach key reached the session; output %q", out)
+	}
+
+	tty2 := newFakeTTY()
+	r2 := startAttach(t, srv, tty2, attachConfig{sid: r.a.sid, escWait: 10 * time.Millisecond})
+	tty2.waitQueries(t, 1)
+	tty2.typeIn("y")
+	tty2.waitFor(t, "y echoed", contains("y"))
+	tty2.typeIn("\x1b")
+	tty2.waitFor(t, "Escape echoed", contains("^["))
+	tty2.typeIn(string(rune(detachKey)))
+	wantEnding(t, r2.wait(), endDetached)
+}
+
 // The exit ends the attachment and leaves the terminal in its default
 // modes, whatever the session had set. The answer to the session's last
 // query, a cursor position request, is read before the terminal mode is

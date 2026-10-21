@@ -50,6 +50,7 @@ type fakeTTY struct {
 	reading   bool          // a Read is waiting for input
 	hold      chan struct{} // while set, Write waits for it to close
 	mute      bool          // a terminal that never answers
+	slow      time.Duration // how long it takes to answer, when not replyDelay
 	cols      int
 	rows      int
 	sc        *session.Scanner
@@ -115,7 +116,7 @@ func (t *fakeTTY) Write(p []byte) (int, error) {
 		if t.sawCPR {
 			t.sawCPR = false
 			if !t.mute {
-				t.queue([]byte("\x1b[1;1R"), replyDelay)
+				t.queue([]byte("\x1b[1;1R"), t.answerDelay())
 			}
 		}
 		if !t.sawQuery {
@@ -124,10 +125,24 @@ func (t *fakeTTY) Write(p []byte) (int, error) {
 		t.sawQuery = false
 		t.queryEnds = append(t.queryEnds, len(t.out))
 		if !t.mute {
-			t.queue([]byte(da1Reply), replyDelay)
+			t.queue([]byte(da1Reply), t.answerDelay())
 		}
 	}
 	return len(p), nil
+}
+
+// answerDelay is how long the terminal takes to answer. It requires t.mu.
+func (t *fakeTTY) answerDelay() time.Duration {
+	if t.slow > 0 {
+		return t.slow
+	}
+	return replyDelay
+}
+
+func (t *fakeTTY) setSlow(d time.Duration) {
+	t.mu.Lock()
+	t.slow = d
+	t.mu.Unlock()
 }
 
 func (t *fakeTTY) Read(p []byte) (int, error) {

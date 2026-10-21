@@ -34,6 +34,7 @@ type attachConfig struct {
 	fenceTimeout    time.Duration
 	nudgeDelay      time.Duration
 	drainTimeout    time.Duration
+	escWait         time.Duration
 }
 
 // ending is why an attachment ends.
@@ -84,6 +85,7 @@ type attacher struct {
 	deadline    *time.Timer // the boundary or fence timeout, when one runs
 	deadlineEnd ending
 	nudge       *time.Timer // the second step of the resize nudge
+	escTimer    *time.Timer // ends the wait for the rest of a bare ESC
 
 	leaveOnce sync.Once
 }
@@ -97,6 +99,7 @@ func newAttacher(cfg attachConfig, c *client.Client, in io.Reader, out io.Writer
 		{&cfg.fenceTimeout, defaultFenceTimeout},
 		{&cfg.nudgeDelay, defaultNudgeDelay},
 		{&cfg.drainTimeout, defaultDrainTimeout},
+		{&cfg.escWait, escWait},
 	} {
 		if *d.v == 0 {
 			*d.v = d.def
@@ -146,6 +149,9 @@ func (a *attacher) loop(stop, winch <-chan os.Signal) ending {
 		case <-timerC(a.nudge):
 			a.nudge = nil
 			e = a.resize()
+		case <-timerC(a.escTimer):
+			a.escTimer = nil
+			e = a.flushEsc()
 		}
 		if e != nil {
 			return *e
@@ -200,8 +206,6 @@ func (a *attacher) event(ev client.Event, ok bool) *ending {
 		return a.replay(m)
 	case protocol.Live:
 		return a.live(m)
-	case protocol.RO:
-		return a.setRO(m.RO)
 	case protocol.Exit:
 		a.ended = true
 		return &ending{msg: fmt.Sprintf("[vaquita] session exited (code %d)", m.Code)}
@@ -271,8 +275,10 @@ func (a *attacher) frame(f protocol.Frame) *ending {
 	return sent(a.c.Ack(f.SID, f.Gen, a.off))
 }
 
-// setRO records whether this attach may write to the session and tells
-// the user when that changes.
+// setRO records whether this attach may write to the session, as a live
+// says after every replay, and tells the user when that changes. The replay
+// has closed the gate and the live arms a new fence, so replies owed for what
+// was rendered under the old role are discarded.
 func (a *attacher) setRO(ro bool) *ending {
 	changed := a.roKnown && ro == a.writable
 	first := !a.roKnown
@@ -332,6 +338,7 @@ func (a *attacher) input(in input) *ending {
 			}
 		}
 	}
+	a.holdEsc()
 	// A read-only attach is not the session's responder: the writer
 	// answers its queries, and keys typed here are dropped.
 	if len(p) > 0 && a.writable {

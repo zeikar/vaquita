@@ -36,7 +36,6 @@ const (
 	TSessions    = "sessions"
 	TReplay      = "replay"
 	TLive        = "live"
-	TRO          = "ro"
 	TExit        = "exit"
 )
 
@@ -164,13 +163,6 @@ type Live struct {
 	RO  bool   `json:"ro"`
 }
 
-// RO reports a change in whether this subscriber may write to the session.
-type RO struct {
-	T   string `json:"t"`
-	SID uint32 `json:"sid"`
-	RO  bool   `json:"ro"`
-}
-
 // Exit reports that the session's shell exited, after its last output.
 type Exit struct {
 	T    string `json:"t"`
@@ -210,8 +202,6 @@ func ParseMessage(data []byte) (any, error) {
 		return parse[Replay](data)
 	case TLive:
 		return parse[Live](data)
-	case TRO:
-		return parse[RO](data)
 	case TExit:
 		return parse[Exit](data)
 	}

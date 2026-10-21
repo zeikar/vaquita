@@ -262,7 +262,7 @@ func (c *conn) create(m protocol.Create) {
 	e := &entry{sid: t.allocSID(), inc: newInc(), listed: make(chan struct{})}
 	sub := newSubscriber(c, e)
 	e.subs = []*subscriber{sub}
-	e.setWriter()
+	e.setWriter(sub)
 	s, err := session.Start(session.Config{
 		SID:      int(e.sid),
 		Shell:    c.srv.opts.Shell,
@@ -316,7 +316,7 @@ func (c *conn) subscribe(sid uint32) {
 	sub.snapshot(s.Output().Ring())
 	e.subs = append(e.subs, sub)
 	c.addSub(sub)
-	e.setWriter()
+	e.setWriter(sub)
 	c.wakeWriter()
 }
 
@@ -365,7 +365,7 @@ func (c *conn) writer(sid uint32) *subscriber {
 	}
 	s := sub.e.sess
 	s.Lock()
-	writable := sub.writable
+	writable := sub.writable && !sub.needReset
 	s.Unlock()
 	if !writable {
 		// Dropped without an error: the client has been told it is
@@ -377,11 +377,24 @@ func (c *conn) writer(sid uint32) *subscriber {
 }
 
 func (c *conn) input(f protocol.Frame) {
-	sub := c.writer(f.SID)
+	sub := c.subscription(f.SID)
 	if sub == nil {
+		c.send(noSession(f.SID))
 		return
 	}
-	err := sub.e.sess.Write(f.Payload)
+	s := sub.e.sess
+	// Checked and queued under the session lock, so that a reset or a
+	// writer change cannot fall between: input of an earlier generation, such as
+	// replies to output that has since been replayed, never reaches the
+	// session. Write only appends to a buffer.
+	s.Lock()
+	if !sub.writable || sub.needReset || sub.dropped || f.Gen != sub.gen {
+		s.Unlock()
+		slog.Debug("input dropped: read-only or stale generation", "sid", f.SID, "remote", c.remote, "gen", f.Gen)
+		return
+	}
+	err := s.Write(f.Payload)
+	s.Unlock()
 	switch {
 	case errors.Is(err, session.ErrInputOverflow):
 		c.send(protocol.Error{T: protocol.TError, Code: protocol.CodeInputOverflow, SID: f.SID})

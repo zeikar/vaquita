@@ -1,11 +1,19 @@
 package main
 
-import "bytes"
+import (
+	"bytes"
+	"time"
+)
 
 // detachKey is Ctrl-\ as terminals send it by default. attach consumes the
 // key in every encoding, so the session never sees it: in a session with
 // ISIG set it would otherwise send SIGQUIT to the foreground job.
 const detachKey = 0x1c
+
+// escWait is how long a bare ESC or ESC [ is held for the rest of a key
+// report; a terminal sends a report in one write, so a pause this long means
+// the Escape key was pressed.
+const escWait = 25 * time.Millisecond
 
 // maxKeySeq bounds the CSI sequence a keyScanner collects; key reports are
 // far shorter.
@@ -20,10 +28,12 @@ const maxKeySeq = 64
 // seen set. A release of the key is dropped, as its press never reaches the
 // session.
 //
-// A CSI sequence cut off at the end of a read is held back until the next
-// read shows what it is; the program in the session could not act on half
-// a sequence anyway. A bare ESC or ESC [ is not: it is the Escape key, or
-// Alt-[, which programs tell from the start of a sequence by timing.
+// A sequence cut off at the end of a read is held back until the next read
+// shows what it is, so that a key report split at any byte is still
+// recognised; the program in the session could not act on half a sequence
+// anyway. A bare ESC or ESC [ may also be the Escape key, or Alt-[: the
+// caller flushes it when nothing follows within escWait, as programs tell
+// the two apart by timing too.
 type keyScanner struct {
 	seq []byte // the sequence in progress from its ESC; empty in ground
 }
@@ -37,11 +47,18 @@ func (k *keyScanner) scan(p []byte) (fwd []byte, detach bool) {
 			return fwd, true
 		}
 	}
-	if len(k.seq) > 0 && len(k.seq) <= 2 {
-		fwd = append(fwd, k.seq...)
-		k.seq = k.seq[:0]
-	}
 	return fwd, false
+}
+
+// bare reports whether the scanner holds only ESC or ESC [, which may be a
+// complete key rather than the start of a report.
+func (k *keyScanner) bare() bool { return len(k.seq) > 0 && len(k.seq) <= 2 }
+
+// flush returns what the scanner holds, to be passed on as it is.
+func (k *keyScanner) flush() []byte {
+	p := bytes.Clone(k.seq)
+	k.seq = k.seq[:0]
+	return p
 }
 
 func (k *keyScanner) step(fwd []byte, b byte) ([]byte, bool) {
