@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "description": "xterm.js for test.html (vaquita Phase 0 WebKit probes)",
+  "dependencies": {
+    "@xterm/addon-unicode11": "0.9.0",
+    "@xterm/xterm": "6.0.0"
+  }
+}

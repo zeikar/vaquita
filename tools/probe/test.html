@@ -1,0 +1,186 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
+<style>html, body { margin: 0; height: 100%; background: #1e1e1e; } #t { height: 100%; }</style>
+</head>
+<body>
+<div id="t"></div>
+<script src="node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script src="node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js"></script>
+<script>
+const qs = new URLSearchParams(location.search);
+const VQ = window.VQ || { label: qs.get('label') || '?', mode: qs.get('mode') || 'ime', fix: qs.get('fix') === '1' };
+const log = (...a) => {
+  const line = a.join(' ');
+  if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.log) {
+    window.webkit.messageHandlers.log.postMessage(line);
+  } else {
+    fetch('/log', { method: 'POST', body: '[' + VQ.label + '] ' + line });
+  }
+};
+window.onerror = (m) => log('jserror', m);
+
+// macOS 26 Korean IME on WebKit sends no composition events: a syllable starts with insertText and every
+// later jamo arrives as insertReplacementText of that last character, which xterm ignores. Hold the
+// syllable locally (shown as an overlay) and emit it once the next syllable starts or xterm emits anything.
+function installHangulReplacementFix(term, emit) {
+  const ta = term.textarea;
+  const host = term.element;
+  const HANGUL = /^[ᄀ-ᇿ㄰-㆏ꥠ-꥿가-힣ힰ-퟿]+$/;
+  let pending = '';
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:absolute;pointer-events:none;z-index:10;display:none;' +
+    'background:#1e1e1e;color:#fff;text-decoration:underline;font:14px "SF Mono", Menlo, monospace';
+  host.appendChild(overlay);
+  // xterm only moves its textarea to the cursor during composition, which never starts here.
+  const show = () => {
+    overlay.textContent = pending;
+    if (pending) {
+      const screen = host.querySelector('.xterm-screen');
+      const cw = screen.clientWidth / term.cols;
+      const ch = screen.clientHeight / term.rows;
+      const b = term.buffer.active;
+      overlay.style.left = screen.offsetLeft + b.cursorX * cw + 'px';
+      overlay.style.top = screen.offsetTop + b.cursorY * ch + 'px';
+      overlay.style.height = overlay.style.lineHeight = ch + 'px';
+    }
+    overlay.style.display = pending ? 'block' : 'none';
+  };
+  const flush = () => {
+    if (!pending) return;
+    const p = pending;
+    pending = '';
+    show();
+    emit(p);
+  };
+  const owns = (e) => {
+    if (e.target !== ta) return false;
+    if (e.inputType === 'deleteContentBackward') return pending !== '';
+    return (e.inputType === 'insertText' || e.inputType === 'insertReplacementText') && HANGUL.test(e.data || '');
+  };
+  host.addEventListener('beforeinput', (e) => { if (owns(e)) e.stopPropagation(); }, true);
+  host.addEventListener('input', (e) => {
+    if (!owns(e)) return;
+    e.stopPropagation();
+    if (e.inputType === 'insertText') { flush(); pending = e.data; }
+    else if (e.inputType === 'insertReplacementText') { pending = e.data; }
+    else { pending = ''; }
+    log('fix', e.inputType, JSON.stringify(e.data), 'pending=' + JSON.stringify(pending));
+    show();
+  }, true);
+  ta.addEventListener('blur', flush);
+  // A click (selection, copy) or app switch must commit too. The IME never sees the mouse and keeps
+  // treating the last char as composing, so bounce focus to make the next jamo start a new syllable.
+  const commit = () => {
+    if (!pending) return;
+    flush();
+    ta.blur();
+    ta.focus();
+    log('fix', 'commit-by-mouse/blur');
+  };
+  host.addEventListener('mousedown', commit, true);
+  window.addEventListener('blur', commit);
+  // The flushed syllable is echoed asynchronously; follow the cursor or the overlay covers it.
+  term.onCursorMove(() => { if (pending) show(); });
+  term.onWriteParsed(() => { if (pending) show(); });
+  return { flush };
+}
+
+const term = new Terminal({ allowProposedApi: true, fontFamily: 'SF Mono, Menlo, monospace', fontSize: 14 });
+term.loadAddon(new Unicode11Addon.Unicode11Addon());
+term.unicode.activeVersion = '11';
+term.open(document.getElementById('t'));
+log('load', 'unicode=' + term.unicode.activeVersion, navigator.userAgent);
+
+if (VQ.mode === 'ime') {
+  // Control: a plain WebKit textarea, to separate environment problems from xterm.js problems.
+  const plain = document.createElement('textarea');
+  plain.style.cssText = 'width:100%;height:48px;box-sizing:border-box;font-size:16px';
+  plain.placeholder = '① 여기(일반 입력칸)에 먼저: 안녕하세요 반갑습니다 → Enter';
+  document.body.insertBefore(plain, document.getElementById('t'));
+  document.getElementById('t').style.height = 'calc(100% - 48px)';
+  term.resize(term.cols, Math.max(5, term.rows - 3));
+  for (const ev of ['compositionstart', 'compositionupdate', 'compositionend']) {
+    plain.addEventListener(ev, (e) => log('plain-' + ev, JSON.stringify(e.data)));
+  }
+  plain.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); log('plain-line', JSON.stringify(plain.value)); plain.value = ''; }
+  });
+  term.writeln('② 그다음 이 터미널을 클릭하고 순서대로 입력, 각각 Enter:');
+  term.writeln(' 1) 안녕하세요 반갑습니다');
+  term.writeln(' 2) "갃" 까지 친 뒤 백스페이스 두 번, 이어서 "강"');
+  term.writeln(' 3) 조합 중(마지막 글자 밑줄 상태)에 바로 Enter: 테스트');
+  term.writeln('끝나면 창을 닫으세요.');
+  let line = '';
+  const redraw = () => term.write('\r\x1b[2K> ' + line);
+  term.write('> ');
+  const handleData = (d) => {
+    log('data', JSON.stringify(d), [...d].map((c) => c.codePointAt(0).toString(16)).join(','));
+    if (d === '\r') { log('line', JSON.stringify(line)); line = ''; term.write('\r\n> '); return; }
+    if (d === '\x7f') { line = [...line].slice(0, -1).join(''); redraw(); return; }
+    if (d.startsWith('\x1b')) return;
+    line += d; redraw();
+  };
+  const fix = VQ.fix ? installHangulReplacementFix(term, handleData) : null;
+  log('fix=' + (fix ? 'on' : 'off'));
+  term.onData((d) => { if (fix) fix.flush(); handleData(d); });
+  const ta = term.textarea;
+  for (const ev of ['compositionstart', 'compositionupdate', 'compositionend']) {
+    ta.addEventListener(ev, (e) => log(ev, JSON.stringify(e.data)));
+  }
+  ta.addEventListener('keydown', (e) => log('keydown', JSON.stringify(e.key), e.keyCode, 'composing=' + e.isComposing));
+  // Capture phase on the container sees textarea input events before xterm's own listeners.
+  const host = document.getElementById('t');
+  const snap = () => 'value=' + JSON.stringify(ta.value) + ' sel=' + ta.selectionStart + '-' + ta.selectionEnd;
+  for (const ev of ['beforeinput', 'input']) {
+    host.addEventListener(ev, (e) => {
+      if (e.target !== ta) return;
+      log(ev, e.inputType, JSON.stringify(e.data), 'composing=' + e.isComposing, snap());
+    }, true);
+  }
+  host.addEventListener('keyup', (e) => { if (e.target === ta) log('keyup', JSON.stringify(e.key), snap()); }, true);
+  term.focus();
+} else if (VQ.mode === 'throttle2') {
+  // Probes pushed by an outside server over long-poll, like vaquitad's WebSocket would.
+  term.writeln('throttle probe (server-driven) ' + VQ.label);
+  const pendingSeq = [];
+  term.onData((d) => {
+    if (d.startsWith('\x1b[?') && pendingSeq.length) {
+      fetch('/ack?w=' + VQ.label + '&s=' + pendingSeq.shift(), { method: 'POST', body: '' });
+    }
+  });
+  (async () => {
+    let last = 0;
+    for (;;) {
+      try {
+        const r = await fetch('/next?w=' + VQ.label + '&after=' + last, { cache: 'no-store' });
+        last = parseInt(await r.text(), 10);
+        pendingSeq.push(last);
+        term.write('\x1b[c');
+      } catch (e) {
+        await new Promise((res) => setTimeout(res, 500));
+      }
+    }
+  })();
+  document.addEventListener('visibilitychange', () => log('visibility', document.visibilityState));
+} else {
+  // Throttle probe: timer drift inside the page, and write->onData round trips driven from the app.
+  term.writeln('throttle probe ' + VQ.label);
+  let last = performance.now();
+  let maxGap = 0;
+  const tick = () => { const now = performance.now(); maxGap = Math.max(maxGap, now - last); last = now; setTimeout(tick, 100); };
+  setTimeout(tick, 100);
+  const pending = [];
+  term.onData((d) => {
+    if (d.startsWith('\x1b[?') && pending.length) log('ack', pending.shift());
+  });
+  // Called by the app (like a WebSocket message would arrive).
+  window.vqProbe = (seq) => { pending.push(seq); term.write('\x1b[c'); return 1; };
+  setInterval(() => { log('stat', 'maxGap=' + maxGap.toFixed(0), 'vis=' + document.visibilityState); maxGap = 0; }, 2000);
+  document.addEventListener('visibilitychange', () => log('visibility', document.visibilityState));
+}
+</script>
+</body>
+</html>

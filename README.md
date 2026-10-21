@@ -1,0 +1,20 @@
+# vaquita
+
+A lightweight macOS terminal for coding agents such as Claude Code and Codex.
+
+It's at the very start. Nothing to install yet; what's here is the tooling used to check the risky parts before building. The plan:
+
+- Sessions live in a small daemon (`vaquitad`), so shells and agents keep running when the app restarts.
+- One sidebar shows your repos, their worktrees and the sessions in each, with every agent's state: working, needs input, done.
+- Agent state comes from what the agents already write to the terminal (OSC 7501 status reports and their notification sequences), so no hooks or global settings are needed.
+
+## tools/probe
+
+- `probe.py` runs Claude Code or Codex in a PTY, answers terminal queries, and records queries, mode changes, OSC 7501 reports and OSC 9/777 notifications.
+  `python3 -I tools/probe/probe.py <claude|claude-noanswer|claude-perm|claude-perm-ghostty|claude-perm-ghostty-blur|codex|codex-notify> <out-dir>`
+- `test.html` and `main.swift` are a WKWebView test bed for xterm.js: a fix for macOS Korean IME input on WebKit, and background-throttling measurements. Run `npm ci` in `tools/probe` first.
+- `serve.py` and `serve2.py` are loopback helpers for the page.
+
+## License
+
+[MIT](LICENSE)
