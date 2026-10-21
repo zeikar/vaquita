@@ -8,7 +8,9 @@ import (
 const usage = `usage: vaquitad <command>
 
 commands:
-  serve    run the daemon in the foreground
+  serve [--allow-origin ORIGIN]...
+           run the daemon in the foreground
+  ls       list the running daemon's sessions
 `
 
 func main() {
@@ -19,7 +21,9 @@ func main() {
 	var err error
 	switch os.Args[1] {
 	case "serve":
-		err = serve()
+		err = serve(os.Args[2:])
+	case "ls":
+		err = ls(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return
