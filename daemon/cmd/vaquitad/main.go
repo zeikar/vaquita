@@ -17,6 +17,9 @@ commands:
            attach this terminal to a session, or to a new one running
            CMD (a plain shell without one); Ctrl-\ detaches and is never
            sent to the session
+  install [--print | --bootstrap]
+           write the LaunchAgent plist (--print: show it only;
+           --bootstrap: also load it with launchctl)
 `
 
 // errShown is returned by a command whose failure has already been shown
@@ -36,6 +39,8 @@ func main() {
 		err = ls(os.Args[2:])
 	case "attach":
 		err = attach(os.Args[2:])
+	case "install":
+		err = install(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return

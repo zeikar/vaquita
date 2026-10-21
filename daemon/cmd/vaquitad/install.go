@@ -1,0 +1,122 @@
+package main
+
+import (
+	"bytes"
+	"flag"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/zeikar/vaquita/daemon/internal/state"
+)
+
+// launchAgentsDir is a variable so tests can point the write at a temp dir.
+var launchAgentsDir = func() (string, error) {
+	u, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	return filepath.Join(u, "Library", "LaunchAgents"), nil
+}
+
+func install(args []string) error {
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	printOnly := fs.Bool("print", false, "render the plist to stdout and write nothing")
+	bootstrap := fs.Bool("bootstrap", false, "run launchctl bootstrap after writing the plist")
+	if err := fs.Parse(args); err != nil {
+		return errShown
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("install: unexpected argument %q", fs.Arg(0))
+	}
+	if *printOnly && *bootstrap {
+		return fmt.Errorf("install: --print and --bootstrap cannot be combined")
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("find executable: %w", err)
+	}
+	if exe, err = filepath.EvalSymlinks(exe); err != nil {
+		return fmt.Errorf("resolve executable: %w", err)
+	}
+	home, err := state.Home()
+	if err != nil {
+		return err
+	}
+	label := state.Label()
+	plist := renderPlist(label, exe, home)
+
+	if *printOnly {
+		_, err := os.Stdout.Write(plist)
+		return err
+	}
+	if err := checkExeStable(exe); err != nil {
+		return err
+	}
+	dir, err := launchAgentsDir()
+	if err != nil {
+		return err
+	}
+	path, err := writeAgentPlist(dir, label, plist)
+	if err != nil {
+		return err
+	}
+	target := fmt.Sprintf("gui/%d", os.Getuid())
+	fmt.Printf("wrote %s\n", path)
+	if *bootstrap {
+		return runBootstrap(target, path)
+	}
+	fmt.Printf(`
+next steps:
+  launchctl bootstrap %[1]s %[2]s
+  launchctl print %[1]s/%[3]s
+  launchctl bootout %[1]s/%[3]s
+`, target, path, label)
+	return nil
+}
+
+// checkExeStable refuses executables that a LaunchAgent would outlive: go run
+// binaries and anything under the temp dir.
+func checkExeStable(exe string) error {
+	tmp := os.TempDir()
+	if r, err := filepath.EvalSymlinks(tmp); err == nil {
+		tmp = r
+	}
+	if strings.Contains(exe, "go-build") || strings.HasPrefix(exe, filepath.Clean(tmp)+string(filepath.Separator)) {
+		return fmt.Errorf("refusing to install %s: it is a temporary build; run `go build -o <path>/vaquitad ./cmd/vaquitad` and run install from that binary", exe)
+	}
+	return nil
+}
+
+// writeAgentPlist writes <dir>/<label>.plist and lints it; a plist that fails
+// the lint is removed so launchd never sees it.
+func writeAgentPlist(dir, label string, plist []byte) (string, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create %s: %w", dir, err)
+	}
+	path := filepath.Join(dir, label+".plist")
+	if err := os.WriteFile(path, plist, 0o644); err != nil {
+		return "", fmt.Errorf("write %s: %w", path, err)
+	}
+	if out, err := exec.Command("plutil", "-lint", path).CombinedOutput(); err != nil {
+		os.Remove(path)
+		return "", fmt.Errorf("plutil -lint %s failed: %w\n%s", path, err, out)
+	}
+	return path, nil
+}
+
+func runBootstrap(target, path string) error {
+	fmt.Printf("running: launchctl bootstrap %s %s\n", target, path)
+	cmd := exec.Command("launchctl", "bootstrap", target, path)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("launchctl bootstrap failed: %w\n%s\nif the agent is already loaded, run `launchctl bootout %s/%s` first",
+			err, strings.TrimSpace(stderr.String()), target, strings.TrimSuffix(filepath.Base(path), ".plist"))
+	}
+	fmt.Println("bootstrapped")
+	return nil
+}
