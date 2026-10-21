@@ -1,6 +1,6 @@
 # vaquita
 
-A lightweight alternative to [Orca](https://www.onorca.dev/), the agent IDE, for macOS. It keeps the core: coding agents such as Claude Code and Codex running side by side, each in its own git worktree. It leaves out the rest: no editor, browser or diff review.
+A lightweight alternative to [Orca](https://www.onorca.dev/), the agent IDE, for macOS. It starts from the core: coding agents such as Claude Code and Codex running side by side, each in its own git worktree.
 
 It's at the very start. Nothing to install yet; what's here is the tooling used to check the risky parts before building. The plan:
 
