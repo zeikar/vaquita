@@ -12,15 +12,9 @@ import (
 	"github.com/zeikar/vaquita/daemon/internal/state"
 )
 
-// launchAgentsDir is a variable so tests can point the write at a temp dir.
-var launchAgentsDir = func() (string, error) {
-	u, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
-	}
-	return filepath.Join(u, "Library", "LaunchAgents"), nil
-}
-
+// install writes the plist into VAQUITA_HOME rather than ~/Library/LaunchAgents:
+// launchd then loads the agent only when it is bootstrapped, so nothing starts
+// at login and the instance's home holds everything that belongs to it.
 func install(args []string) error {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	printOnly := fs.Bool("print", false, "render the plist to stdout and write nothing")
@@ -56,11 +50,7 @@ func install(args []string) error {
 	if err := checkExeStable(exe); err != nil {
 		return err
 	}
-	dir, err := launchAgentsDir()
-	if err != nil {
-		return err
-	}
-	path, err := writeAgentPlist(dir, label, plist)
+	path, err := writeAgentPlist(home, label, plist)
 	if err != nil {
 		return err
 	}

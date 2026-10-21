@@ -64,7 +64,7 @@ func TestPlistEscapesPaths(t *testing.T) {
 }
 
 func TestWriteAgentPlist(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "LaunchAgents")
+	dir := filepath.Join(t.TempDir(), "home")
 	path, err := writeAgentPlist(dir, "io.example.test", renderPlist("io.example.test", "/e", "/h"))
 	if err != nil {
 		t.Fatal(err)
