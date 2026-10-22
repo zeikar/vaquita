@@ -18,6 +18,18 @@ import (
 // report is a shell command that writes a root OSC 7501 report of state,
 // with kind and a base64 msg when they are not empty.
 func report(state, kind, msg string) string {
+	return `printf '\033]7501;` + payload(state, kind, msg) + `\033\\'`
+}
+
+// held is a report from a job of its own that reads one line from the
+// terminal before it exits. The daemon clears a working or blocked view whose
+// reporter is gone, which the shell itself, printing in its own process
+// group, would be.
+func held(state, kind, msg string) string {
+	return `set -m; sh -c 'printf "\033]7501;` + payload(state, kind, msg) + `\007"; read l'`
+}
+
+func payload(state, kind, msg string) string {
 	p := "state=" + state
 	if kind != "" {
 		p += ":kind=" + kind
@@ -25,7 +37,7 @@ func report(state, kind, msg string) string {
 	if msg != "" {
 		p += ":msg=" + base64.StdEncoding.EncodeToString([]byte(msg))
 	}
-	return `printf '\033]7501;` + p + `\033\\'`
+	return p
 }
 
 // burst is a shell loop that writes, for each i from from to to, a working
@@ -77,7 +89,7 @@ func TestStatusNamesMatchProtocol(t *testing.T) {
 func TestStatusAndNotify(t *testing.T) {
 	srv := startSessionServer(t, Options{})
 	a := dialClient(t, srv)
-	sid := a.create(report("working", "", "") + "; read l; " + report("blocked", "permission", "Allow rm?") + "; read l")
+	sid := a.create(held("working", "", "") + "; " + held("blocked", "permission", "Allow rm?") + "; read l")
 	working := protocol.StatusInfo{State: protocol.ViewWorking}
 	if s := a.waitStatus(sid, showing(protocol.ViewWorking)); *s.Status != working || s.Unread {
 		t.Errorf("status %+v showing %+v, want working and read", s, *s.Status)
@@ -142,7 +154,7 @@ func TestSeen(t *testing.T) {
 func TestDoneNotifiedAfterQuiet(t *testing.T) {
 	srv := startSessionServer(t, Options{})
 	a := dialClient(t, srv)
-	sid := a.create(report("working", "", "") + "; read l; " + report("done", "", "All set") + "; read l")
+	sid := a.create(held("working", "", "") + "; " + report("done", "", "All set") + "; read l")
 	a.waitStatus(sid, showing(protocol.ViewWorking))
 	// The done is written only once the shell has read this input, so it is
 	// stamped after start.
@@ -338,7 +350,7 @@ func TestStatusReadBeforeListed(t *testing.T) {
 	tb.mu.Lock()
 	last := tb.lastSID
 	tb.mu.Unlock()
-	if err := a.c.Create("", report("working", "", "")+"; "+report("blocked", "question", "Which one?")+"; read l", "test", 80, 24); err != nil {
+	if err := a.c.Create("", report("working", "", "")+"; "+held("blocked", "question", "Which one?")+"; read l", "test", 80, 24); err != nil {
 		t.Fatal(err)
 	}
 

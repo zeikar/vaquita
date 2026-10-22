@@ -236,6 +236,21 @@ func TestOutputCodexCompletion(t *testing.T) {
 	})
 }
 
+// A lone number is a valid Codex reply; progress commands are not replies.
+func TestOutputCodexNumericCompletion(t *testing.T) {
+	o, _ := statusOutput()
+	o.Feed([]byte("\x1b]9;42\x1b\\\x1b]7501;state=idle:app=codex\x1b\\"))
+	if v, unread := o.View(); v != (status.View{State: status.ViewDone, Msg: "42"}) || !unread {
+		t.Fatalf("view %+v unread %v", v, unread)
+	}
+
+	o, _ = statusOutput()
+	o.Feed([]byte("\x1b]9;4;1;50\x1b\\\x1b]7501;state=idle:app=codex\x1b\\"))
+	if v, _ := o.View(); v.State == status.ViewDone {
+		t.Fatalf("progress report completed the turn: %+v", v)
+	}
+}
+
 func TestOutputChildReportChangesNothing(t *testing.T) {
 	o, _ := statusOutput()
 	o.Feed([]byte("\x1b]7501;id=sub:state=done\x07"))
@@ -396,6 +411,62 @@ func TestOutputForegroundGroupPoll(t *testing.T) {
 	}
 	if _, ok := o.NextDeadline(d.Add(time.Second)); ok {
 		t.Fatal("deadline left after the group died")
+	}
+}
+
+// A report read while the shell's own group is in the foreground comes from a
+// program that has already exited: the next poll clears it without asking
+// whether the shell's group is alive.
+func TestOutputReportFromShellGroupClears(t *testing.T) {
+	o, now, _, polls := watchedOutput()
+	t0 := *now
+	o.leader = 42
+	o.LeaderIsShell = func() bool { return true }
+	o.Feed([]byte(working))
+	if changed, _ := o.TakeStatus(); !changed {
+		t.Fatal("working report not published before the clear")
+	}
+	if v, _ := o.View(); v.State != status.ViewWorking {
+		t.Fatalf("view %+v, want working until the poll", v)
+	}
+	d, ok := o.NextDeadline(t0)
+	if !ok || !d.Equal(t0.Add(fgPollGap)) {
+		t.Fatalf("deadline %v, %v; want the poll at %v", d, ok, t0.Add(fgPollGap))
+	}
+	o.Tick(d)
+	if v, _ := o.View(); v != (status.View{}) || *polls != 0 {
+		t.Fatalf("view %+v after %d group checks; want it cleared with none", v, *polls)
+	}
+	if _, ok := o.NextDeadline(d); ok {
+		t.Fatal("deadline left after the clear")
+	}
+}
+
+// An agent that replaced the shell with exec shares the leader's group; it is
+// watched like any reporter, and its completion is still notified.
+func TestOutputReportFromReplacedLeaderIsWatched(t *testing.T) {
+	for name, fn := range map[string]func() bool{
+		"not a shell":      func() bool { return false },
+		"no LeaderIsShell": nil,
+	} {
+		o, now, _, polls := watchedOutput()
+		t0 := *now
+		o.leader = 42
+		o.LeaderIsShell = fn
+		o.Feed([]byte(working))
+		o.TakeStatus()
+		for i := 1; i <= 3; i++ {
+			o.Tick(t0.Add(time.Duration(i) * fgPollGap))
+		}
+		if v, _ := o.View(); v.State != status.ViewWorking || *polls != 3 {
+			t.Fatalf("%s: view %+v after %d group checks; want working and 3", name, v, *polls)
+		}
+		*now = t0.Add(3 * fgPollGap)
+		o.Feed([]byte(codexPong))
+		o.Tick(now.Add(2 * time.Second))
+		if _, notes := o.TakeStatus(); len(notes) != 1 || notes[0].Kind != status.NotifyDone {
+			t.Fatalf("%s: notes %v, want the done", name, notes)
+		}
 	}
 }
 

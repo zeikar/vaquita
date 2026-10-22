@@ -293,6 +293,83 @@ func TestSessionInputOverflow(t *testing.T) {
 	ts.waitClosed(t)
 }
 
+// A program that reports and dies before the daemon reads the report leaves
+// the shell's group in the foreground. That group never goes away, so the
+// view must not be left to watch it.
+func TestReporterGoneBeforeReadClearsView(t *testing.T) {
+	ts := startSession(t, `set -m; sh -c 'printf "\033]7501;state=working:app=x\007"'; read l; printf "after:%s" "$l"`, nil)
+	deadline := time.After(testTimeout)
+	for {
+		ts.Lock()
+		v, _ := ts.out.View()
+		ts.Unlock()
+		if v.State == status.ViewWorking {
+			break
+		}
+		select {
+		case <-ts.output:
+		case <-deadline:
+			t.Fatalf("view never turned working; output ends %q", tail(ringText(ts.Session)))
+		}
+	}
+	stop := time.Now().Add(testTimeout)
+	for {
+		ts.Lock()
+		v, _ := ts.out.View()
+		d, ok := ts.out.NextDeadline(ts.out.Now())
+		if v == (status.View{}) {
+			ts.Unlock()
+			return
+		}
+		if !ok {
+			ts.Unlock()
+			t.Fatalf("no poll scheduled for view %+v", v)
+		}
+		ts.out.Tick(d)
+		ts.Unlock()
+		if time.Now().After(stop) {
+			t.Fatalf("view %+v outlived its reporter", v)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// An agent started with exec replaces the shell and keeps its process group,
+// so the shell's group is in the foreground and alive for as long as the agent
+// is. The leader is no shell then, and the view must outlast several polls.
+func TestExecAgentKeepsView(t *testing.T) {
+	ts := startSession(t, `sleep 0.2; exec /usr/bin/perl -e '$|=1; print "\e]7501;state=working:app=x\a"; sleep 60'`, nil)
+	deadline := time.After(testTimeout)
+	for {
+		ts.Lock()
+		v, _ := ts.out.View()
+		ts.Unlock()
+		if v.State == status.ViewWorking {
+			break
+		}
+		select {
+		case <-ts.output:
+		case <-deadline:
+			t.Fatalf("view never turned working; output ends %q", tail(ringText(ts.Session)))
+		}
+	}
+	stop := time.Now().Add(3 * fgPollGap)
+	for time.Now().Before(stop) {
+		ts.Lock()
+		if ts.out.reporter != ts.PID() || ts.out.gone {
+			t.Fatalf("reporter %d gone %v, want the leader %d watched", ts.out.reporter, ts.out.gone, ts.PID())
+		}
+		d, _ := ts.out.NextDeadline(ts.out.Now())
+		ts.out.Tick(d)
+		v, _ := ts.out.View()
+		ts.Unlock()
+		if v.State != status.ViewWorking {
+			t.Fatalf("view %+v cleared while the agent lives", v)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // A program killed in its own process group, as claude runs under the
 // session's shell, ends neither the session nor its working view by itself;
 // the poll of the foreground group it reported from clears the view. The

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -178,6 +179,8 @@ func Start(cfg Config) (*Session, error) {
 		rows:       cfg.Rows,
 		inWake:     make(chan struct{}, 1),
 	}
+	s.out.leader = s.pid
+	s.out.LeaderIsShell = leaderIsShell(s.pid, cfg.Shell)
 	s.out.Foreground = s.foreground
 	s.out.GroupAlive = groupAlive
 	name := "session " + strconv.Itoa(s.pid)
@@ -283,6 +286,33 @@ func (s *Session) foreground() (int, error) {
 		return 0, ErrClosed
 	}
 	return unix.IoctlGetInt(int(s.master.Fd()), unix.TIOCGPGRP)
+}
+
+// shellNames are the programs taken for a shell besides the session's own.
+var shellNames = []string{"sh", "bash", "zsh", "dash", "ksh", "fish", "tcsh", "csh"}
+
+// leaderIsShell returns a function that reports whether the process pid is
+// running a shell, by its command name, which the kernel truncates to
+// MAXCOMLEN. A failed lookup says false: the caller must not take a live
+// agent for a shell.
+func leaderIsShell(pid int, shell string) func() bool {
+	names := append([]string{filepath.Base(shell)}, shellNames...)
+	return func() bool {
+		kp, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+		if err != nil {
+			return false
+		}
+		comm := strings.TrimPrefix(unix.ByteSliceToString(kp.Proc.P_comm[:]), "-")
+		for _, n := range names {
+			if len(n) > 16 {
+				n = n[:16]
+			}
+			if comm == n {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // groupAlive reports whether process group pgid still has a member. EPERM

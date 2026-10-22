@@ -48,14 +48,14 @@ func ParseNotify(num int, payload []byte) (Notify, bool) {
 	return Notify{}, false
 }
 
-// conEmuCommand reports whether p starts with digits that end at a ';' or at
-// the end of p, as in "4;1;50" or "12".
+// conEmuCommand reports whether p starts with digits and a ';', as in
+// "4;1;50".
 func conEmuCommand(p []byte) bool {
 	i := 0
 	for i < len(p) && p[i] >= '0' && p[i] <= '9' {
 		i++
 	}
-	return i > 0 && (i == len(p) || p[i] == ';')
+	return i > 0 && i < len(p) && p[i] == ';'
 }
 
 // text copies b as valid UTF-8 of at most maxNotifyText bytes.

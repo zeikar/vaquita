@@ -30,7 +30,20 @@ type Output struct {
 	// waiting for input, Tick polls it from nextPoll on: the program runs in
 	// a group of its own under the session's shell, so its death, even by
 	// SIGKILL, ends neither the session nor anything the projector sees.
+	//
+	// leader is the process group of the session's shell, 0 in unit tests. An
+	// agent normally runs as a foreground job of its own, so a report read
+	// while the leader's group is in the foreground means either that the
+	// reporter has already exited and the shell has control again, or that the
+	// agent replaced the shell with exec and shares its group. LeaderIsShell
+	// tells them apart; for a shell, gone is set and Tick clears the view at
+	// the next poll without asking GroupAlive, which the shell's group would
+	// pass forever. Clearing waits for the poll so the report is still
+	// published first. A replaced leader is watched like any reporter: its
+	// group lasts as long as the session, whose exit clears the status.
 	reporter int
+	leader   int
+	gone     bool
 	nextPoll time.Time
 
 	// Now stamps the reports the projector sees; tests replace it.
@@ -42,6 +55,10 @@ type Output struct {
 	// cannot tell, or one at most 1, leaves a report without a reporter.
 	Foreground func() (int, error)
 	GroupAlive func(pgid int) bool
+	// LeaderIsShell reports whether the session leader is running a shell. It
+	// is nil in unit tests that need no such evidence, and must say false when
+	// it cannot tell: a live agent is never cleared on a guess.
+	LeaderIsShell func() bool
 }
 
 // fgPollGap is how often the reporter's process group is polled.
@@ -116,7 +133,7 @@ func (o *Output) Tick(now time.Time) {
 	if !o.polling() || now.Before(o.nextPoll) {
 		return
 	}
-	if o.GroupAlive(o.reporter) {
+	if !o.gone && o.GroupAlive(o.reporter) {
 		o.nextPoll = now.Add(fgPollGap)
 		return
 	}
@@ -129,7 +146,7 @@ func (o *Output) Tick(now time.Time) {
 func (o *Output) interrupt() {
 	o.records.PromptStart()
 	o.proj.Interrupt()
-	o.reporter = 0
+	o.reporter, o.gone = 0, false
 }
 
 // NextDeadline reports when Tick next has something to do. now is unused:
@@ -157,16 +174,18 @@ func (o *Output) polling() bool {
 }
 
 // watch records the foreground process group as the reporter of a root
-// report, or forgets it.
+// report, or forgets it. The leader's group is recorded as gone when the
+// leader is a shell, for the next poll to find.
 func (o *Output) watch(state string, now time.Time) {
 	switch state {
 	case status.StateWorking, status.StateBlocked:
-		o.reporter = 0
+		o.reporter, o.gone = 0, false
 		if o.Foreground == nil {
 			return
 		}
 		if pgid, err := o.Foreground(); err == nil && pgid > 1 {
 			o.reporter, o.nextPoll = pgid, now.Add(fgPollGap)
+			o.gone = pgid == o.leader && o.LeaderIsShell != nil && o.LeaderIsShell()
 		}
 	case status.StateClear:
 		o.reporter = 0
