@@ -1,0 +1,180 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      RUST_TOOLCHAIN: 1.99.1
+    steps:
+      - name: Check signing secrets
+        env:
+          P12: ${{ secrets.VAQUITA_SIGN_P12 }}
+          P12_PASSWORD: ${{ secrets.VAQUITA_SIGN_P12_PASSWORD }}
+          IDENTITY: ${{ secrets.VAQUITA_SIGN_IDENTITY }}
+        run: |
+          missing=0
+          for name in P12 P12_PASSWORD IDENTITY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Repository secret VAQUITA_SIGN_${name} is not set; a release must be signed."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Read version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME is not vX.Y.Z or vX.Y.Z-prerelease."
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: daemon/go.mod
+          cache-dependency-path: daemon/go.sum
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: app/src-tauri -> target
+
+      - name: Test daemon
+        working-directory: daemon
+        run: go test ./...
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Test app
+        working-directory: app
+        run: |
+          npm test
+          npm run check
+
+      # The build signs vaquitad (beforeBuildCommand, through the Makefile)
+      # before Tauri's bundler runs, so the certificate must already be in a
+      # keychain on the search list.
+      - name: Import signing certificate
+        env:
+          P12: ${{ secrets.VAQUITA_SIGN_P12 }}
+          P12_PASSWORD: ${{ secrets.VAQUITA_SIGN_P12_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/vaquita-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/signing.p12" -k "$KEYCHAIN" \
+            -P "$P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/signing.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          # Put it first on the user search list, keeping the existing ones.
+          existing="$(security list-keychains -d user | tr -d '"')"
+          # shellcheck disable=SC2086
+          security list-keychains -d user -s "$KEYCHAIN" $existing
+
+      - name: Build
+        working-directory: app
+        env:
+          VAQUITA_SIGN_IDENTITY: ${{ secrets.VAQUITA_SIGN_IDENTITY }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.VAQUITA_SIGN_IDENTITY }}
+        run: |
+          npx tauri build --config "{\"version\": \"$VERSION\"}"
+
+      - name: Verify signatures
+        env:
+          IDENTITY: ${{ secrets.VAQUITA_SIGN_IDENTITY }}
+        run: |
+          APP=app/src-tauri/target/release/bundle/macos/vaquita.app
+          check() {
+            local path="$1" want_id="$2" info
+            info="$(codesign -dv --verbose=2 "$path" 2>&1)"
+            echo "$info"
+            if [ -n "$want_id" ] && ! grep -qxF "Identifier=$want_id" <<< "$info"; then
+              echo "::error::$path: expected Identifier=$want_id"
+              exit 1
+            fi
+            if ! grep -qxF "Authority=$IDENTITY" <<< "$info"; then
+              echo "::error::$path: expected Authority=$IDENTITY"
+              exit 1
+            fi
+          }
+          check "$APP/Contents/MacOS/vaquitad" io.github.zeikar.vaquitad
+          check "$APP" ""
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+      - name: Package
+        run: |
+          ZIP="vaquita-$VERSION-macos-arm64.zip"
+          ditto -c -k --keepParent app/src-tauri/target/release/bundle/macos/vaquita.app "$ZIP"
+          shasum -a 256 "$ZIP" > "$ZIP.sha256"
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
+          Apple Silicon only. The app is signed with a self-signed certificate and is not notarized.
+
+          Install: unzip, move `vaquita.app` to `/Applications`, then run this once to clear the quarantine flag (recursive, so the embedded daemon is cleared too):
+
+          ```sh
+          xattr -dr com.apple.quarantine /Applications/vaquita.app
+          ```
+
+          Update: quit vaquita and replace the app in Finder. Do not `cp -R` over it while the daemon runs.
+
+          The app installs and starts its daemon (a LaunchAgent; nothing starts at login) by itself.
+
+          ---
+
+          NOTES
+          flags=()
+          if [[ "$VERSION" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" "$ZIP" "$ZIP.sha256" \
+            --verify-tag \
+            --title "vaquita $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --generate-notes \
+            "${flags[@]}"
+
+      - name: Delete signing keychain
+        if: always()
+        run: |
+          if [ -n "$KEYCHAIN" ]; then
+            security delete-keychain "$KEYCHAIN" || true
+          fi
+          rm -f "$RUNNER_TEMP/signing.p12"

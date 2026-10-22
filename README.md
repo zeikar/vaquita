@@ -8,6 +8,16 @@ It's at the very start. The daemon works from the terminal, and the app exists i
 - One sidebar shows your repos, their worktrees and the sessions in each, with every agent's state: working, needs input, done.
 - Agent state comes from what the agents already write to the terminal (OSC 7501 status reports and their notification sequences), so no hooks or global settings are needed.
 
+## Install
+
+Download `vaquita-<version>-macos-arm64.zip` from [Releases](https://github.com/zeikar/vaquita/releases) (Apple Silicon only), unzip it and move `vaquita.app` to `/Applications`. The app is signed with a self-signed certificate and not notarized, so clear the quarantine flag once (recursive, so the embedded daemon is covered too):
+
+```sh
+xattr -dr com.apple.quarantine /Applications/vaquita.app
+```
+
+The app installs and starts its daemon by itself. To update, quit vaquita and replace the app in Finder; don't `cp -R` over it while the daemon runs.
+
 ## Daemon
 
 Build it and run a dev instance, which keeps its own home so a stable instance is untouched:
