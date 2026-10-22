@@ -6,7 +6,7 @@
     "module": "ESNext",
     "resolveJsonModule": true,
     "strict": true,
-    "types": ["vite/client"]
+    "types": ["vite/client", "node"]
   },
-  "include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts", "vite-dev-endpoint.ts"]
 }
