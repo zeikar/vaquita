@@ -2,7 +2,7 @@
 
 A lightweight alternative to [Orca](https://www.onorca.dev/), the agent IDE, for macOS. It starts from the core: coding agents such as Claude Code and Codex running side by side, each in its own git worktree.
 
-It's at the very start. The daemon works from the terminal, and the app exists in an early form: a session list and one terminal. Alongside it is the tooling used to check the risky parts before building. The plan:
+It's at the very start. The daemon works from the terminal, and the app exists in an early form: a session list that shows each agent's state, and one terminal. Alongside it is the tooling used to check the risky parts before building. The plan:
 
 - Sessions live in a small daemon (`vaquitad`), so shells and agents keep running when the app restarts.
 - One sidebar shows your repos, their worktrees and the sessions in each, with every agent's state: working, needs input, done.
@@ -36,6 +36,8 @@ From another terminal, after the same `export`:
 - `vaquitad attach --new` starts a shell session and attaches to it; `attach --new -- <cmd>` runs a command such as an agent instead. `Ctrl-\` detaches and leaves the session running.
 - `vaquitad install` writes a LaunchAgent plist into `$VAQUITA_HOME` and prints the `launchctl` commands that load and unload it. Nothing goes into `~/Library/LaunchAgents`, so nothing starts at login. `--bootstrap` also loads it into launchd; `--print` only prints the plist.
 
+A session whose command starts with `codex`, from the app or from `attach --new -- codex`, runs it with `-c` options that turn on Codex's OSC 9 notifications for that session only: the daemon tells a finished Codex turn from a cancelled one by them. Codex typed into a plain shell session runs without them, so its finished turns are not shown.
+
 ## App
 
 A Tauri app in `app/` (Svelte, xterm.js). It needs Node and Rust. Homebrew's `rustup` is keg-only, so put it on the path for cargo and tauri commands: `PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
@@ -57,6 +59,8 @@ What it does so far:
 - A flat list of sessions, one terminal shown at a time. You can create and kill sessions.
 - Sessions live in the daemon, so after an app restart the screen is restored.
 - A fix for Korean IME input on WebKit, clickable links, file drop, and OSC 52 copy.
+- Each session shows its agent's state: a spinner while it works, ⚠ with the permission or question it waits on, 🔑 when it needs a login, ✓ or ✗ when a turn ends, and a dot until you have looked at it.
+- A desktop notification when an agent finishes, fails or needs input, unless that session is in front of you. Clicking it opens the session. Notifications missed while the app was closed are summed up in one when it reconnects.
 
 A release build looks for the daemon and, if none is running, starts its LaunchAgent through launchd. When the agent is not loaded, it first installs it with the vaquitad inside the app, so no separate `vaquitad install` is needed. `tauri dev` never does; it shows a hint instead.
 
