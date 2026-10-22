@@ -224,6 +224,9 @@ func (p *Projector) Take() (changed bool, notes []Notification) {
 	return changed, notes
 }
 
+// Pending reports whether Take has a view change or a notification to hand over.
+func (p *Projector) Pending() bool { return p.changed || len(p.notes) > 0 }
+
 // show sets the view, noting whether anything visible changed. Only the plan
 // prompt's input is soft, so any view set here is not. Leaving the done view
 // cancels its pending notification: a working within DoneQuiet is the agent

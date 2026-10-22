@@ -358,3 +358,25 @@ func TestProjectorKeepsNewestNotes(t *testing.T) {
 		t.Fatalf("%d notes: %+v", len(notes), notes)
 	}
 }
+
+func TestProjectorPending(t *testing.T) {
+	var p Projector
+	if p.Pending() {
+		t.Fatal("pending on the zero value")
+	}
+	p.Report(Report{State: StateWorking}, base)
+	if !p.Pending() {
+		t.Fatal("not pending after a view change")
+	}
+	if p.Take(); p.Pending() {
+		t.Fatal("pending after Take")
+	}
+	p.Report(Report{State: StateBlocked, Kind: "permission"}, base)
+	p.Take()
+	p.Report(Report{State: StateError}, base)
+	p.Take()
+	p.Report(Report{State: StateError}, base) // same view, but a new notification
+	if !p.Pending() {
+		t.Fatal("not pending with only a notification")
+	}
+}

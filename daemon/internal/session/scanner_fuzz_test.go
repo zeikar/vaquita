@@ -135,8 +135,11 @@ func FuzzOutput(f *testing.F) {
 		o.Feed(in[:k])
 		o.Feed(in[k:])
 		st := o.Status()
-		if len(st.Records) > status.MaxRecords || len(st.Recent) > maxRecentNotifies {
-			t.Fatalf("%d records, %d notifications", len(st.Records), len(st.Recent))
+		// An OSC 9 body is cut to 2048 bytes before invalid UTF-8 is replaced
+		// by the 3-byte U+FFFD, which at most doubles it.
+		_, notes := o.TakeStatus()
+		if len(st.Records) > status.MaxRecords || len(st.View.Msg) > 2*2048 || len(notes) > status.MaxPendingNotes {
+			t.Fatalf("%d records, view msg %d bytes, %d notifications", len(st.Records), len(st.View.Msg), len(notes))
 		}
 	})
 }

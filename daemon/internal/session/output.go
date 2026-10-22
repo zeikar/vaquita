@@ -1,9 +1,10 @@
 package session
 
-import "github.com/zeikar/vaquita/daemon/internal/status"
+import (
+	"time"
 
-// maxRecentNotifies bounds the notifications Output remembers.
-const maxRecentNotifies = 16
+	"github.com/zeikar/vaquita/daemon/internal/status"
+)
 
 // Output is the path a session's PTY output takes: the live scanner finds
 // cut boundaries in each read, and the read is kept in the ring for replay.
@@ -22,20 +23,22 @@ type Output struct {
 	tailScanner *Scanner
 
 	records status.Records
-	recent  []status.Notify // oldest first, at most maxRecentNotifies
+	proj    status.Projector
+
+	// Now stamps the reports the projector sees; tests replace it.
+	Now func() time.Time
 }
 
 // Status is what the program in a session has reported about itself.
 type Status struct {
-	Records    []status.Record
-	LastNotify *status.Notify
-	// Recent holds the latest notifications, oldest first.
-	Recent []status.Notify
+	Records []status.Record
+	View    status.View
+	Unread  bool
 }
 
 // NewOutput returns an Output with an empty ring of DefaultRingCap bytes.
 func NewOutput() *Output {
-	o := &Output{ring: NewRing(DefaultRingCap)}
+	o := &Output{ring: NewRing(DefaultRingCap), Now: time.Now}
 	o.live = NewScanner(statusSink{o})
 	o.tailScanner = NewScanner(&o.tailModes)
 	// The ring may evict in several pieces per append; the tail scanner
@@ -67,15 +70,37 @@ func (o *Output) ReplaceScanner() {
 	o.live = NewScanner(o.live.sink)
 }
 
-// Status returns a copy of the session's status records and notifications.
+// Status returns a copy of the session's status records and its view.
 func (o *Output) Status() Status {
-	st := Status{Records: o.records.Snapshot(), Recent: append([]status.Notify(nil), o.recent...)}
-	if n := len(st.Recent); n > 0 {
-		last := st.Recent[n-1]
-		st.LastNotify = &last
-	}
-	return st
+	v, unread := o.proj.View()
+	return Status{Records: o.records.Snapshot(), View: v, Unread: unread}
 }
+
+// The methods below expose the status projection. Like Feed, they require the
+// session lock.
+
+// View returns what the sidebar shows and whether it is unread.
+func (o *Output) View() (status.View, bool) { return o.proj.View() }
+
+// HasStatus reports whether TakeStatus has a view change or notification.
+func (o *Output) HasStatus() bool { return o.proj.Pending() }
+
+// TakeStatus hands over the view change and notifications since the last call.
+func (o *Output) TakeStatus() (changed bool, notes []status.Notification) { return o.proj.Take() }
+
+// Seen marks the session as looked at.
+func (o *Output) Seen() { o.proj.Seen() }
+
+// Tick raises a notification whose deadline has passed.
+func (o *Output) Tick(now time.Time) { o.proj.Tick(now) }
+
+// NextDeadline reports when Tick next has something to raise. now is unused
+// until the foreground process group poll joins the deadline.
+func (o *Output) NextDeadline(_ time.Time) (time.Time, bool) { return o.proj.Deadline() }
+
+// ClearStatus empties the view and drops pending notifications, deadlines and
+// the held OSC 9, as the session's exit does.
+func (o *Output) ClearStatus() { o.proj = status.Projector{} }
 
 // statusSink feeds the live output's status sequences to an Output. Parsers
 // copy what they keep, as the scanner's slices are only valid during a call.
@@ -92,18 +117,24 @@ func (s statusSink) OSC(num int, payload []byte, oversized bool) {
 		}
 		if r, ok := status.ParseReport(payload); ok && !r.Query {
 			o.records.Apply(r)
-		}
-	case 9, 777:
-		if n, ok := status.ParseNotify(num, payload); ok {
-			if len(o.recent) == maxRecentNotifies {
-				o.recent = append(o.recent[:0], o.recent[1:]...)
+			// Child reports stay in the records: a child's done must not
+			// complete its parent.
+			if r.ID == "" {
+				o.proj.Report(r, o.Now())
 			}
-			o.recent = append(o.recent, n)
+		}
+	// Only OSC 9 feeds the projection. Claude Code's OSC 777 arrives seconds
+	// after the blocked report that already says the same, and words a
+	// permission and a question alike.
+	case 9:
+		if n, ok := status.ParseNotify(num, payload); ok {
+			o.proj.OSC9(n.Body)
 		}
 	case 133:
 		// Shell integration: A marks the start of a prompt.
 		if len(payload) > 0 && payload[0] == 'A' && (len(payload) == 1 || payload[1] == ';') {
 			o.records.PromptStart()
+			o.proj.Interrupt()
 		}
 	}
 }
@@ -113,5 +144,9 @@ func (statusSink) CSI(_, _ []byte, _ byte) {}
 func (s statusSink) ESC(final byte) {
 	if final == 'c' {
 		s.o.records.Reset()
+		// A done already due is raised before the clear drops it, so the
+		// outcome does not depend on how late the timer fired.
+		s.o.proj.Tick(s.o.Now())
+		s.o.proj.Clear()
 	}
 }
