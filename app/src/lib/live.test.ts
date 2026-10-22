@@ -43,6 +43,7 @@ function client() {
 	let state!: ManagerState<HeadlessView>;
 	const m = new SessionManager({
 		readEndpoint: async () => JSON.parse(readFileSync(ENDPOINT, 'utf8')) as Endpoint,
+		startDaemon: async () => {},
 		connect: (endpoint, h) => {
 			const conn = new DaemonConnection(endpoint, {
 				...h,

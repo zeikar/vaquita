@@ -3,7 +3,7 @@
 	import { onDestroy } from 'svelte';
 	import CreateForm from './lib/CreateForm.svelte';
 	import { DaemonConnection } from './lib/connection';
-	import { readEndpoint } from './lib/endpoint';
+	import { readEndpoint, startDaemon } from './lib/endpoint';
 	import { SessionManager } from './lib/manager';
 	import SessionList from './lib/SessionList.svelte';
 	import TerminalPane from './lib/TerminalPane.svelte';
@@ -13,6 +13,7 @@
 
 	const manager = new SessionManager({
 		readEndpoint,
+		startDaemon,
 		connect: (endpoint, handlers) => new DaemonConnection(endpoint, handlers),
 		createTerminal: (cols, rows) => createTerminal(cols, rows, (m) => manager.report(m)),
 		createView: (term, core) => new TermView(term, core, (m) => manager.report(m)),
@@ -37,6 +38,8 @@
 				return 'connected';
 			case 'connecting':
 				return 'connecting…';
+			case 'starting':
+				return 'starting daemon…';
 			case 'not-running':
 				return 'daemon not running';
 			case 'version-mismatch':

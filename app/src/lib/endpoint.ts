@@ -37,3 +37,17 @@ export async function readEndpoint(): Promise<Endpoint> {
 	if (!isEndpoint(body)) throw new Error('malformed endpoint');
 	return body;
 }
+
+// Keep this hint identical to the one in src-tauri/src/lib.rs.
+const DEV_HINT =
+	'dev run: start the daemon from a terminal: VAQUITA_HOME=~/.vaquita-dev vaquitad serve --allow-origin http://localhost:1420';
+
+// Resolves once the daemon has written its endpoint file.
+export async function startDaemon(): Promise<void> {
+	if (!isTauri()) throw new Error(DEV_HINT);
+	try {
+		await invoke('start_daemon');
+	} catch (e) {
+		throw new Error(String(e));
+	}
+}

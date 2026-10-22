@@ -6,7 +6,7 @@ import { RequestSlot, type CreateRequest } from './requests';
 import { SessionCore, type CoreOut, type Size, type TermLike } from './session-core';
 import { load, save } from './storage';
 
-export type Status = 'connecting' | 'connected' | 'not-running' | 'version-mismatch' | 'disconnected';
+export type Status = 'connecting' | 'starting' | 'connected' | 'not-running' | 'version-mismatch' | 'disconnected';
 
 // A terminal the manager disposes with its session.
 export interface ManagedTerm extends TermLike {
@@ -52,6 +52,8 @@ export interface ConnectionLike extends CoreOut {
 
 export interface ManagerDeps<T extends ManagedTerm, V extends ViewLike> {
 	readEndpoint: () => Promise<Endpoint>;
+	// Starts the daemon; the rejection message is shown in the status line.
+	startDaemon: () => Promise<void>;
 	connect: (endpoint: Endpoint, handlers: ConnectionHandlers) => ConnectionLike;
 	createTerminal: (cols: number, rows: number) => T;
 	createView: (term: T, core: SessionCore) => V;
@@ -95,6 +97,8 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 	// Bumped per attempt and on stop(), so callbacks of an abandoned attempt are ignored.
 	private attempt = 0;
 	private failures = 0;
+	// A start was attempted since the last ready; re-armed by the next ready.
+	private startTried = false;
 	private entries = new Map<number, Entry<T, V>>();
 	private readonly requests = new RequestSlot();
 	private lastSize = DEFAULT_SIZE;
@@ -176,8 +180,11 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 			endpoint = await this.deps.readEndpoint();
 		} catch (e) {
 			if (id !== this.attempt) return;
-			if (e instanceof NotRunningError) this.retry('not-running');
-			else this.retry('disconnected', e instanceof Error ? e.message : String(e));
+			if (e instanceof NotRunningError) {
+				// Keep the start failure's message on screen through the retries.
+				if (this.startTried) this.retry('not-running', this.state.message);
+				else await this.startDaemon(id);
+			} else this.retry('disconnected', e instanceof Error ? e.message : String(e));
 			return;
 		}
 		if (id !== this.attempt) return;
@@ -214,6 +221,7 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 	private onReady(conn: ConnectionLike, list: SessionInfo[]): void {
 		this.clearTimers();
 		this.failures = 0;
+		this.startTried = false;
 		this.readyConn = conn;
 		// A sid with another inc is another session, from a restarted daemon.
 		const entries = new Map<number, Entry<T, V>>();
@@ -393,7 +401,27 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 			this.set({ status: 'version-mismatch', daemonV: reason.daemonV, message: undefined });
 			return;
 		}
+		// A daemon that is down can also show up as a connection that fails before ready.
+		if (reason.kind === 'failed' && !this.startTried) {
+			void this.startDaemon(this.attempt);
+			return;
+		}
 		this.retry('disconnected', reason.detail);
+	}
+
+	// One attempt per not-running episode; success re-runs the connect loop at once.
+	private async startDaemon(id: number): Promise<void> {
+		this.startTried = true;
+		this.clearTimers();
+		this.conn = null;
+		this.set({ status: 'starting', message: undefined });
+		try {
+			await this.deps.startDaemon();
+		} catch (e) {
+			if (id === this.attempt) this.retry('not-running', e instanceof Error ? e.message : String(e));
+			return;
+		}
+		if (id === this.attempt) void this.connect();
 	}
 
 	private retry(status: Status, message?: string): void {
