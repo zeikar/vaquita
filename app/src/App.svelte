@@ -1,27 +1,71 @@
 <script lang="ts">
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
+	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { onDestroy } from 'svelte';
 	import CreateForm from './lib/CreateForm.svelte';
 	import { DaemonConnection } from './lib/connection';
 	import { readEndpoint, startDaemon } from './lib/endpoint';
+	import { watchFocus } from './lib/focus';
 	import { SessionManager } from './lib/manager';
+	import type { Notifier, Target } from './lib/notify';
 	import SessionList from './lib/SessionList.svelte';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
 	import { isTauri } from './lib/tauri';
+	import { createTauriNotifier } from './lib/tauri-notify';
 	import { createTerminal, TermView } from './lib/term-view';
 
+	// Replaced by the Tauri notifier once it is ready; the console one stays in
+	// a plain browser and when the Tauri one cannot be set up.
+	let notifier: Notifier = { show: (n) => console.info('notification', n) };
 	const manager = new SessionManager({
 		readEndpoint,
 		startDaemon,
 		connect: (endpoint, handlers) => new DaemonConnection(endpoint, handlers),
 		createTerminal: (cols, rows) => createTerminal(cols, rows),
 		createView: (term, core) => new TermView(term, core, (m) => manager.report(m)),
-		notifier: { show: (n) => console.info('notification', n) },
+		notifier: { show: (n) => notifier.show(n) },
 	});
-	manager.setFocused(document.hasFocus());
-	manager.start();
-	onDestroy(() => manager.stop());
+	let destroyed = false;
+	onDestroy(() => {
+		destroyed = true;
+		manager.stop();
+	});
+	onDestroy(
+		watchFocus(
+			(focused) => manager.setFocused(focused),
+			(e) => manager.report(`window focus unavailable: ${e instanceof Error ? e.message : String(e)}`),
+		),
+	);
+
+	// A click brings the window up whatever the notification was about; the
+	// manager selects its session only if that very session is still there.
+	function openNotified(target?: Target): void {
+		manager.openNotified(target);
+		const win = getCurrentWindow();
+		win.show()
+			.then(() => win.unminimize())
+			.then(() => win.setFocus())
+			.catch((e) => manager.report(`bringing the window up failed: ${e instanceof Error ? e.message : String(e)}`));
+	}
+
+	// Only notifications sent after the click listener is registered report
+	// their clicks, so the manager, which sends them, starts once it is.
+	const tauriNotifier = isTauri() ? createTauriNotifier(openNotified) : undefined;
+	onDestroy(() => void tauriNotifier?.then((n) => n.stop()).catch(() => {}));
+	void Promise.resolve(tauriNotifier)
+		.then(
+			(n) => {
+				if (n) notifier = n;
+			},
+			(e) => `notifications unavailable: ${e instanceof Error ? e.message : String(e)}`,
+		)
+		.then((failure) => {
+			if (destroyed) return;
+			manager.start();
+			// After the start, which clears the status line.
+			if (failure) manager.report(failure);
+		});
 
 	// The OS file drop only exists inside Tauri; the paths are typed into the selected session.
 	if (isTauri()) {
@@ -57,8 +101,6 @@
 		}
 	});
 </script>
-
-<svelte:window onfocus={() => manager.setFocused(true)} onblur={() => manager.setFocused(false)} />
 
 <main>
 	<aside>

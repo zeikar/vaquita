@@ -9,6 +9,10 @@
       "identifier": "opener:allow-open-url",
       "allow": [{ "url": "http://*" }, { "url": "https://*" }, { "url": "mailto:*" }]
     },
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    "notification:default",
+    "core:window:allow-show",
+    "core:window:allow-unminimize",
+    "core:window:allow-set-focus"
   ]
 }
