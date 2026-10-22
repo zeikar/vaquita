@@ -1,0 +1,30 @@
+[package]
+name = "vaquita"
+version = "0.1.0"
+description = "Desktop GUI for the vaquita daemon"
+authors = ["zeikar"]
+license = "MIT"
+repository = "https://github.com/zeikar/vaquita"
+edition = "2024"
+
+[lib]
+# macOS desktop only, so the staticlib/cdylib crate types that mobile builds
+# need are left out.
+name = "vaquita_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.5", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

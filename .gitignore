@@ -2,3 +2,7 @@ node_modules/
 .DS_Store
 tools/probe/vqtest.app/
 /daemon/vaquitad
+app/node_modules/
+app/dist/
+app/src-tauri/target/
+app/src-tauri/gen/
