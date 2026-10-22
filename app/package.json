@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:daemon": "make -C ../daemon BIN=\"$PWD/src-tauri/bin/vaquitad\" SIGN=\"$VAQUITA_SIGN_IDENTITY\"",
     "tauri": "tauri",
     "test": "vitest run",
     "test:live": "VAQUITA_LIVE=1 vitest run src/lib/live.test.ts",

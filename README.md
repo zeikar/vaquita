@@ -48,9 +48,9 @@ What it does so far:
 - Sessions live in the daemon, so after an app restart the screen is restored.
 - A fix for Korean IME input on WebKit, clickable links, file drop, and OSC 52 copy.
 
-A release build looks for the daemon and, if none is running, starts the LaunchAgent that `vaquitad install` wrote, through launchd. `tauri dev` never does; it shows a hint instead.
+A release build looks for the daemon and, if none is running, starts its LaunchAgent through launchd. When the agent is not loaded, it first installs it with the vaquitad inside the app, so no separate `vaquitad install` is needed. `tauri dev` never does; it shows a hint instead.
 
-`npm run tauri build` produces `app/src-tauri/target/release/bundle/macos/vaquita.app`. To pass `VAQUITA_HOME`, run `vaquita.app/Contents/MacOS/vaquita` directly. Without it the app uses the default home, `~/Library/Application Support/vaquita`.
+`npm run tauri build` produces `app/src-tauri/target/release/bundle/macos/vaquita.app`, with vaquitad built into it; set `VAQUITA_SIGN_IDENTITY` to sign that vaquitad with a stable identity, as `SIGN` does above. To pass `VAQUITA_HOME`, run `vaquita.app/Contents/MacOS/vaquita` directly. Without it the app uses the default home, `~/Library/Application Support/vaquita`.
 
 ## tools/probe
 

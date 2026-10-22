@@ -8,11 +8,12 @@ BIN = $(VAQUITA_HOME)/bin/vaquitad
 SIGN ?=
 
 # Built and signed beside the target, then renamed into place, so a running
-# daemon keeps its old file until it is restarted. Paths are quoted: the
+# daemon keeps its old file until it is restarted. Paths are quoted, and the
+# directory comes from dirname rather than $(dir), which splits on spaces: the
 # default home is under "Application Support".
 .PHONY: build
 build:
-	mkdir -p "$(VAQUITA_HOME)/bin"
+	mkdir -p "$$(dirname "$(BIN)")"
 	go build -o "$(BIN).tmp" ./cmd/vaquitad
 ifneq ($(SIGN),)
 	codesign --force --sign "$(SIGN)" --identifier io.github.zeikar.vaquitad "$(BIN).tmp"

@@ -33,10 +33,10 @@ async fn start_daemon() -> Result<(), String> {
         return Err("dev run: start the daemon from a terminal: VAQUITA_HOME=~/.vaquita-dev vaquitad serve --allow-origin http://localhost:1420".to_string());
     }
     tauri::async_runtime::spawn_blocking(|| {
-        let plist = home::plist_path();
+        let exe = std::env::current_exe().map_err(|e| format!("find the app's executable: {e}"))?;
         let endpoint = home::endpoint_path();
         let before = wait::snapshot(&endpoint);
-        launchd::start(&launchd::RealRunner, &home::label(), &plist, plist.exists())?;
+        launchd::start(&launchd::RealRunner, &home::label(), &home::plist_path(), &home::lock_path(), &exe)?;
         let step = std::time::Duration::from_millis(200);
         wait::wait_for_endpoint(&endpoint, &before, step, 25 * step)
     })

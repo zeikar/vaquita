@@ -22,6 +22,10 @@ pub fn endpoint_path() -> PathBuf {
     home().join("endpoint.json")
 }
 
+pub fn lock_path() -> PathBuf {
+    home().join("vaquitad.lock")
+}
+
 /// Mirrors Go's `state.Label`: a custom home gets the first 8 hex chars of the
 /// sha256 of its absolute, cleaned path, as `filepath.Abs` produces it.
 pub fn label() -> String {
