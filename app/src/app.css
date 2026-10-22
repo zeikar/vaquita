@@ -1,1 +1,41 @@
 html, body, #app { margin: 0; height: 100%; }
+
+body {
+	background: #1e1e1e;
+	color: #d4d4d4;
+	font: 13px system-ui, sans-serif;
+}
+
+/* Sidebar left, terminal pane right, status bar along the bottom. */
+main {
+	display: grid;
+	grid-template-columns: 280px minmax(0, 1fr);
+	grid-template-rows: minmax(0, 1fr) auto;
+	height: 100%;
+}
+
+aside {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	border-right: 1px solid #333;
+	background: #252526;
+}
+
+footer {
+	grid-column: 1 / -1;
+	display: flex;
+	gap: 16px;
+	padding: 2px 8px;
+	border-top: 1px solid #333;
+	background: #007acc;
+	color: #fff;
+	font-size: 12px;
+	white-space: nowrap;
+	overflow: hidden;
+}
+
+footer span:last-child {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}

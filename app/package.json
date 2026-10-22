@@ -8,6 +8,7 @@
     "build": "vite build",
     "tauri": "tauri",
     "test": "vitest run",
+    "test:live": "VAQUITA_LIVE=1 vitest run src/lib/live.test.ts",
     "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {

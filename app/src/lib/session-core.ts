@@ -35,7 +35,7 @@ const PROBE_REPLY = '\x1b]7501;?:states=idle,working,done,blocked,error:kinds=pe
 
 const encoder = new TextEncoder();
 
-interface Size {
+export interface Size {
 	cols: number;
 	rows: number;
 }
