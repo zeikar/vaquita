@@ -149,9 +149,8 @@ func (o *Output) interrupt() {
 	o.reporter, o.gone = 0, false
 }
 
-// NextDeadline reports when Tick next has something to do. now is unused:
-// both deadlines are kept as times.
-func (o *Output) NextDeadline(_ time.Time) (time.Time, bool) {
+// NextDeadline reports when Tick next has something to do.
+func (o *Output) NextDeadline() (time.Time, bool) {
 	d, ok := o.proj.Deadline()
 	if o.polling() && (!ok || o.nextPoll.Before(d)) {
 		return o.nextPoll, true

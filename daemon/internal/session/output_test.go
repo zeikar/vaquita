@@ -304,7 +304,7 @@ func TestOutputRISRaisesDueDone(t *testing.T) {
 	if v, _ := o.View(); v != (status.View{}) {
 		t.Fatalf("view %+v after RIS", v)
 	}
-	if _, ok := o.NextDeadline(*now); ok {
+	if _, ok := o.NextDeadline(); ok {
 		t.Fatal("deadline left after RIS")
 	}
 }
@@ -326,7 +326,7 @@ func TestOutputDoneDeadlineAndTick(t *testing.T) {
 	t0 := *now
 	o.Feed([]byte(working + codexPong))
 	o.TakeStatus()
-	d, ok := o.NextDeadline(t0)
+	d, ok := o.NextDeadline()
 	if !ok || !d.Equal(t0.Add(1500*time.Millisecond)) {
 		t.Fatalf("deadline %v, %v", d, ok)
 	}
@@ -339,13 +339,13 @@ func TestOutputDoneDeadlineAndTick(t *testing.T) {
 	if want := []status.Notification{{Kind: status.NotifyDone, Msg: "pong"}}; !slices.Equal(notes, want) {
 		t.Fatalf("notes %v", notes)
 	}
-	if _, ok := o.NextDeadline(d); ok {
+	if _, ok := o.NextDeadline(); ok {
 		t.Fatal("deadline after the notification")
 	}
 }
 
 func TestOutputClearStatus(t *testing.T) {
-	o, now := statusOutput()
+	o, _ := statusOutput()
 	o.Feed([]byte("\x1b]7501;state=error:msg=" + base64.StdEncoding.EncodeToString([]byte("boom")) + "\x07"))
 	o.ClearStatus()
 	if v, unread := o.View(); v != (status.View{}) || unread {
@@ -354,7 +354,7 @@ func TestOutputClearStatus(t *testing.T) {
 	if changed, notes := o.TakeStatus(); changed || len(notes) != 0 {
 		t.Fatalf("changed %v, notes %v", changed, notes)
 	}
-	if _, ok := o.NextDeadline(*now); ok {
+	if _, ok := o.NextDeadline(); ok {
 		t.Fatal("deadline after ClearStatus")
 	}
 }
@@ -382,7 +382,7 @@ func TestOutputForegroundGroupPoll(t *testing.T) {
 	if o.reporter != 42 {
 		t.Fatalf("reporter %d, want 42", o.reporter)
 	}
-	d, ok := o.NextDeadline(t0)
+	d, ok := o.NextDeadline()
 	if !ok || !d.Equal(t0.Add(time.Second)) {
 		t.Fatalf("deadline %v, %v; want the poll at %v", d, ok, t0.Add(time.Second))
 	}
@@ -395,7 +395,7 @@ func TestOutputForegroundGroupPoll(t *testing.T) {
 	if *polls != 1 || o.HasStatus() {
 		t.Fatalf("%d polls, pending %v", *polls, o.HasStatus())
 	}
-	if d2, ok := o.NextDeadline(d); !ok || !d2.Equal(d.Add(time.Second)) {
+	if d2, ok := o.NextDeadline(); !ok || !d2.Equal(d.Add(time.Second)) {
 		t.Fatalf("deadline after a live poll %v, %v; want %v", d2, ok, d.Add(time.Second))
 	}
 
@@ -409,7 +409,7 @@ func TestOutputForegroundGroupPoll(t *testing.T) {
 	if recs := o.Status().Records; len(recs) != 1 || recs[0].ID != "a" {
 		t.Fatalf("records after the group died: %+v", recs)
 	}
-	if _, ok := o.NextDeadline(d.Add(time.Second)); ok {
+	if _, ok := o.NextDeadline(); ok {
 		t.Fatal("deadline left after the group died")
 	}
 }
@@ -429,7 +429,7 @@ func TestOutputReportFromShellGroupClears(t *testing.T) {
 	if v, _ := o.View(); v.State != status.ViewWorking {
 		t.Fatalf("view %+v, want working until the poll", v)
 	}
-	d, ok := o.NextDeadline(t0)
+	d, ok := o.NextDeadline()
 	if !ok || !d.Equal(t0.Add(fgPollGap)) {
 		t.Fatalf("deadline %v, %v; want the poll at %v", d, ok, t0.Add(fgPollGap))
 	}
@@ -437,7 +437,7 @@ func TestOutputReportFromShellGroupClears(t *testing.T) {
 	if v, _ := o.View(); v != (status.View{}) || *polls != 0 {
 		t.Fatalf("view %+v after %d group checks; want it cleared with none", v, *polls)
 	}
-	if _, ok := o.NextDeadline(d); ok {
+	if _, ok := o.NextDeadline(); ok {
 		t.Fatal("deadline left after the clear")
 	}
 }
@@ -476,7 +476,7 @@ func TestOutputForegroundGroupPollSkipsDone(t *testing.T) {
 	*alive = false
 	o.Feed([]byte(working + codexPong))
 	// The done's quiet period, not the poll a second after the working.
-	if d, ok := o.NextDeadline(t0); !ok || !d.Equal(t0.Add(status.DoneQuiet)) {
+	if d, ok := o.NextDeadline(); !ok || !d.Equal(t0.Add(status.DoneQuiet)) {
 		t.Fatalf("deadline %v, %v; want %v", d, ok, t0.Add(status.DoneQuiet))
 	}
 	o.Tick(t0.Add(time.Minute))
@@ -495,11 +495,11 @@ func TestOutputForegroundGroupUnknown(t *testing.T) {
 		func() (int, error) { return 1, nil },
 		func() (int, error) { return 0, ErrClosed },
 	} {
-		o, now, _, _ := watchedOutput()
+		o, _, _, _ := watchedOutput()
 		o.Feed([]byte(working))
 		o.Foreground = fg
 		o.Feed([]byte("\x1b]7501;state=blocked:kind=permission\x07"))
-		if _, ok := o.NextDeadline(*now); ok || o.reporter != 0 {
+		if _, ok := o.NextDeadline(); ok || o.reporter != 0 {
 			t.Fatalf("deadline %v with reporter %d; want no poll", ok, o.reporter)
 		}
 	}

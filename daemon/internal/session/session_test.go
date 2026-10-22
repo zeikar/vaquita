@@ -316,7 +316,7 @@ func TestReporterGoneBeforeReadClearsView(t *testing.T) {
 	for {
 		ts.Lock()
 		v, _ := ts.out.View()
-		d, ok := ts.out.NextDeadline(ts.out.Now())
+		d, ok := ts.out.NextDeadline()
 		if v == (status.View{}) {
 			ts.Unlock()
 			return
@@ -356,13 +356,14 @@ func TestExecAgentKeepsView(t *testing.T) {
 	stop := time.Now().Add(3 * fgPollGap)
 	for time.Now().Before(stop) {
 		ts.Lock()
-		if ts.out.reporter != ts.PID() || ts.out.gone {
-			t.Fatalf("reporter %d gone %v, want the leader %d watched", ts.out.reporter, ts.out.gone, ts.PID())
-		}
-		d, _ := ts.out.NextDeadline(ts.out.Now())
+		reporter, gone := ts.out.reporter, ts.out.gone
+		d, _ := ts.out.NextDeadline()
 		ts.out.Tick(d)
 		v, _ := ts.out.View()
 		ts.Unlock()
+		if reporter != ts.PID() || gone {
+			t.Fatalf("reporter %d gone %v, want the leader %d watched", reporter, gone, ts.PID())
+		}
 		if v.State != status.ViewWorking {
 			t.Fatalf("view %+v cleared while the agent lives", v)
 		}
@@ -411,7 +412,7 @@ func TestForegroundGroupDeathClearsView(t *testing.T) {
 	for {
 		ts.Lock()
 		v, _ := ts.out.View()
-		d, ok := ts.out.NextDeadline(ts.out.Now())
+		d, ok := ts.out.NextDeadline()
 		if v == (status.View{}) {
 			ts.Unlock()
 			break

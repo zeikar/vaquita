@@ -116,7 +116,7 @@ func (t *table) sendMissedLocked(c *conn) {
 // armStatusLocked sets e's status timer to fire at the projector's next
 // deadline, or stops it when there is none. It requires the session lock.
 func (e *entry) armStatusLocked(now time.Time) {
-	if d, ok := e.sess.Output().NextDeadline(now); ok {
+	if d, ok := e.sess.Output().NextDeadline(); ok {
 		e.statusTimer.Reset(d.Sub(now))
 		return
 	}
