@@ -56,12 +56,14 @@ class Probe:
         self.rawbuf = bytearray()
         self.last_title = None
         self.eof = False
+        self.input_mark = 0  # len(states) at the last input; wait_states counts from here
 
     def now(self):
         return round(time.monotonic() - self.t0, 3)
 
-    def ev(self, kind, **kw):
-        self.events.append({'t': self.now(), 'k': kind, **kw})
+    # _kind, not kind: 7501 reports carry a `kind` field and are logged via ev('7501', **rec).
+    def ev(self, _kind, **kw):
+        self.events.append({'t': self.now(), 'k': _kind, **kw})
 
     def start(self):
         pid, fd = pty.fork()
@@ -270,8 +272,9 @@ class Probe:
         return ok
 
     def wait_states(self, seq, timeout):
-        """Wait for states matching seq (each item a tuple of acceptable states) in order, after now."""
-        start = len(self.states)
+        """Wait for states matching seq (each item a tuple of acceptable states) in order,
+        counting from the last input: an agent may report before the screen shows why."""
+        start = self.input_mark
 
         def done():
             k = 0
@@ -301,14 +304,20 @@ class Probe:
         self.ev('nudge', bytes=len(out), clear2J=b'\x1b[2J' in out, clear3J=b'\x1b[3J' in out,
                 rows_addressed=len(rows), of=self.rows, sync=out.count(b'\x1b[?2026h'))
 
+    def mark_input(self):
+        with self.lock:
+            self.input_mark = len(self.states)
+
     def type(self, s):
         self.ev('type', v=s)
+        self.mark_input()
         self.write(s.encode())
         time.sleep(0.4)
         self.write(b'\r')
 
     def key(self, b, label):
         self.ev('key', v=label)
+        self.mark_input()
         self.write(b)
 
     def finish(self, timeout=15):
@@ -366,15 +375,18 @@ def run_claude(outdir, answer):
     if answer:
         p.wait_states([('working',), ('done', 'idle', 'error')], 120)
     else:
-        p.wait_text(r'pong', 120)
+        # ⏺ marks Claude's reply (a spinner glyph may be drawn in between); a bare
+        # "pong" would match the echoed prompt.
+        p.wait_text(r'⏺[^A-Za-z]{0,40}pong', 120)
     time.sleep(4)
     if answer:
         p.ev('scenario', v='permission')
         p.type('Use the Bash tool to run exactly this command: touch probe.txt')
         if p.wait_states([('blocked',)], 120):
             time.sleep(2)
-            p.key(b'\x1b', 'Esc(deny)')
-            p.wait_states([('working', 'idle', 'done', 'error')], 30)
+        # Esc even after a timeout: a dialog left open would take the next Enter as "Yes".
+        p.key(b'\x1b', 'Esc(deny)')
+        p.wait_states([('working', 'idle', 'done', 'error')], 30)
         time.sleep(4)
         p.ev('scenario', v='esc-cancel')
         p.type('Write a detailed 1500-word essay about the history of whale research.')
@@ -386,9 +398,17 @@ def run_claude(outdir, answer):
         p.ev('scenario', v='nudge')
         p.nudge()
     p.ev('scenario', v='exit')
+    clear_input(p)
     p.type('/exit')
     code = p.finish(20)
     return p, code, cwd
+
+
+def clear_input(p):
+    # An Esc-cancelled prompt comes back into the input box; /exit typed after it
+    # would be sent as part of that prompt. Ctrl-U clears the box.
+    p.key(b'\x15', 'Ctrl-U')
+    time.sleep(0.5)
 
 
 def run_claude_perm(outdir, channel=None, focus_out=False):
@@ -413,7 +433,9 @@ def run_claude_perm(outdir, channel=None, focus_out=False):
         time.sleep(0.5)
     for label, prompt, screen in (
             ('write', 'Use the Write tool to create a file named probe2.txt containing the word hi.', r'(?i)do you want'),
-            ('question', 'Use the AskUserQuestion tool to ask me whether I prefer tea or coffee. Do nothing else.', r'(?i)tea')):
+            # The numbered option is drawn by the dialog only (in either order); a bare
+            # "tea" matches the echoed prompt.
+            ('question', 'Use the AskUserQuestion tool to ask me whether I prefer tea or coffee. Do nothing else.', r'(?i)1\. (tea|coffee)')):
         p.ev('scenario', v=label)
         p.type(prompt)
         shown = p.wait_text(screen, 60)
@@ -423,6 +445,7 @@ def run_claude_perm(outdir, channel=None, focus_out=False):
         p.wait_states([('idle', 'done', 'error', 'working')], 20)
         time.sleep(3)
     p.ev('scenario', v='exit')
+    clear_input(p)
     p.type('/exit')
     code = p.finish(20)
     return p, code, cwd
@@ -454,8 +477,8 @@ def run_codex(outdir, notify=False):
     p.type('Run this shell command: touch probe.txt')
     if p.wait_states([('blocked',)], 180):
         time.sleep(2)
-        p.key(b'\x1b', 'Esc(deny)')
-        p.wait_states([('working', 'idle', 'done', 'error')], 60)
+    p.key(b'\x1b', 'Esc(deny)')
+    p.wait_states([('working', 'idle', 'done', 'error')], 60)
     time.sleep(4)
     p.ev('scenario', v='esc-cancel')
     p.type('Count from 1 to 300, one number per line, no other text.')
@@ -469,7 +492,8 @@ def run_codex(outdir, notify=False):
     p.ev('scenario', v='exit')
     p.key(b'\x03', 'Ctrl-C')
     time.sleep(1.5)
-    p.key(b'\x03', 'Ctrl-C')
+    if not p.eof:
+        p.key(b'\x03', 'Ctrl-C')
     code = p.finish(20)
     return p, code, cwd
 
