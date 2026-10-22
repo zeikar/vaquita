@@ -54,7 +54,7 @@ func attach(args []string) error {
 			fmt.Fprintf(os.Stderr, "attach: restore the terminal: %v\n", err)
 		}
 	}
-	size := func() (int, int, error) { return term.GetSize(in) }
+	size := func() (int, int, error) { return defaultSize(term.GetSize(in)) }
 	a := newAttacher(cfg, c, os.Stdin, os.Stdout, size, restore)
 	// Leaves the terminal usable on a panic; after run it does nothing.
 	defer a.leave(ending{msg: "[vaquita] internal error; detached", failed: true})
@@ -100,4 +100,20 @@ func parseAttach(args []string) (attachConfig, error) {
 		cfg.cmd = shellJoin(fs.Args())
 	}
 	return cfg, nil
+}
+
+// defaultSize stands in 80x24 for a dimension the terminal reports as zero
+// (ssh -T, some script/expect PTYs), as tmux does: the daemon refuses a
+// zero-sized session.
+func defaultSize(cols, rows int, err error) (int, int, error) {
+	if err != nil {
+		return cols, rows, err
+	}
+	if cols <= 0 {
+		cols = 80
+	}
+	if rows <= 0 {
+		rows = 24
+	}
+	return cols, rows, nil
 }
