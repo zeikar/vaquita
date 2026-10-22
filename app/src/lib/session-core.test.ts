@@ -1,4 +1,4 @@
-import { Terminal } from '@xterm/headless';
+import { Terminal, type IEvent } from '@xterm/headless';
 import type { ITerminalAddon } from '@xterm/xterm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FRAME_LIVE, FRAME_REPLAY, type Exit, type Frame, type Live, type Replay } from './protocol';
@@ -56,6 +56,9 @@ class HeldTerm implements TermLike {
 	get onData() {
 		return this.real.onData;
 	}
+	get onBinary() {
+		return this.real.onBinary;
+	}
 	get onWriteParsed() {
 		return this.real.onWriteParsed;
 	}
@@ -73,6 +76,18 @@ class HeldTerm implements TermLike {
 	}
 	release(i: number) {
 		this.held[i]();
+	}
+}
+
+// Headless xterm has no mouse, so nothing in it fires onBinary; the test does.
+class BinaryTerm extends Terminal {
+	private readonly binaryListeners: ((d: string) => void)[] = [];
+	override onBinary: IEvent<string> = (listener) => {
+		this.binaryListeners.push(listener);
+		return { dispose() {} };
+	};
+	binary(d: string) {
+		for (const l of this.binaryListeners) l(d);
 	}
 }
 
@@ -120,6 +135,17 @@ function writable() {
 	vi.advanceTimersByTime(400);
 	s.out.resizes.length = 0;
 	return s;
+}
+
+// Like the Hangul fix: beforeData sends a held syllable as user input first.
+function hold(core: SessionCore, term: TermLike, text: string): () => string {
+	let held = text;
+	core.beforeData = () => {
+		const t = held;
+		held = '';
+		if (t) term.input(t, true);
+	};
+	return () => held;
 }
 
 function heldSetup() {
@@ -310,6 +336,59 @@ describe('SessionCore input and size', () => {
 		flush();
 		core.sendInput('x');
 		expect(out.inputs).toEqual([[SID, 4, 'x']]);
+	});
+
+	it('runs beforeData ahead of user input but not of its own replies', () => {
+		const { term, out, core } = writable();
+		const held = hold(core, term, '테');
+		core.frame(frame(FRAME_LIVE, 1, '\x1b]7501;?\x1b\\\x1b]11;?\x1b\\'));
+		flush();
+		expect(held()).toBe('테');
+		// The Shift+Enter translation.
+		core.sendInput('\x1b\r');
+		expect(out.inputs.map((i) => i[2])).toEqual([PROBE_REPLY, '\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\', '테', '\x1b\r']);
+	});
+
+	it('runs beforeData only while the gate is open', () => {
+		const { term, out, core } = writable();
+		const held = hold(core, term, '테');
+		const replayed = '\x1b[c';
+		core.replay(replay(2, 0, replayed.length));
+		core.frame(prefix(2));
+		core.frame(frame(FRAME_REPLAY, 2, replayed));
+		// xterm answers the replayed DA1, and the user types, into the shut gate.
+		flush();
+		core.sendInput('x');
+		expect(held()).toBe('테');
+		expect(out.inputs).toEqual([]);
+		core.live(live(2, replayed.length));
+		core.sendInput('y');
+		expect(out.inputs).toEqual([
+			[SID, 2, '테'],
+			[SID, 2, 'y'],
+		]);
+	});
+
+	it('sends binary mouse reports byte for byte through the gate, without beforeData', () => {
+		const term = new BinaryTerm({ cols: 80, rows: 24, allowProposedApi: true });
+		const out = new RecordingOut();
+		const core = new SessionCore(term, SID, out);
+		const input = vi.spyOn(out, 'input');
+		let runs = 0;
+		core.beforeData = () => void runs++;
+		// An X10 report of a click at column 129, whose byte is past ASCII.
+		const report = '\x1b[M\x20\xa1\x21';
+		term.binary(report);
+		expect(input).not.toHaveBeenCalled();
+		core.replay(replay(1, 0));
+		core.frame(prefix(1));
+		core.live(live(1, 0));
+		flush();
+		term.binary(report);
+		expect(input.mock.calls.map(([sid, gen, bytes]) => [sid, gen, [...bytes]])).toEqual([
+			[SID, 1, [0x1b, 0x5b, 0x4d, 0x20, 0xa1, 0x21]],
+		]);
+		expect(runs).toBe(0);
 	});
 
 	it('applies a proposed size only when it differs', () => {

@@ -4,6 +4,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import { writeClipboard } from './clipboard';
+import { installHangulFix, type HangulFix } from './hangul-fix';
 import { keyHandler } from './keys';
 import { openExternal } from './links';
 import type { ViewLike } from './manager';
@@ -42,6 +43,7 @@ export class TermView implements ViewLike {
 	private fit?: FitAddon;
 	private webgl?: WebglAddon;
 	private observer?: ResizeObserver;
+	private hangul?: HangulFix;
 	private visible = false;
 
 	constructor(
@@ -59,6 +61,10 @@ export class TermView implements ViewLike {
 		if (this.container) return;
 		this.container = container;
 		this.term.open(container);
+		this.hangul = this.installHangul();
+		// The held syllable goes out ahead of whatever xterm sends next: Enter,
+		// arrows, Ctrl keys, a paste, the Shift+Enter translation.
+		this.core.beforeData = this.hangul.flush;
 		this.fit = new FitAddon();
 		this.term.loadAddon(this.fit);
 		this.term.loadAddon(new WebLinksAddon((_e, uri) => openExternal(uri, (e) => this.report(`open link failed: ${errText(e)}`))));
@@ -94,6 +100,32 @@ export class TermView implements ViewLike {
 
 	dispose(): void {
 		this.hide();
+		this.core.beforeData = undefined;
+		this.hangul?.dispose();
+		this.hangul = undefined;
+	}
+
+	private installHangul(): HangulFix {
+		const term = this.term;
+		// open() has created the element and the textarea; cols and rows are
+		// read through getters as the terminal resizes.
+		return installHangulFix(
+			{
+				element: term.element!,
+				textarea: term.textarea!,
+				get cols() {
+					return term.cols;
+				},
+				get rows() {
+					return term.rows;
+				},
+				buffer: term.buffer,
+				options: term.options,
+				onCursorMove: term.onCursorMove,
+				onWriteParsed: term.onWriteParsed,
+			},
+			(text) => term.input(text, true),
+		);
 	}
 
 	// OSC 52 is write only: a program in the terminal must not read the clipboard.

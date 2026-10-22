@@ -13,6 +13,7 @@ export interface TermLike {
 	readonly parser: IParser;
 	readonly unicode: IUnicodeHandling;
 	readonly onData: IEvent<string>;
+	readonly onBinary: IEvent<string>;
 	readonly onWriteParsed: IEvent<void>;
 	write(data: string | Uint8Array, callback: () => void): void;
 	input(data: string, wasUserInput?: boolean): void;
@@ -59,7 +60,9 @@ export class SessionCore {
 	// Replay writes xterm has not parsed yet; the gate stays shut while any
 	// are, as their queries were answered when they were live.
 	pendingReplay = 0;
-	// Runs before every onData, ahead of the gate.
+	// Runs for every onData the gate lets through, before it is sent, except
+	// for the core's own replies. xterm's replies (DA1, CPR, focus reports)
+	// cannot be told from user input through its API, so it runs for those too.
 	beforeData?: () => void;
 
 	// Bumped by detach: the next connection starts at generation 1 again, so
@@ -75,6 +78,7 @@ export class SessionCore {
 	private nudgeTimer: ReturnType<typeof setTimeout> | null = null;
 	private nudgeSize: Size | null = null;
 	private replayed = false;
+	private replying = false;
 	private readonly handlers: IDisposable[];
 
 	constructor(
@@ -98,6 +102,7 @@ export class SessionCore {
 			term.parser.registerOscHandler(12, (data) => this.dynamicColor(12, theme.cursor, data)),
 			term.parser.registerOscHandler(4, (data) => this.paletteQuery(data)),
 			term.onData((d) => this.onData(d)),
+			term.onBinary((d) => this.onBinary(d)),
 		];
 	}
 
@@ -187,10 +192,24 @@ export class SessionCore {
 		for (const h of this.handlers) h.dispose();
 	}
 
+	// The gen input is sent under, or null while the gate is shut.
+	private inputGen(): number | null {
+		return this.pendingReplay > 0 || !this.writable || this.ended ? null : this.gen;
+	}
+
 	private onData(d: string): void {
-		this.beforeData?.();
-		if (this.gen === null || this.pendingReplay > 0 || !this.writable || this.ended) return;
-		this.out.input(this.sid, this.gen, encoder.encode(d));
+		const gen = this.inputGen();
+		if (gen === null) return;
+		if (!this.replying) this.beforeData?.();
+		this.out.input(this.sid, gen, encoder.encode(d));
+	}
+
+	// xterm sends X10 and default-encoded mouse reports here, one byte per
+	// char.
+	private onBinary(d: string): void {
+		const gen = this.inputGen();
+		if (gen === null) return;
+		this.out.input(this.sid, gen, Uint8Array.from(d, (c) => c.charCodeAt(0) & 0xff));
 	}
 
 	// end is the ring offset after data, or null for bytes outside the ring.
@@ -301,7 +320,14 @@ export class SessionCore {
 		return true;
 	}
 
+	// A query answered while a Hangul syllable is held must not send it early:
+	// the IME goes on composing it.
 	private reply(s: string): void {
-		this.term.input(s, false);
+		this.replying = true;
+		try {
+			this.term.input(s, false);
+		} finally {
+			this.replying = false;
+		}
 	}
 }
