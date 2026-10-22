@@ -136,6 +136,11 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		this.readyConn?.kill(sid);
 	}
 
+	// Shows a message from outside the manager in the status line.
+	report(message: string): void {
+		this.set({ message });
+	}
+
 	private set(patch: Partial<ManagerState<V>>): void {
 		this.state = { ...this.state, ...patch, creating: this.requests.creating };
 		for (const run of this.subscribers) run(this.state);

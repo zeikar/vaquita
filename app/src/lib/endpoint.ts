@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { isTauri } from './tauri';
 
 export interface Endpoint {
 	url: string;
@@ -19,7 +20,7 @@ function isEndpoint(v: unknown): v is Endpoint {
 }
 
 export async function readEndpoint(): Promise<Endpoint> {
-	if ('__TAURI_INTERNALS__' in window) {
+	if (isTauri()) {
 		try {
 			const body: unknown = await invoke('endpoint');
 			if (!isEndpoint(body)) throw new Error('malformed endpoint');

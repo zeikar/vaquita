@@ -1,11 +1,22 @@
+import { ClipboardAddon, type ClipboardSelectionType, type IClipboardProvider } from '@xterm/addon-clipboard';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
+import { writeClipboard } from './clipboard';
+import { keyHandler } from './keys';
+import { openExternal } from './links';
 import type { ViewLike } from './manager';
 import type { SessionCore, Size } from './session-core';
 import { theme } from './theme';
 
-export function createTerminal(cols: number, rows: number): Terminal {
+const MAX_CLIPBOARD = 1024 * 1024;
+
+function errText(e: unknown): string {
+	return e instanceof Error ? e.message : String(e);
+}
+
+export function createTerminal(cols: number, rows: number, report: (message: string) => void): Terminal {
 	return new Terminal({
 		cols,
 		rows,
@@ -15,6 +26,10 @@ export function createTerminal(cols: number, rows: number): Terminal {
 		theme,
 		fontFamily: 'SF Mono, Menlo, monospace',
 		fontSize: 13,
+		// Plain drag selects only when the app has mouse reporting off; Option forces it.
+		macOptionClickForcesSelection: true,
+		// For OSC 8 hyperlinks xterm passes the link's URI here, not the visible text.
+		linkHandler: { activate: (_e, uri) => openExternal(uri, (e) => report(`open link failed: ${errText(e)}`)) },
 	});
 }
 
@@ -32,7 +47,13 @@ export class TermView implements ViewLike {
 	constructor(
 		private readonly term: Terminal,
 		private readonly core: SessionCore,
+		private readonly report: (message: string) => void,
 	) {}
+
+	// Types text into the session, e.g. dropped file paths.
+	sendInput(text: string): void {
+		this.core.sendInput(text);
+	}
 
 	attach(container: HTMLElement): void {
 		if (this.container) return;
@@ -40,6 +61,9 @@ export class TermView implements ViewLike {
 		this.term.open(container);
 		this.fit = new FitAddon();
 		this.term.loadAddon(this.fit);
+		this.term.loadAddon(new WebLinksAddon((_e, uri) => openExternal(uri, (e) => this.report(`open link failed: ${errText(e)}`))));
+		this.term.loadAddon(new ClipboardAddon(undefined, this.clipboardProvider()));
+		this.term.attachCustomKeyEventHandler(keyHandler((text) => this.core.sendInput(text)));
 		// The pane can show a view before it has created the view's element.
 		if (this.visible) this.start(container);
 	}
@@ -70,6 +94,26 @@ export class TermView implements ViewLike {
 
 	dispose(): void {
 		this.hide();
+	}
+
+	// OSC 52 is write only: a program in the terminal must not read the clipboard.
+	private clipboardProvider(): IClipboardProvider {
+		return {
+			readText: (_selection: ClipboardSelectionType) => '',
+			writeText: async (selection: ClipboardSelectionType, text: string) => {
+				// Like the default provider, only the system clipboard is written.
+				if (selection !== 'c') return;
+				if (text.length > MAX_CLIPBOARD) {
+					this.report('clipboard write ignored: too large');
+					return;
+				}
+				try {
+					await writeClipboard(text);
+				} catch (e) {
+					this.report(`clipboard write failed: ${errText(e)}`);
+				}
+			},
+		};
 	}
 
 	private start(container: HTMLElement): void {
