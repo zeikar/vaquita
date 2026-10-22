@@ -114,10 +114,12 @@ export type DaemonMessage = DaemonHello | Sessions | Replay | Live | Exit | Erro
 
 const DAEMON_TYPES = new Set(['hello', 'sessions', 'replay', 'live', 'exit', 'error']);
 
+export class UnknownMessageError extends Error {}
+
 export function parseMessage(text: string): DaemonMessage {
 	const m = JSON.parse(text);
 	if (m === null || typeof m !== 'object' || !DAEMON_TYPES.has(m.t)) {
-		throw new Error(`parse message: unknown type ${JSON.stringify(m?.t)}`);
+		throw new UnknownMessageError(`parse message: unknown type ${JSON.stringify(m?.t)}`);
 	}
 	return m as DaemonMessage;
 }
