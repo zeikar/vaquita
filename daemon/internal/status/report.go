@@ -1,7 +1,7 @@
 // Package status parses and stores what programs in a session report about
 // themselves: OSC 7501 program-status records and OSC 9/777 notifications.
-// It only keeps the data; turning it into sidebar states or events is up to
-// the callers.
+// Its Projector turns a session's root reports and OSC 9 notifications into
+// what the sidebar shows and which desktop notifications to raise.
 package status
 
 import (
