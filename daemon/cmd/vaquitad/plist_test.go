@@ -111,3 +111,16 @@ func TestCheckExeStable(t *testing.T) {
 		t.Errorf("stable path refused: %v", err)
 	}
 }
+
+func TestAdhocSigned(t *testing.T) {
+	exe, err := os.Executable() // a Go test binary: linker-signed, ad-hoc
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !adhocSigned(exe) {
+		t.Error("go test binary not reported as ad-hoc signed")
+	}
+	if adhocSigned("/bin/ls") {
+		t.Error("/bin/ls (Apple-signed) reported as ad-hoc signed")
+	}
+}

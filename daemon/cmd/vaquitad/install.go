@@ -50,6 +50,9 @@ func install(args []string) error {
 	if err := checkExeStable(exe); err != nil {
 		return err
 	}
+	if adhocSigned(exe) {
+		fmt.Fprintf(os.Stderr, "warning: %s has only an ad-hoc signature, so macOS will ask again for folder access after every rebuild; build it with `make SIGN=<identity>`\n", exe)
+	}
 	path, err := writeAgentPlist(home, label, plist)
 	if err != nil {
 		return err
@@ -70,6 +73,13 @@ next steps:
 
 // checkExeStable refuses executables that a LaunchAgent would outlive: go run
 // binaries and anything under the temp dir.
+// adhocSigned reports whether exe carries only an ad-hoc signature, as Go's
+// linker leaves it. TCC ties such a binary's permissions to its exact hash.
+func adhocSigned(exe string) bool {
+	out, err := exec.Command("codesign", "-dv", exe).CombinedOutput()
+	return err == nil && bytes.Contains(out, []byte("Signature=adhoc"))
+}
+
 func checkExeStable(exe string) error {
 	tmp := os.TempDir()
 	if r, err := filepath.EvalSymlinks(tmp); err == nil {

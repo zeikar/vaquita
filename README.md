@@ -13,10 +13,12 @@ It's at the very start. The daemon works from the terminal; the app doesn't exis
 Build it and run a dev instance, which keeps its own home so a stable instance is untouched:
 
 ```sh
-cd daemon && go build -o ~/.vaquita-dev/bin/vaquitad ./cmd/vaquitad
 export VAQUITA_HOME=~/.vaquita-dev PATH=~/.vaquita-dev/bin:$PATH
+make -C daemon            # builds $VAQUITA_HOME/bin/vaquitad
 vaquitad serve
 ```
+
+A daemon run by launchd should be signed with a stable identity, or macOS asks again for access to folders such as `~/Downloads` after every rebuild. A self-signed certificate is enough (Keychain Access → Certificate Assistant → Create a Certificate, type Code Signing): `make -C daemon SIGN="<certificate name>"`.
 
 From another terminal, after the same `export`:
 
