@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { SessionRow } from './manager';
+	import { sessionTitle } from './notify';
 	import { STATE_EXITED } from './protocol';
 
 	let {
@@ -17,8 +18,6 @@
 	const CONFIRM_MS = 3000;
 	// A double-click must not count as the confirming second click.
 	const MIN_CONFIRM_MS = 400;
-
-	const title = (r: SessionRow<unknown>) => r.info.name || r.info.cmd || 'shell';
 
 	// Kill takes a second click: Tauri's WKWebView answers confirm() with
 	// Cancel, as wry implements no JavaScript confirm panel.
@@ -47,10 +46,22 @@
 
 <ul>
 	{#each sessions as r (r.info.sid)}
+		{@const s = r.info.status}
 		<li class:selected={r.info.sid === selected} onpointerleave={() => armed === r.info.sid && disarm()}>
 			<button class="row" onclick={() => onselect(r.info.sid)}>
-				<span class="title">{r.info.sid} · {title(r)}</span>
+				<!-- The dot and the status line keep their space when empty, so rows do not jump. -->
+				<span class="title" class:unread={r.info.unread}>
+					<span class="dot">{r.info.unread ? '•' : ''}</span>{r.info.sid} · {sessionTitle(r.info)}
+				</span>
 				<span class="cwd">{r.info.cwd || '~'}</span>
+				<span class="status {s?.state}" title={s?.msg}>
+					{#if s?.state === 'working'}<span class="spinner"></span>
+					{:else if s?.state === 'input'}⚠ {s.msg}
+					{:else if s?.state === 'auth'}🔑
+					{:else if s?.state === 'done'}✓
+					{:else if s?.state === 'error'}✗
+					{:else}&nbsp;{/if}
+				</span>
 				<span class="flags">
 					{#if r.info.state === STATE_EXITED}<span>exited ({r.info.code})</span>{/if}
 					{#if r.info.orphans?.length}<span>orphans: {r.info.orphans.join(', ')}</span>{/if}
@@ -101,13 +112,58 @@
 		font: inherit;
 		cursor: pointer;
 	}
+	.title.unread {
+		font-weight: bold;
+	}
+	.dot {
+		display: inline-block;
+		width: 12px;
+		color: #4fc1ff;
+	}
 	.cwd,
+	.status,
 	.flags {
 		font-size: 11px;
 		color: #999;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.status {
+		font-size: 12px;
+		/* Fixed, so an emoji's taller font cannot change the row's height. */
+		height: 16px;
+		line-height: 16px;
+		color: #d4d4d4;
+	}
+	.status.input {
+		color: #cca700;
+	}
+	.status.done {
+		color: #89d185;
+	}
+	.status.error {
+		color: #f14c4c;
+	}
+	.spinner {
+		display: inline-block;
+		width: 8px;
+		height: 8px;
+		border: 2px solid #555;
+		border-top-color: #4fc1ff;
+		border-radius: 50%;
+		vertical-align: middle;
+		animation: spin 0.8s linear infinite;
+	}
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.spinner {
+			animation: none;
+		}
 	}
 	.flags {
 		display: flex;

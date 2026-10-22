@@ -16,8 +16,10 @@ import {
 	type Exit,
 	type Frame,
 	type Live,
+	type Notify,
 	type Replay,
 	type SessionInfo,
+	type Status,
 } from './protocol';
 
 export interface SocketLike {
@@ -45,6 +47,8 @@ export interface ConnectionHandlers {
 	live(m: Live): void;
 	exit(m: Exit): void;
 	error(m: ErrorMessage): void;
+	status(m: Status): void;
+	notify(m: Notify): void;
 	frame(f: Frame): void;
 	closed(reason: CloseReason): void;
 }
@@ -108,6 +112,10 @@ export class DaemonConnection {
 
 	kill(sid: number): void {
 		this.sendReady({ t: 'kill', sid });
+	}
+
+	seen(sid: number): void {
+		this.sendReady({ t: 'seen', sid });
 	}
 
 	input(sid: number, gen: number, bytes: Uint8Array): void {
@@ -214,6 +222,10 @@ export class DaemonConnection {
 				return this.handlers.exit(m);
 			case 'error':
 				return this.handlers.error(m);
+			case 'status':
+				return this.handlers.status(m);
+			case 'notify':
+				return this.handlers.notify(m);
 			case 'hello':
 				console.warn('ignoring a second hello');
 		}

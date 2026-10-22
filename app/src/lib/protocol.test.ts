@@ -98,9 +98,32 @@ describe('parseMessage', () => {
 		expect(parseMessage(JSON.stringify({ t: 'sessions', list: [info] }))).toEqual({ t: 'sessions', list: [info] });
 	});
 
+	it.each([
+		['status', { t: 'status', sid: 3, status: { state: 'input', kind: 'permission', msg: 'Run make?' }, unread: false }],
+		['notify', { t: 'notify', sid: 3, kind: 'error', msg: 'build failed' }],
+		['missed summary', { t: 'notify', kind: 'missed', count: 2 }],
+	])('round-trips a %s', (_, m) => {
+		expect(parseMessage(JSON.stringify(m))).toEqual(m);
+	});
+
+	it('keeps the null of a status that clears the row', () => {
+		expect(parseMessage('{"t":"status","sid":3,"status":null,"unread":false}')).toEqual({
+			t: 'status', sid: 3, status: null, unread: false,
+		});
+	});
+
+	it('parses a sessions list with a status and unread', () => {
+		const info = {
+			sid: 1, inc: 'a', cwd: '/tmp/repo', cmd: 'sh', name: '', cols: 80, rows: 24,
+			state: 'running', pid: 10, code: 0, status: { state: 'done', msg: 'ok' }, unread: true,
+		};
+		expect(parseMessage(JSON.stringify({ t: 'sessions', list: [info] }))).toEqual({ t: 'sessions', list: [info] });
+	});
+
 	it('rejects an unknown type, a client-only type and non-JSON', () => {
 		expect(() => parseMessage('{"t":"nope"}')).toThrow();
 		expect(() => parseMessage('{"t":"subscribe","sid":1}')).toThrow();
+		expect(() => parseMessage('{"t":"seen","sid":1}')).toThrow();
 		expect(() => parseMessage('not json')).toThrow();
 		expect(() => parseMessage('null')).toThrow();
 	});

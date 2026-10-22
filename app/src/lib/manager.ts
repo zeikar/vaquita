@@ -1,7 +1,19 @@
 import type { IDisposable } from '@xterm/xterm';
 import type { CloseReason, ConnectionHandlers } from './connection';
 import { NotRunningError, type Endpoint } from './endpoint';
-import { CODE_NO_SESSION, CODE_ORPHANS, STATE_EXITED, STATE_RUNNING, type ErrorMessage, type Live, type Replay, type SessionInfo } from './protocol';
+import { notificationFor, shouldShow, type Notifier, type Target } from './notify';
+import {
+	CODE_NO_SESSION,
+	CODE_ORPHANS,
+	STATE_EXITED,
+	STATE_RUNNING,
+	type ErrorMessage,
+	type Live,
+	type Notify,
+	type Replay,
+	type SessionInfo,
+	type Status as StatusMessage,
+} from './protocol';
 import { RequestSlot, type CreateRequest } from './requests';
 import { SessionCore, type CoreOut, type Size, type TermLike } from './session-core';
 import { load, save } from './storage';
@@ -40,6 +52,9 @@ export interface ManagerState<V = ViewLike> {
 	message?: string;
 	// A create waits or is in flight; the form is disabled until it resolves.
 	creating: boolean;
+	// Whether the window has focus: the selected session is only looked at
+	// while it has.
+	focused: boolean;
 }
 
 // The part of DaemonConnection the manager uses; it is also its cores' out.
@@ -48,6 +63,7 @@ export interface ConnectionLike extends CoreOut {
 	create(cwd: string, cmd: string, name: string, cols: number, rows: number): void;
 	subscribe(sid: number): void;
 	kill(sid: number): void;
+	seen(sid: number): void;
 }
 
 export interface ManagerDeps<T extends ManagedTerm, V extends ViewLike> {
@@ -57,6 +73,7 @@ export interface ManagerDeps<T extends ManagedTerm, V extends ViewLike> {
 	connect: (endpoint: Endpoint, handlers: ConnectionHandlers) => ConnectionLike;
 	createTerminal: (cols: number, rows: number) => T;
 	createView: (term: T, core: SessionCore) => V;
+	notifier: Notifier;
 }
 
 interface Entry<T, V> {
@@ -87,7 +104,7 @@ function newEntry<T, V>(info: SessionInfo): Entry<T, V> {
 }
 
 export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewLike = ViewLike> {
-	private state: ManagerState<V> = { status: 'connecting', sessions: [], creating: false };
+	private state: ManagerState<V> = { status: 'connecting', sessions: [], creating: false, focused: true };
 	private readonly subscribers = new Set<(s: ManagerState<V>) => void>();
 	private conn: ConnectionLike | null = null;
 	// conn once its handshake is done; requests go only through it.
@@ -133,6 +150,20 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 			this.pump();
 		}
 		this.publish({ selected: sid });
+		this.seeSelected();
+	}
+
+	setFocused(focused: boolean): void {
+		if (focused === this.state.focused) return;
+		this.set({ focused });
+		this.seeSelected();
+	}
+
+	// Selects the session a clicked notification was about, if it is still
+	// there: a sid with another inc is another session, from a restarted
+	// daemon. The missed summary has no target.
+	openNotified(target?: Target): void {
+		if (target && this.entries.get(target.sid)?.info.inc === target.inc) this.select(target.sid);
 	}
 
 	// Refused without a connection and while another create waits or is in flight.
@@ -207,6 +238,8 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 				live: current((m) => this.onLive(m)),
 				exit: current((m) => this.entries.get(m.sid)?.core?.exit(m)),
 				error: current((m) => this.onError(m)),
+				status: current((m) => this.onStatus(m)),
+				notify: current((m) => this.onNotify(m)),
 				frame: current((f) => this.entries.get(f.sid)?.core?.frame(f)),
 				closed: current((reason) => this.onClosed(reason)),
 			});
@@ -255,6 +288,8 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		this.requests.reset(selected === undefined ? running : [selected, ...running]);
 		this.pump();
 		this.publish({ status: 'connected', selected, message: undefined });
+		// The selected session may have become unread while no GUI was connected.
+		this.seeSelected();
 	}
 
 	private onSessions(list: SessionInfo[]): void {
@@ -336,6 +371,37 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		}
 		this.pump();
 		this.publish(message === undefined ? {} : { message });
+	}
+
+	private onStatus(m: StatusMessage): void {
+		const e = this.entries.get(m.sid);
+		if (!e) return;
+		const status = m.status ?? undefined;
+		e.info = { ...e.info, status, unread: m.unread };
+		this.publish();
+		// Only what a seen changes is seen: an unread, or an input view, which
+		// may be Codex's plan prompt that a seen releases (a seen on any other
+		// input view changes nothing). What a seen changes is never unread and
+		// never an input view, so the daemon's answer is not seen in turn,
+		// unless it also carries a change that arrived meanwhile, which is seen
+		// once like any other. A list may have shown this view already, so
+		// whether it is new is not asked.
+		if (m.sid === this.state.selected && (m.unread || status?.state === 'input')) this.seeSelected();
+	}
+
+	private onNotify(m: Notify): void {
+		if (!shouldShow(m, this.state.selected, this.state.focused)) return;
+		const info = m.sid === undefined ? undefined : this.entries.get(m.sid)?.info;
+		this.deps.notifier.show(notificationFor(info, m));
+	}
+
+	// Tells the daemon the user is looking at the selected session. A row
+	// with neither unread nor a status gets none: an older daemon, which
+	// never sends either, answers a seen with a bad-request error.
+	private seeSelected(): void {
+		const sid = this.state.selected;
+		const info = sid === undefined ? undefined : this.entries.get(sid)?.info;
+		if (sid !== undefined && this.state.focused && (info?.unread || info?.status)) this.readyConn?.seen(sid);
 	}
 
 	// Sends the next request unless one is in flight. A queued sid that is

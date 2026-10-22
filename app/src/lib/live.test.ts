@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DaemonConnection, type CloseReason } from './connection';
 import type { Endpoint } from './endpoint';
 import { SessionManager, type ConnectionLike, type ManagerState } from './manager';
+import type { Notice } from './notify';
 import { FRAME_LIVE, type Frame, type Live, type Replay, type SessionInfo, type Sessions } from './protocol';
 import type { SessionCore } from './session-core';
 
@@ -34,10 +35,12 @@ interface HeadlessView {
 }
 
 // A manager with headless terminals whose connection also logs every frame
-// and every replay, live and sessions message, and the input it sends.
+// and every replay, live and sessions message, and the input it sends. Its
+// notifications are collected in notes.
 function client() {
 	const log: Logged[] = [];
 	const inputs: string[] = [];
+	const notes: Notice[] = [];
 	const texts = new Map<number, string>();
 	const decoders = new Map<number, TextDecoder>();
 	let state!: ManagerState<HeadlessView>;
@@ -72,6 +75,7 @@ function client() {
 				create: (cwd, cmd, name, cols, rows) => conn.create(cwd, cmd, name, cols, rows),
 				subscribe: (sid) => conn.subscribe(sid),
 				kill: (sid) => conn.kill(sid),
+				seen: (sid) => conn.seen(sid),
 				ack: (sid, gen, off) => conn.ack(sid, gen, off),
 				resize: (sid, cols, rows) => conn.resize(sid, cols, rows),
 				input: (sid, gen, bytes) => {
@@ -83,6 +87,7 @@ function client() {
 		},
 		createTerminal: (cols, rows) => new Terminal({ cols, rows, allowProposedApi: true, scrollback: 2000 }),
 		createView: (term, core) => ({ term, core, proposed: () => undefined, dispose: () => {} }),
+		notifier: { show: (n) => notes.push(n) },
 	});
 	m.subscribe((s) => (state = s));
 	const row = (sid: number) => state.sessions.find((r) => r.info.sid === sid);
@@ -90,6 +95,7 @@ function client() {
 		m,
 		log,
 		inputs,
+		notes,
 		state: () => state,
 		row,
 		view: (sid: number) => row(sid)!.view!,
@@ -122,6 +128,8 @@ async function requireIdleDaemon(): Promise<void> {
 			live: () => {},
 			exit: () => {},
 			error: () => {},
+			status: () => {},
+			notify: () => {},
 			frame: () => {},
 			closed: (r: CloseReason) => reject(new Error(`daemon check failed: ${JSON.stringify(r)}`)),
 		});
@@ -246,6 +254,43 @@ describe.skipIf(process.env.VAQUITA_LIVE !== '1')('live daemon', () => {
 			if (sid !== undefined) a.m.kill(sid);
 			a.m.stop();
 			b.m.stop();
+		}
+	});
+
+	it('shows an error report as an unread row, notifies it and clears unread on seen', { timeout: 30_000 }, async () => {
+		await requireIdleDaemon();
+		const a = client();
+		let sid: number | undefined;
+		try {
+			// Unfocused, the created session is selected but not looked at.
+			a.m.setFocused(false);
+			a.m.start();
+			await until(() => a.state().status === 'connected', 'A to connect');
+			// The shell runs the report, then turns interactive.
+			a.m.create('/tmp', "printf '\\033]7501;state=error:app=x\\033\\\\'", 'status-test');
+			await until(() => !a.state().creating, 'the create to resolve');
+			expect(a.state().message).toBeUndefined();
+			sid = a.state().selected!;
+			const s = sid;
+			await until(() => a.row(s)?.info.status?.state === 'error' && a.row(s)?.info.unread === true, 'the unread error row');
+			await until(() => a.notes.length > 0, 'the notification');
+			expect(a.notes).toEqual([{ title: 'status-test failed', body: '', target: { sid: s, inc: a.row(s)!.info.inc } }]);
+
+			// Focus on the selected session sends a seen, which the daemon accepts.
+			a.m.setFocused(true);
+			await until(() => a.row(s)?.info.unread === false, 'unread to clear');
+			expect(a.row(s)?.info.status?.state).toBe('error');
+			expect(a.state().message).toBeUndefined();
+
+			const before = a.log.length;
+			a.m.kill(s);
+			const nextList = () => a.log.slice(before).find((e): e is Sessions => e.t === 'sessions');
+			await until(() => nextList() !== undefined, 'a sessions list after the kill');
+			expect(nextList()!.list.map((i) => i.sid)).not.toContain(s);
+			sid = undefined;
+		} finally {
+			if (sid !== undefined) a.m.kill(sid);
+			a.m.stop();
 		}
 	});
 });

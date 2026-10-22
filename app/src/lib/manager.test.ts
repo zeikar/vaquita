@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConnectionHandlers } from './connection';
 import { NotRunningError, type Endpoint } from './endpoint';
 import { SessionManager, type ConnectionLike, type ManagerState } from './manager';
-import { FRAME_LIVE, FRAME_REPLAY, type Live, type Replay, type SessionInfo } from './protocol';
+import type { Notice } from './notify';
+import { FRAME_LIVE, FRAME_REPLAY, type Live, type Replay, type SessionInfo, type Status, type StatusInfo } from './protocol';
 import type { SessionCore, Size } from './session-core';
 
 class FakeConnection implements ConnectionLike {
@@ -25,6 +26,11 @@ class FakeConnection implements ConnectionLike {
 	}
 	kill(sid: number): void {
 		this.requests.push(['kill', sid]);
+	}
+	// Kept apart from requests: a seen is no request the daemon answers in turn.
+	seens: number[] = [];
+	seen(sid: number): void {
+		this.seens.push(sid);
 	}
 	ack(): void {}
 	input(): void {}
@@ -55,6 +61,7 @@ const info = (sid: number, inc = 'i', state = 'running'): SessionInfo => ({
 });
 const replay = (sid: number, gen = 1): Replay => ({ t: 'replay', sid, gen, from: 0, to: 0, cols: 80, rows: 24 });
 const live = (sid: number, ro = false): Live => ({ t: 'live', sid, gen: 1, off: 0, ro });
+const status = (sid: number, s: StatusInfo | null, unread = false): Status => ({ t: 'status', sid, status: s, unread });
 const encoder = new TextEncoder();
 
 // The daemon's answer to a subscribe of an idle session.
@@ -74,6 +81,7 @@ function setup(
 	startDaemon: () => Promise<void> = rejectStart,
 ) {
 	const conns: FakeConnection[] = [];
+	const notes: Notice[] = [];
 	const read = vi.fn(readEndpoint);
 	const start = vi.fn(startDaemon);
 	const m = new SessionManager({
@@ -87,6 +95,7 @@ function setup(
 		},
 		createTerminal: (cols, rows) => new Terminal({ cols, rows, allowProposedApi: true }),
 		createView: (term, core) => new FakeView(term, core),
+		notifier: { show: (n) => notes.push(n) },
 	});
 	let state!: ManagerState<FakeView>;
 	let emits = 0;
@@ -95,7 +104,7 @@ function setup(
 		emits++;
 	});
 	const row = (sid: number) => state.sessions.find((r) => r.info.sid === sid);
-	return { m, conns, read, start, state: () => state, row, emits: () => emits };
+	return { m, conns, notes, read, start, state: () => state, row, emits: () => emits };
 }
 
 // Started, with the first connection past its handshake.
@@ -618,6 +627,161 @@ describe('SessionManager sessions', () => {
 		expect(t.c.requests.at(-1)).toEqual(['kill', 1]);
 		t.c.emit.error({ t: 'error', code: 'orphans', sid: 1, pids: [9] });
 		expect(t.state().message).toBe('session 1 left processes behind: 9');
+		t.m.stop();
+	});
+});
+
+describe('SessionManager status', () => {
+	const done: StatusInfo = { state: 'done', msg: 'ok' };
+	const unread = (sid: number): SessionInfo => ({ ...info(sid), status: done, unread: true });
+
+	it('patches a status into its row and clears it with a null', async () => {
+		const t = await connected([info(1)]);
+		t.c.emit.status(status(1, { state: 'input', kind: 'permission', msg: 'Run make?' }));
+		expect(t.row(1)?.info).toMatchObject({ status: { state: 'input', kind: 'permission', msg: 'Run make?' }, unread: false });
+		t.c.emit.status(status(1, done, true));
+		expect(t.row(1)?.info).toMatchObject({ status: done, unread: true });
+		t.c.emit.status(status(1, null));
+		expect(t.row(1)?.info.status).toBeUndefined();
+		expect(t.row(1)?.info.unread).toBe(false);
+		t.c.emit.status(status(9, done, true));
+		expect(t.row(9)).toBeUndefined();
+		t.m.stop();
+	});
+
+	it('replaces status and unread with those of a list', async () => {
+		const t = await connected([info(1), unread(2)], 1);
+		expect(t.row(2)?.info).toMatchObject({ status: done, unread: true });
+		expect(t.c.seens).toEqual([]);
+		t.c.emit.sessions([info(1), info(2)]);
+		expect(t.row(2)?.info.status).toBeUndefined();
+		expect(t.row(2)?.info.unread).toBeUndefined();
+		expect(t.c.seens).toEqual([]);
+		t.c.emit.status(status(2, done, true));
+		const c2 = await reconnect(t, [info(1), info(2)]);
+		expect(t.row(2)?.info.status).toBeUndefined();
+		expect(t.row(2)?.info.unread).toBeUndefined();
+		expect(c2.seens).toEqual([]);
+		t.m.stop();
+	});
+
+	it('sees the selected row on connect when it is unread, while focused', async () => {
+		const t = await connected([unread(1)], 1);
+		expect(t.c.seens).toEqual([1]);
+		const c2 = await reconnect(t, [info(1)]);
+		expect(c2.seens).toEqual([]);
+		t.m.setFocused(false);
+		const c3 = await reconnect(t, [unread(1)]);
+		expect(c3.seens).toEqual([]);
+		t.m.setFocused(true);
+		expect(c3.seens).toEqual([1]);
+		t.m.stop();
+	});
+
+	it('sends seen when a row with unread or a status is selected, and never for a row with neither', async () => {
+		const working: SessionInfo = { ...info(3), status: { state: 'working' } };
+		const t = await connected([info(1), unread(2), working]);
+		t.m.select(1);
+		expect(t.c.seens).toEqual([]);
+		t.m.select(2);
+		t.m.select(3);
+		expect(t.c.seens).toEqual([2, 3]);
+		t.m.stop();
+	});
+
+	it('sends no seen while unfocused, and one when focus comes back to such a row', async () => {
+		const t = await connected([info(1), unread(2)], 1);
+		expect(t.state().focused).toBe(true);
+		t.m.setFocused(false);
+		expect(t.state().focused).toBe(false);
+		t.m.select(2);
+		t.c.emit.status(status(2, done, true));
+		expect(t.c.seens).toEqual([]);
+		t.m.setFocused(true);
+		expect(t.c.seens).toEqual([2]);
+		t.m.setFocused(true);
+		expect(t.c.seens).toEqual([2]);
+		t.m.select(1);
+		t.m.setFocused(false);
+		t.m.setFocused(true);
+		expect(t.c.seens).toEqual([2]);
+		t.m.stop();
+	});
+
+	it('sees an unread status of the selected session while focused, but not the status answering the seen', async () => {
+		const t = await connected([info(1), info(2)], 1);
+		t.c.emit.status(status(1, { state: 'working' }));
+		t.c.emit.status(status(1, done));
+		expect(t.c.seens).toEqual([]);
+		t.c.emit.status(status(1, done, true));
+		expect(t.c.seens).toEqual([1]);
+		t.c.emit.status(status(1, done));
+		t.c.emit.status(status(2, { state: 'error' }, true));
+		expect(t.c.seens).toEqual([1]);
+		t.m.stop();
+	});
+
+	it('sees an input view arriving on the selected session once, which releases a plan prompt', async () => {
+		const plan: StatusInfo = { state: 'input', msg: 'Implement this plan?' };
+		const t = await connected([info(1)], 1);
+		t.c.emit.status(status(1, plan));
+		expect(t.c.seens).toEqual([1]);
+		t.c.emit.status(status(1, null));
+		expect(t.c.seens).toEqual([1]);
+		t.m.stop();
+	});
+
+	it('sees a status that a list showed first', async () => {
+		const t = await connected([info(1)], 1);
+		// The list reads the view the status event then reports.
+		t.c.emit.sessions([unread(1)]);
+		expect(t.c.seens).toEqual([]);
+		t.c.emit.status(status(1, done, true));
+		expect(t.c.seens).toEqual([1]);
+		t.c.emit.status(status(1, done));
+		expect(t.c.seens).toEqual([1]);
+		t.m.stop();
+	});
+
+	it('notifies unless the session is selected and the window focused', async () => {
+		const t = await connected([info(1), info(2)], 1);
+		t.c.emit.notify({ t: 'notify', sid: 1, kind: 'done', msg: 'ok' });
+		expect(t.notes).toEqual([]);
+		t.c.emit.notify({ t: 'notify', sid: 2, kind: 'error', msg: 'exit 1' });
+		expect(t.notes).toEqual([{ title: 'sh failed', body: 'exit 1', target: { sid: 2, inc: 'i' } }]);
+		t.m.setFocused(false);
+		t.c.emit.notify({ t: 'notify', sid: 1, kind: 'input', msg: 'Run make?' });
+		expect(t.notes.at(-1)).toEqual({ title: 'sh needs input', body: 'Run make?', target: { sid: 1, inc: 'i' } });
+		t.m.stop();
+	});
+
+	it('always shows the missed summary', async () => {
+		const t = await connected([info(1)], 1);
+		t.c.emit.notify({ t: 'notify', kind: 'missed', count: 2 });
+		const t2 = await connected([]);
+		t2.c.emit.notify({ t: 'notify', kind: 'missed', count: 3 });
+		expect(t.notes).toEqual([{ title: 'vaquita', body: '2 notifications while you were away' }]);
+		expect(t2.notes).toEqual([{ title: 'vaquita', body: '3 notifications while you were away' }]);
+		t.m.stop();
+		t2.m.stop();
+	});
+
+	it('selects the target of a clicked notification only while a row has its sid and inc', async () => {
+		const t = await connected([info(1), info(3, 'A')], 1);
+		t.m.setFocused(false);
+		t.c.emit.notify({ t: 'notify', sid: 3, kind: 'done' });
+		const target = t.notes[0].target;
+		t.m.openNotified(target);
+		expect(t.state().selected).toBe(3);
+
+		t.m.select(1);
+		await reconnect(t, [info(1), info(3, 'B')]);
+		t.m.openNotified(target);
+		expect(t.state().selected).toBe(1);
+		t.m.openNotified(undefined);
+		expect(t.state().selected).toBe(1);
+		t.m.openNotified({ sid: 9, inc: 'A' });
+		expect(t.state().selected).toBe(1);
 		t.m.stop();
 	});
 });

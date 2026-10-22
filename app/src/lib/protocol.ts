@@ -58,7 +58,11 @@ export interface Kill {
 	t: 'kill';
 	sid: number;
 }
-export type ClientMessage = ClientHello | Create | Subscribe | Unsubscribe | Ack | Resize | Kill;
+export interface Seen {
+	t: 'seen';
+	sid: number;
+}
+export type ClientMessage = ClientHello | Create | Subscribe | Unsubscribe | Ack | Resize | Kill | Seen;
 
 // Daemon to client.
 export interface DaemonHello {
@@ -77,6 +81,16 @@ export interface SessionInfo {
 	pid: number;
 	code: number;
 	orphans?: number[];
+	// Left out when the row shows nothing, which is all an older daemon sends.
+	status?: StatusInfo;
+	unread?: boolean;
+}
+// What a session's row shows. kind (permission or question) refines input
+// and auth; msg is the text to show.
+export interface StatusInfo {
+	state: 'working' | 'input' | 'auth' | 'done' | 'error';
+	kind?: string;
+	msg?: string;
 }
 export interface Sessions {
 	t: 'sessions';
@@ -110,9 +124,25 @@ export interface ErrorMessage {
 	sid?: number;
 	pids?: number[];
 }
-export type DaemonMessage = DaemonHello | Sessions | Replay | Live | Exit | ErrorMessage;
+// A change of one session's row; a null status clears it.
+export interface Status {
+	t: 'status';
+	sid: number;
+	status: StatusInfo | null;
+	unread: boolean;
+}
+// missed summarizes, in count, the notifications raised while no GUI was
+// connected, and names no session.
+export interface Notify {
+	t: 'notify';
+	sid?: number;
+	kind: 'done' | 'error' | 'input' | 'auth' | 'missed';
+	msg?: string;
+	count?: number;
+}
+export type DaemonMessage = DaemonHello | Sessions | Replay | Live | Exit | ErrorMessage | Status | Notify;
 
-const DAEMON_TYPES = new Set(['hello', 'sessions', 'replay', 'live', 'exit', 'error']);
+const DAEMON_TYPES = new Set(['hello', 'sessions', 'replay', 'live', 'exit', 'error', 'status', 'notify']);
 
 export class UnknownMessageError extends Error {}
 

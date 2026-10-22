@@ -40,6 +40,7 @@ function setup() {
 	const closed: CloseReason[] = [];
 	const h = {
 		ready: vi.fn(), sessions: vi.fn(), replay: vi.fn(), live: vi.fn(), exit: vi.fn(), error: vi.fn(), frame: vi.fn(),
+		status: vi.fn(), notify: vi.fn(),
 		closed: (r: CloseReason) => closed.push(r),
 	} satisfies ConnectionHandlers;
 	const conn = new DaemonConnection({ url: 'ws://127.0.0.1:1', token: 'tok' }, h, () => socket);
@@ -114,6 +115,24 @@ describe('DaemonConnection', () => {
 		socket.receiveBinary(encodeFrame({ type: FRAME_REPLAY, sid: 1, gen: 3, payload: new Uint8Array([65, 66]) }));
 		const f = h.frame.mock.calls[0][0];
 		expect([f.type, f.sid, f.gen, Array.from(f.payload)]).toEqual([FRAME_REPLAY, 1, 3, [65, 66]]);
+	});
+
+	it('dispatches status and notify after ready', () => {
+		const { socket, h } = ready();
+		socket.receiveText('{"t":"status","sid":1,"status":null,"unread":false}');
+		expect(h.status).toHaveBeenCalledWith({ t: 'status', sid: 1, status: null, unread: false });
+		socket.receiveText('{"t":"notify","kind":"missed","count":2}');
+		expect(h.notify).toHaveBeenCalledWith({ t: 'notify', kind: 'missed', count: 2 });
+	});
+
+	it('sends seen only when ready', () => {
+		const a = setup();
+		a.socket.open();
+		a.conn.seen(1);
+		expect(a.socket.sent).toHaveLength(1);
+		const b = ready();
+		b.conn.seen(1);
+		expect(b.socket.sent).toEqual(['{"t":"seen","sid":1}']);
 	});
 
 	it('ignores unknown message types and unexpected frame types after ready', () => {

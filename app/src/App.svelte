@@ -17,7 +17,9 @@
 		connect: (endpoint, handlers) => new DaemonConnection(endpoint, handlers),
 		createTerminal: (cols, rows) => createTerminal(cols, rows),
 		createView: (term, core) => new TermView(term, core, (m) => manager.report(m)),
+		notifier: { show: (n) => console.info('notification', n) },
 	});
+	manager.setFocused(document.hasFocus());
 	manager.start();
 	onDestroy(() => manager.stop());
 
@@ -55,6 +57,8 @@
 		}
 	});
 </script>
+
+<svelte:window onfocus={() => manager.setFocused(true)} onblur={() => manager.setFocused(false)} />
 
 <main>
 	<aside>
