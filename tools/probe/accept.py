@@ -200,6 +200,11 @@ def check_launchd(outdir):
         with open(os.path.join(work, label + '.txt'), encoding='utf-8', errors='replace') as f:
             res[label] = f.read()
     res['shell_ssh_auth_sock'] = os.environ.get('SSH_AUTH_SOCK', 'unset')
+    session_sock = next((l.split('=', 1)[1] for l in res['env'].splitlines() if l.startswith('SSH_AUTH_SOCK=')), 'unset')
+    # The agent may hold no keys (rc 1); what matters is that the session reaches
+    # the same agent as the shell that ran this script.
+    res['ssh_socket_matches'] = session_sock == res['shell_ssh_auth_sock'] != 'unset'
+    res['ssh_pass'] = res['ssh_socket_matches'] and not res['ssh'].startswith('rc=2')
     res['gotest_here_seconds'] = go_test_times(DAEMON_SRC)
     a.type('exit')
     res['session_exited'] = a.wait_text(r'session exited', 15)
