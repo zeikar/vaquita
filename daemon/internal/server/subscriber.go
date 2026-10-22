@@ -212,10 +212,18 @@ func (sub *subscriber) next() func(*conn) error {
 		return func(c *conn) error { return c.writeFrame(protocol.FrameLive, sid, gen, p) }
 	case e.exited && sub.sentOff >= e.finalOff:
 		// The exit comes after the session's last output, and it ends the
-		// subscription.
+		// subscription. It also comes after the session's last status and
+		// notify, which the exit handler queued before setting exited: the
+		// writer pass may have flushed the control queue before they were
+		// queued, while this step waited for the lock, so it flushes again.
 		m := protocol.Exit{T: protocol.TExit, SID: sid, Code: e.code}
 		e.detach(sub)
-		return func(c *conn) error { return c.writeMessage(m) }
+		return func(c *conn) error {
+			if err := c.flushControl(); err != nil {
+				return err
+			}
+			return c.writeMessage(m)
+		}
 	}
 	return nil
 }

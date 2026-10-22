@@ -8,12 +8,12 @@ import (
 	"github.com/zeikar/vaquita/daemon/internal/protocol"
 )
 
-// ringHas reports whether sid's ring holds s.
-func ringHas(srv *Server, sid uint32, s string) bool {
-	sess := srv.table.lookup(sid).sess
-	sess.Lock()
-	defer sess.Unlock()
-	r := sess.Output().Ring()
+// ringHas reports whether e's ring holds s. It takes only the session lock,
+// so a test holding the table lock may call it.
+func ringHas(e *entry, s string) bool {
+	e.sess.Lock()
+	defer e.sess.Unlock()
+	r := e.sess.Output().Ring()
 	return bytes.Contains(r.CopyRange(r.Start(), r.End(), nil), []byte(s))
 }
 
@@ -36,7 +36,7 @@ func stalledAttach(t *testing.T, srv *Server, tail string) (*tclient, uint32) {
 	sid := a.create("yes | head -c 800000; printf Z; " + tail)
 	a.waitFor("the cap reached", func() bool { return a.stream(sid).received() >= maxUnacked })
 	// The ring no longer moves.
-	for !ringHas(srv, sid, "Z") {
+	for !ringHas(srv.table.lookup(sid), "Z") {
 		a.handleFor(10 * time.Millisecond)
 	}
 	return a, sid
@@ -95,7 +95,7 @@ func TestHandoffWhileAttachStalled(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.waitLive(sid, "got:ok")
-	if ringHas(srv, sid, "stale") {
+	if ringHas(srv.table.lookup(sid), "stale") {
 		t.Error("input of the earlier generation reached the shell")
 	}
 }

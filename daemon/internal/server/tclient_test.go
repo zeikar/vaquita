@@ -17,11 +17,13 @@ import (
 // terminal client does: it checks generations and offsets and acks every
 // output frame as if it had just written it.
 type tclient struct {
-	t       *testing.T
-	c       *client.Client
-	lists   [][]protocol.SessionInfo // every sessions message, the hello's first
-	errs    []protocol.Error
-	streams map[uint32]*stream
+	t        *testing.T
+	c        *client.Client
+	lists    [][]protocol.SessionInfo // every sessions message, the hello's first
+	errs     []protocol.Error
+	statuses []protocol.Status
+	notifies []protocol.Notify
+	streams  map[uint32]*stream
 	// noAck makes it a terminal that has stopped consuming output: it acks
 	// only when the test does.
 	noAck bool
@@ -189,6 +191,10 @@ func (tc *tclient) apply(ev client.Event) {
 		tc.lists = append(tc.lists, m.List)
 	case protocol.Error:
 		tc.errs = append(tc.errs, m)
+	case protocol.Status:
+		tc.statuses = append(tc.statuses, m)
+	case protocol.Notify:
+		tc.notifies = append(tc.notifies, m)
 	case protocol.Replay:
 		st := tc.stream(m.SID)
 		if st.replaying {
@@ -263,6 +269,33 @@ func (tc *tclient) waitListed(sid uint32, ok func(protocol.SessionInfo) bool) pr
 	tc.t.Helper()
 	tc.waitFor("listing", func() bool { i := tc.info(sid); return i != nil && ok(*i) })
 	return *tc.info(sid)
+}
+
+// lastStatus returns the latest status event for sid, or nil.
+func (tc *tclient) lastStatus(sid uint32) *protocol.Status {
+	for i := len(tc.statuses) - 1; i >= 0; i-- {
+		if tc.statuses[i].SID == sid {
+			return &tc.statuses[i]
+		}
+	}
+	return nil
+}
+
+// waitStatus waits until the latest status event for sid satisfies ok and
+// returns it. Like every wait, it returns right after the event that
+// satisfied it, so tc holds only what arrived before.
+func (tc *tclient) waitStatus(sid uint32, ok func(protocol.Status) bool) protocol.Status {
+	tc.t.Helper()
+	tc.waitFor("status", func() bool { s := tc.lastStatus(sid); return s != nil && ok(*s) })
+	return *tc.lastStatus(sid)
+}
+
+// waitNotify waits for a notify event for which ok holds and returns the
+// first such.
+func (tc *tclient) waitNotify(ok func(protocol.Notify) bool) protocol.Notify {
+	tc.t.Helper()
+	tc.waitFor("notify", func() bool { return slices.ContainsFunc(tc.notifies, ok) })
+	return tc.notifies[slices.IndexFunc(tc.notifies, ok)]
 }
 
 func running(i protocol.SessionInfo) bool { return i.State == protocol.StateRunning }

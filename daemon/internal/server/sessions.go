@@ -9,6 +9,7 @@ import (
 	"math"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/zeikar/vaquita/daemon/internal/protocol"
 	"github.com/zeikar/vaquita/daemon/internal/session"
@@ -18,11 +19,13 @@ import (
 // Lock order: table.mu, then a session's lock, then conn.mu.
 //
 // Building a sessions list reads each session's state under the table lock,
-// so nothing that holds a session lock may take table.mu: the exit handler
-// records the exit under the session lock and takes table.mu only after
-// releasing it. conn.mu is innermost: conn.send and a connection's
-// subscription list are used with either of the others held, and nothing is
-// locked under it.
+// and so does draining a session's status, so nothing that holds a session
+// lock may take table.mu: anything that needs both takes table.mu first; the
+// exit handler and the status timer are the session-side callers. The PTY
+// reader must not wait for table.mu, which is held across state.json's fsync,
+// so its OnOutput leaves the drain to the session's status timer. conn.mu is
+// innermost: conn.send and a connection's subscription list are used with
+// either of the others held, and nothing is locked under it.
 
 // table holds the sessions and the connections that receive their list.
 type table struct {
@@ -40,6 +43,9 @@ type table struct {
 	// broadcast, which is sent under mu so that the lists arrive in the
 	// order of the changes they show.
 	clients map[*conn]struct{}
+	// missed counts the notifications raised while no GUI client was
+	// connected, for the next GUI to join.
+	missed int
 }
 
 // entry is one session in the table. A record kept from a previous daemon run
@@ -53,12 +59,14 @@ type entry struct {
 	// any other connection can find it there. The session's callbacks can
 	// run before Start has returned it.
 	listed chan struct{}
+	// statusTimer drains the session's status when output() asks for it
+	// with Reset(0) and at the projector's deadlines. Created stopped before
+	// the session starts and never replaced; Reset and Stop are called under
+	// the session lock.
+	statusTimer *time.Timer
 
 	// Guarded by table.mu.
 	rec state.SessionRecord
-	// rescanned is set once a kill of the exited session has refreshed
-	// rec.Orphans, with a scan newer than the one made at the exit.
-	rescanned bool
 
 	// Guarded by the session lock.
 	subs   []*subscriber
@@ -70,6 +78,9 @@ type entry struct {
 	// removeOnExit is set by a kill of the running session: the record goes
 	// once the exit leaves nothing behind.
 	removeOnExit bool
+	// drainDue is set while a drain output() asked for has yet to run;
+	// output read meanwhile goes out with it.
+	drainDue bool
 }
 
 func newTable(home string, st state.State) *table {
@@ -136,8 +147,11 @@ func (t *table) listLocked() []protocol.SessionInfo {
 			s.Lock()
 			info.Cols, info.Rows = s.Size()
 			info.Code = e.code
+			// An exited session shows no status.
 			if !e.exited {
 				info.State = protocol.StateRunning
+				v, unread := s.Output().View()
+				info.Status, info.Unread = statusInfo(v), unread
 			}
 			s.Unlock()
 		}
@@ -161,12 +175,14 @@ func (t *table) broadcast() {
 
 // join answers c's hello with the current list and adds c to the broadcasts,
 // in one step so that no change falls between the list and the first
-// broadcast.
+// broadcast. A GUI is then told how many notifications it missed, if any
+// were raised while no GUI was connected.
 func (t *table) join(c *conn) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	c.send(protocol.Hello{T: protocol.THello, V: protocol.Version})
 	c.send(protocol.Sessions{T: protocol.TSessions, List: t.listLocked()})
+	t.sendMissedLocked(c)
 	t.clients[c] = struct{}{}
 }
 
@@ -184,29 +200,51 @@ func (t *table) leave(c *conn) {
 	}
 }
 
-// output is the session's OnOutput: it wakes the writer of every subscriber.
+// output is the session's OnOutput: it wakes the writer of every subscriber,
+// and asks for a status drain when the read changed the status. It runs on
+// the PTY reader and never takes table.mu.
 func (e *entry) output() {
 	select {
 	case <-e.listed:
 	default:
 		// No other connection can have found the entry yet, so only the
-		// creator is subscribed, and create wakes its writer once the
-		// entry is listed.
+		// creator is subscribed, and create wakes its writer and drains the
+		// status once the entry is listed.
 		return
 	}
-	e.sess.Lock()
+	s := e.sess
+	s.Lock()
 	for _, sub := range e.subs {
 		sub.conn.wakeWriter()
 	}
-	e.sess.Unlock()
+	// The drain runs on the timer's goroutine. Reads made before it runs
+	// ask for no other, so a burst of output has one drain waiting for
+	// table.mu, not one per read.
+	if !e.drainDue && s.Output().HasStatus() {
+		e.drainDue = true
+		e.statusTimer.Reset(0)
+	}
+	s.Unlock()
 }
 
 // exit is the session's OnExit. All output is in the ring by now, so the
 // final offset recorded here is where each subscriber's exit goes.
+//
+// It holds table.mu throughout, so the exit is recorded, saved and broadcast
+// in one step: a kill that finds the session exited waits for table.mu, so
+// it reads the record only once that is done. Orphans only returns the scan
+// the session made before calling OnExit, so nothing slow is added under
+// table.mu.
 func (t *table) exit(e *entry, code int) {
 	<-e.listed
 	s := e.sess
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	s.Lock()
+	// Before exited is set, which stops the drain: the session's last status
+	// goes out ahead of its exit, as a subscriber's exit is written after the
+	// control messages queued for its connection.
+	t.endStatusLocked(e)
 	e.exited, e.code = true, code
 	e.finalOff = s.Output().Ring().End()
 	orphans, scanErr := s.Orphans()
@@ -225,14 +263,6 @@ func (t *table) exit(e *entry, code int) {
 		slog.Info("session exited", "sid", e.sid, "pid", e.pid, "code", code)
 	}
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	// A kill of the exited session may have removed or rescanned it in the
-	// meantime. Either is newer than the scan made at the exit and has been
-	// saved and broadcast already.
-	if t.entries[e.sid] != e || e.rescanned {
-		return
-	}
 	// The entry leaves the table before anything is written, so the one
 	// save and the one broadcast both show it gone. Subscriptions keep
 	// their pointer to it until their exit has been sent.
@@ -260,6 +290,8 @@ func badRequest(sid uint32) protocol.Error {
 func (c *conn) create(m protocol.Create) {
 	t := c.srv.table
 	e := &entry{sid: t.allocSID(), inc: newInc(), listed: make(chan struct{})}
+	// Before the shell starts, so that output() always finds it.
+	e.statusTimer = t.newStatusTimer(e)
 	sub := newSubscriber(c, e)
 	e.subs = []*subscriber{sub}
 	e.setWriter(sub)
@@ -294,6 +326,11 @@ func (c *conn) create(m protocol.Create) {
 	close(e.listed)
 	t.saveLocked()
 	t.broadcastLocked()
+	// output() asked for no drain before listed was closed, so the status
+	// of what was read until then goes out here, after the list.
+	s.Lock()
+	t.drainStatusLocked(e)
+	s.Unlock()
 	t.mu.Unlock()
 	slog.Info("session created", "sid", e.sid, "pid", e.pid, "cwd", m.Cwd, "remote", c.remote)
 	c.wakeWriter()
@@ -482,7 +519,7 @@ func (c *conn) kill(sid uint32) {
 		return
 	}
 	if err == nil {
-		e.rec.Orphans, e.rescanned = kept[0].Orphans, true
+		e.rec.Orphans = kept[0].Orphans
 		slog.Warn("kill of an exited session: processes remain, so the record is kept", "sid", sid, "pid", e.pid, "orphans", e.rec.Orphans)
 		t.saveLocked()
 		t.broadcastLocked()
