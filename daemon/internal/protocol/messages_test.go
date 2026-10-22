@@ -15,6 +15,23 @@ func TestMessageJSON(t *testing.T) {
 	}{
 		{Live{T: TLive, SID: 3, Gen: 7}, `{"t":"live","sid":3,"gen":7,"off":0,"ro":false}`},
 		{Ack{T: TAck, SID: 3, Gen: 7}, `{"t":"ack","sid":3,"gen":7,"off":0}`},
+		{
+			Status{T: TStatus, SID: 3, Status: &StatusInfo{State: ViewInput, Kind: "permission", Msg: "Allow?"}, Unread: true},
+			`{"t":"status","sid":3,"status":{"state":"input","kind":"permission","msg":"Allow?"},"unread":true}`,
+		},
+		{Status{T: TStatus, SID: 3}, `{"t":"status","sid":3,"status":null,"unread":false}`},
+		{Notify{T: TNotify, SID: 3, Kind: NotifyDone, Msg: "finished"}, `{"t":"notify","sid":3,"kind":"done","msg":"finished"}`},
+		{Notify{T: TNotify, Kind: NotifyMissed, Count: 2}, `{"t":"notify","kind":"missed","count":2}`},
+		{Seen{T: TSeen, SID: 3}, `{"t":"seen","sid":3}`},
+		{
+			Sessions{T: TSessions, List: []SessionInfo{
+				{SID: 1, Inc: "a", State: StateRunning, Status: &StatusInfo{State: ViewWorking}, Unread: true},
+				{SID: 2, Inc: "a", State: StateRunning},
+			}},
+			`{"t":"sessions","list":[` +
+				`{"sid":1,"inc":"a","cwd":"","cmd":"","name":"","cols":0,"rows":0,"state":"running","pid":0,"code":0,"status":{"state":"working"},"unread":true},` +
+				`{"sid":2,"inc":"a","cwd":"","cmd":"","name":"","cols":0,"rows":0,"state":"running","pid":0,"code":0}]}`,
+		},
 	}
 	for _, c := range cases {
 		b, err := json.Marshal(c.msg)

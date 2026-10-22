@@ -179,6 +179,10 @@ func (c *Client) Kill(sid uint32) error {
 	return c.send(protocol.Kill{T: protocol.TKill, SID: sid})
 }
 
+func (c *Client) Seen(sid uint32) error {
+	return c.send(protocol.Seen{T: protocol.TSeen, SID: sid})
+}
+
 // Input sends p to session sid as input frames of generation gen, split to
 // fit the 64KB payload limit.
 func (c *Client) Input(sid, gen uint32, p []byte) error {

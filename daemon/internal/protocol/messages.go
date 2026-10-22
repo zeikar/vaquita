@@ -37,6 +37,9 @@ const (
 	TReplay      = "replay"
 	TLive        = "live"
 	TExit        = "exit"
+	TStatus      = "status"
+	TNotify      = "notify"
+	TSeen        = "seen"
 )
 
 // Error codes.
@@ -52,6 +55,25 @@ const (
 const (
 	StateRunning = "running"
 	StateExited  = "exited"
+)
+
+// View states a sidebar row can show (StatusInfo.State).
+const (
+	ViewWorking = "working"
+	ViewInput   = "input"
+	ViewAuth    = "auth"
+	ViewDone    = "done"
+	ViewError   = "error"
+)
+
+// Notification kinds in Notify. NotifyMissed summarizes the notifications
+// that fell while no GUI was connected.
+const (
+	NotifyDone   = "done"
+	NotifyError  = "error"
+	NotifyInput  = "input"
+	NotifyAuth   = "auth"
+	NotifyMissed = "missed"
 )
 
 // Hello is the first message of a connection in both directions. The client
@@ -133,6 +155,18 @@ type SessionInfo struct {
 	// Orphans are processes left in the session's PTY session after its
 	// shell exited.
 	Orphans []int `json:"orphans,omitempty"`
+	// Status and Unread are left out when the row shows nothing, which is
+	// all an older daemon ever sends.
+	Status *StatusInfo `json:"status,omitempty"`
+	Unread bool        `json:"unread,omitempty"`
+}
+
+// StatusInfo is what a session's row shows. Kind (permission or question)
+// refines the input and auth states; Msg is the text to show.
+type StatusInfo struct {
+	State string `json:"state"`
+	Kind  string `json:"kind,omitempty"`
+	Msg   string `json:"msg,omitempty"`
 }
 
 // Sessions is the full session list, sent after the hello and on changes.
@@ -170,6 +204,31 @@ type Exit struct {
 	Code int    `json:"code"`
 }
 
+// Status reports a change of one session's row. A null Status clears it, so
+// neither field is left out.
+type Status struct {
+	T      string      `json:"t"`
+	SID    uint32      `json:"sid"`
+	Status *StatusInfo `json:"status"`
+	Unread bool        `json:"unread"`
+}
+
+// Notify asks the GUI for a notification. It names a session, except for
+// NotifyMissed, which carries the Count of notifications instead.
+type Notify struct {
+	T     string `json:"t"`
+	SID   uint32 `json:"sid,omitempty"`
+	Kind  string `json:"kind"`
+	Msg   string `json:"msg,omitempty"`
+	Count int    `json:"count,omitempty"`
+}
+
+// Seen tells the daemon the user has looked at a session.
+type Seen struct {
+	T   string `json:"t"`
+	SID uint32 `json:"sid"`
+}
+
 // ParseMessage decodes a text frame into the message struct its "t" names,
 // returned by value.
 func ParseMessage(data []byte) (any, error) {
@@ -204,6 +263,12 @@ func ParseMessage(data []byte) (any, error) {
 		return parse[Live](data)
 	case TExit:
 		return parse[Exit](data)
+	case TStatus:
+		return parse[Status](data)
+	case TNotify:
+		return parse[Notify](data)
+	case TSeen:
+		return parse[Seen](data)
 	}
 	return nil, fmt.Errorf("parse message: unknown type %q", head.T)
 }

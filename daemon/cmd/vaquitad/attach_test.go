@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zeikar/vaquita/daemon/internal/client"
 	"github.com/zeikar/vaquita/daemon/internal/protocol"
 	"github.com/zeikar/vaquita/daemon/internal/server"
 )
@@ -467,6 +468,20 @@ func TestAttachLostConnection(t *testing.T) {
 	e := r.wait()
 	if !e.failed || !strings.HasPrefix(e.msg, "[vaquita] lost the connection to vaquitad") {
 		t.Errorf("ended with %+v", e)
+	}
+}
+
+// Status and notify messages are for the GUI; an attach ignores them and
+// stays up.
+func TestAttachIgnoresStatusAndNotify(t *testing.T) {
+	a := newAttacher(attachConfig{}, nil, nil, io.Discard, nil, func() {})
+	for _, m := range []any{
+		protocol.Status{T: protocol.TStatus, SID: 1, Unread: true},
+		protocol.Notify{T: protocol.TNotify, SID: 1, Kind: protocol.NotifyDone},
+	} {
+		if end := a.event(client.Event{Msg: m}, true); end != nil {
+			t.Errorf("event(%T) ended the attach: %+v", m, end)
+		}
 	}
 }
 
