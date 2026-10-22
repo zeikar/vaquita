@@ -112,15 +112,35 @@ func TestCheckExeStable(t *testing.T) {
 	}
 }
 
-func TestAdhocSigned(t *testing.T) {
-	exe, err := os.Executable() // a Go test binary: linker-signed, ad-hoc
+func TestUnstablySigned(t *testing.T) {
+	// Fixtures signed here, so the test holds on arm64 (where Go's linker
+	// ad-hoc signs) and amd64 (where it leaves binaries unsigned) alike.
+	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !adhocSigned(exe) {
-		t.Error("go test binary not reported as ad-hoc signed")
+	dir := t.TempDir()
+	fixture := func(name string, codesign ...string) string {
+		path := filepath.Join(dir, name)
+		b, err := os.ReadFile(exe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, b, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command("codesign", append(codesign, path)...).CombinedOutput(); err != nil {
+			t.Fatalf("codesign %v: %v\n%s", codesign, err, out)
+		}
+		return path
 	}
-	if adhocSigned("/bin/ls") {
-		t.Error("/bin/ls (Apple-signed) reported as ad-hoc signed")
+	if !unstablySigned(fixture("adhoc", "--force", "--sign", "-")) {
+		t.Error("ad-hoc signed binary not reported")
+	}
+	if !unstablySigned(fixture("unsigned", "--remove-signature")) {
+		t.Error("unsigned binary not reported")
+	}
+	if unstablySigned("/bin/ls") {
+		t.Error("/bin/ls (Apple-signed) reported")
 	}
 }

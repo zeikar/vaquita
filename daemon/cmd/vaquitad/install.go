@@ -50,8 +50,8 @@ func install(args []string) error {
 	if err := checkExeStable(exe); err != nil {
 		return err
 	}
-	if adhocSigned(exe) {
-		fmt.Fprintf(os.Stderr, "warning: %s has only an ad-hoc signature, so macOS will ask again for folder access after every rebuild; build it with `make SIGN=<identity>`\n", exe)
+	if unstablySigned(exe) {
+		fmt.Fprintf(os.Stderr, "warning: %s has no stable signature, so macOS will ask again for folder access after every rebuild; build it with `make SIGN=<identity>`\n", exe)
 	}
 	path, err := writeAgentPlist(home, label, plist)
 	if err != nil {
@@ -67,17 +67,21 @@ next steps:
   launchctl bootstrap %[1]s %[2]s
   launchctl print %[1]s/%[3]s
   launchctl bootout %[1]s/%[3]s
-`, target, path, label)
+`, target, shellJoin([]string{path}), label)
 	return nil
 }
 
 // checkExeStable refuses executables that a LaunchAgent would outlive: go run
 // binaries and anything under the temp dir.
-// adhocSigned reports whether exe carries only an ad-hoc signature, as Go's
-// linker leaves it. TCC ties such a binary's permissions to its exact hash.
-func adhocSigned(exe string) bool {
+// unstablySigned reports whether exe is unsigned or carries only an ad-hoc
+// signature (Go's linker signs arm64 binaries that way). TCC ties such a
+// binary's permissions to its exact hash, which every build changes.
+func unstablySigned(exe string) bool {
 	out, err := exec.Command("codesign", "-dv", exe).CombinedOutput()
-	return err == nil && bytes.Contains(out, []byte("Signature=adhoc"))
+	if err != nil {
+		return bytes.Contains(out, []byte("not signed at all"))
+	}
+	return bytes.Contains(out, []byte("Signature=adhoc"))
 }
 
 func checkExeStable(exe string) error {
@@ -126,7 +130,7 @@ func writeAgentPlist(dir, label string, plist []byte) (string, error) {
 }
 
 func runBootstrap(target, path string) error {
-	fmt.Printf("running: launchctl bootstrap %s %s\n", target, path)
+	fmt.Printf("running: launchctl bootstrap %s %s\n", target, shellJoin([]string{path}))
 	cmd := exec.Command("launchctl", "bootstrap", target, path)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

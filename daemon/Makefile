@@ -1,5 +1,5 @@
 VAQUITA_HOME ?= $(HOME)/.vaquita-dev
-BIN := $(VAQUITA_HOME)/bin/vaquitad
+BIN = $(VAQUITA_HOME)/bin/vaquitad
 
 # SIGN names a code-signing identity, such as a self-signed certificate in the
 # login keychain. Without it the binary keeps Go's ad-hoc signature, which
@@ -8,12 +8,13 @@ BIN := $(VAQUITA_HOME)/bin/vaquitad
 SIGN ?=
 
 # Built and signed beside the target, then renamed into place, so a running
-# daemon keeps its old file until it is restarted.
+# daemon keeps its old file until it is restarted. Paths are quoted: the
+# default home is under "Application Support".
 .PHONY: build
 build:
-	mkdir -p $(dir $(BIN))
-	go build -o $(BIN).tmp ./cmd/vaquitad
+	mkdir -p "$(VAQUITA_HOME)/bin"
+	go build -o "$(BIN).tmp" ./cmd/vaquitad
 ifneq ($(SIGN),)
-	codesign --force --sign "$(SIGN)" --identifier io.github.zeikar.vaquitad $(BIN).tmp
+	codesign --force --sign "$(SIGN)" --identifier io.github.zeikar.vaquitad "$(BIN).tmp"
 endif
-	mv $(BIN).tmp $(BIN)
+	mv "$(BIN).tmp" "$(BIN)"
