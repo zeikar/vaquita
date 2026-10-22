@@ -295,11 +295,12 @@ func (c *conn) create(m protocol.Create) {
 	sub := newSubscriber(c, e)
 	e.subs = []*subscriber{sub}
 	e.setWriter(sub)
+	// Only the shell gets the added options; the record keeps what the user typed.
 	s, err := session.Start(session.Config{
 		SID:      int(e.sid),
 		Shell:    c.srv.opts.Shell,
 		Cwd:      m.Cwd,
-		Cmd:      m.Cmd,
+		Cmd:      session.AgentCommand(m.Cmd),
 		Name:     m.Name,
 		Cols:     m.Cols,
 		Rows:     m.Rows,

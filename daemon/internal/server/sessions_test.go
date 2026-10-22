@@ -3,7 +3,9 @@ package server
 import (
 	"bytes"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -135,6 +137,26 @@ func TestCreateSendsStartupLive(t *testing.T) {
 	}
 	if l := sb.lives[0]; l.Off != r.To || l.Gen != r.Gen {
 		t.Errorf("subscriber's live = %+v after replay %+v", l, r)
+	}
+}
+
+// A stub function stands in for codex, so the test never launches the real
+// agent: a login shell sources $HOME/.profile before running the command.
+func TestCreateKeepsTheTypedCommandForCodex(t *testing.T) {
+	srv := startSessionServer(t, Options{})
+	stub := "codex() { printf 'stub:%s\\n' \"$*\"; }\n"
+	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), ".profile"), []byte(stub), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := dialClient(t, srv)
+	sid := a.create("codex resume --last")
+	a.waitLive(sid, `stub:-c tui.notifications=["agent-turn-complete","approval-requested","plan-mode-prompt","async-question"] -c tui.notification_method="osc9" -c tui.notification_condition="always" resume --last`)
+	i := a.waitListed(sid, running)
+	if i.Cmd != "codex resume --last" {
+		t.Errorf("listed cmd %q, want what the user typed", i.Cmd)
+	}
+	if r := savedRecord(t, srv, sid); r == nil || r.Cmd != "codex resume --last" {
+		t.Errorf("state.json holds %+v", r)
 	}
 }
 
