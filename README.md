@@ -2,7 +2,7 @@
 
 A lightweight alternative to [Orca](https://www.onorca.dev/), the agent IDE, for macOS. It starts from the core: coding agents such as Claude Code and Codex running side by side, each in its own git worktree.
 
-It's at the very start. The daemon works from the terminal; the app doesn't exist yet. Alongside it is the tooling used to check the risky parts before building. The plan:
+It's at the very start. The daemon works from the terminal, and the app exists in an early form: a session list and one terminal. Alongside it is the tooling used to check the risky parts before building. The plan:
 
 - Sessions live in a small daemon (`vaquitad`), so shells and agents keep running when the app restarts.
 - One sidebar shows your repos, their worktrees and the sessions in each, with every agent's state: working, needs input, done.
@@ -25,6 +25,32 @@ From another terminal, after the same `export`:
 - `vaquitad ls` lists sessions.
 - `vaquitad attach --new` starts a shell session and attaches to it; `attach --new -- <cmd>` runs a command such as an agent instead. `Ctrl-\` detaches and leaves the session running.
 - `vaquitad install` writes a LaunchAgent plist into `$VAQUITA_HOME` and prints the `launchctl` commands that load and unload it. Nothing goes into `~/Library/LaunchAgents`, so nothing starts at login. `--bootstrap` also loads it into launchd; `--print` only prints the plist.
+
+## App
+
+A Tauri app in `app/` (Svelte, xterm.js). It needs Node and Rust. Homebrew's `rustup` is keg-only, so put it on the path for cargo and tauri commands: `PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
+
+Dev loop, with the dev daemon from above allowing the dev server's origin:
+
+```sh
+export VAQUITA_HOME=~/.vaquita-dev
+vaquitad serve --allow-origin http://localhost:1420
+# in another terminal, after the same export, in app/
+npm ci
+PATH="/opt/homebrew/opt/rustup/bin:$PATH" npm run tauri dev
+```
+
+`npm test` and `npm run check` need no daemon. `npm run test:live` talks to the running dev daemon.
+
+What it does so far:
+
+- A flat list of sessions, one terminal shown at a time. You can create and kill sessions.
+- Sessions live in the daemon, so after an app restart the screen is restored.
+- A fix for Korean IME input on WebKit, clickable links, file drop, and OSC 52 copy.
+
+A release build looks for the daemon and, if none is running, starts the LaunchAgent that `vaquitad install` wrote, through launchd. `tauri dev` never does; it shows a hint instead.
+
+`npm run tauri build` produces `app/src-tauri/target/release/bundle/macos/vaquita.app`. To pass `VAQUITA_HOME`, run `vaquita.app/Contents/MacOS/vaquita` directly. Without it the app uses the default home, `~/Library/Application Support/vaquita`.
 
 ## tools/probe
 
