@@ -25,9 +25,27 @@ type Output struct {
 	records status.Records
 	proj    status.Projector
 
+	// reporter is the foreground process group when the last root working or
+	// blocked report was read, 0 when unknown. While the view is working or
+	// waiting for input, Tick polls it from nextPoll on: the program runs in
+	// a group of its own under the session's shell, so its death, even by
+	// SIGKILL, ends neither the session nor anything the projector sees.
+	reporter int
+	nextPoll time.Time
+
 	// Now stamps the reports the projector sees; tests replace it.
 	Now func() time.Time
+	// Foreground returns the PTY's foreground process group, and GroupAlive
+	// reports whether a process group still exists. Both are set or both
+	// nil, as in unit tests, which means no watch: only Foreground produces
+	// a reporter, and Tick calls GroupAlive only for one. A group Foreground
+	// cannot tell, or one at most 1, leaves a report without a reporter.
+	Foreground func() (int, error)
+	GroupAlive func(pgid int) bool
 }
+
+// fgPollGap is how often the reporter's process group is polled.
+const fgPollGap = time.Second
 
 // Status is what the program in a session has reported about itself.
 type Status struct {
@@ -91,12 +109,69 @@ func (o *Output) TakeStatus() (changed bool, notes []status.Notification) { retu
 // Seen marks the session as looked at.
 func (o *Output) Seen() { o.proj.Seen() }
 
-// Tick raises a notification whose deadline has passed.
-func (o *Output) Tick(now time.Time) { o.proj.Tick(now) }
+// Tick raises a notification whose deadline has passed and, once the poll is
+// due, checks that the reporter's process group is still there.
+func (o *Output) Tick(now time.Time) {
+	o.proj.Tick(now)
+	if !o.polling() || now.Before(o.nextPoll) {
+		return
+	}
+	if o.GroupAlive(o.reporter) {
+		o.nextPoll = now.Add(fgPollGap)
+		return
+	}
+	o.interrupt()
+}
 
-// NextDeadline reports when Tick next has something to raise. now is unused
-// until the foreground process group poll joins the deadline.
-func (o *Output) NextDeadline(_ time.Time) (time.Time, bool) { return o.proj.Deadline() }
+// interrupt ends whatever was working or waiting for input, in the records
+// and the view, as a new shell prompt or the reporter's death does. Done and
+// error outcomes stay.
+func (o *Output) interrupt() {
+	o.records.PromptStart()
+	o.proj.Interrupt()
+	o.reporter = 0
+}
+
+// NextDeadline reports when Tick next has something to do. now is unused:
+// both deadlines are kept as times.
+func (o *Output) NextDeadline(_ time.Time) (time.Time, bool) {
+	d, ok := o.proj.Deadline()
+	if o.polling() && (!ok || o.nextPoll.Before(d)) {
+		return o.nextPoll, true
+	}
+	return d, ok
+}
+
+// polling reports whether Tick polls the reporter's process group: only a
+// view that is working or waiting for input can be left behind by its death.
+func (o *Output) polling() bool {
+	if o.reporter == 0 {
+		return false
+	}
+	v, _ := o.proj.View()
+	switch v.State {
+	case status.ViewWorking, status.ViewInput, status.ViewAuth:
+		return true
+	}
+	return false
+}
+
+// watch records the foreground process group as the reporter of a root
+// report, or forgets it.
+func (o *Output) watch(state string, now time.Time) {
+	switch state {
+	case status.StateWorking, status.StateBlocked:
+		o.reporter = 0
+		if o.Foreground == nil {
+			return
+		}
+		if pgid, err := o.Foreground(); err == nil && pgid > 1 {
+			o.reporter, o.nextPoll = pgid, now.Add(fgPollGap)
+		}
+	case status.StateClear:
+		o.reporter = 0
+	}
+}
 
 // ClearStatus empties the view and drops pending notifications, deadlines and
 // the held OSC 9, as the session's exit does.
@@ -120,7 +195,9 @@ func (s statusSink) OSC(num int, payload []byte, oversized bool) {
 			// Child reports stay in the records: a child's done must not
 			// complete its parent.
 			if r.ID == "" {
-				o.proj.Report(r, o.Now())
+				now := o.Now()
+				o.watch(r.State, now)
+				o.proj.Report(r, now)
 			}
 		}
 	// Only OSC 9 feeds the projection. Claude Code's OSC 777 arrives seconds
@@ -133,8 +210,7 @@ func (s statusSink) OSC(num int, payload []byte, oversized bool) {
 	case 133:
 		// Shell integration: A marks the start of a prompt.
 		if len(payload) > 0 && payload[0] == 'A' && (len(payload) == 1 || payload[1] == ';') {
-			o.records.PromptStart()
-			o.proj.Interrupt()
+			o.interrupt()
 		}
 	}
 }
@@ -148,5 +224,6 @@ func (s statusSink) ESC(final byte) {
 		// outcome does not depend on how late the timer fired.
 		s.o.proj.Tick(s.o.Now())
 		s.o.proj.Clear()
+		s.o.reporter = 0
 	}
 }

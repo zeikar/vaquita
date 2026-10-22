@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -177,6 +178,8 @@ func Start(cfg Config) (*Session, error) {
 		rows:       cfg.Rows,
 		inWake:     make(chan struct{}, 1),
 	}
+	s.out.Foreground = s.foreground
+	s.out.GroupAlive = groupAlive
 	name := "session " + strconv.Itoa(s.pid)
 	Go(name+" reader", s.readLoop)
 	Go(name+" input", s.writeLoop)
@@ -270,6 +273,23 @@ func (s *Session) Resize(cols, rows int) error {
 	}
 	s.cols, s.rows = cols, rows
 	return nil
+}
+
+// foreground returns the PTY's foreground process group, 0 once the shell
+// has exited. Output calls it with the session lock held, which, as in
+// Resize, keeps the raw descriptor from being closed and reused under it.
+func (s *Session) foreground() (int, error) {
+	if s.closed {
+		return 0, ErrClosed
+	}
+	return unix.IoctlGetInt(int(s.master.Fd()), unix.TIOCGPGRP)
+}
+
+// groupAlive reports whether process group pgid still has a member. EPERM
+// means a member the daemon may not signal. A pgid of 1 or less would ask
+// about every process or the daemon's own group instead.
+func groupAlive(pgid int) bool {
+	return pgid > 1 && !errors.Is(unix.Kill(-pgid, 0), unix.ESRCH)
 }
 
 func winsize(cols, rows int) (*pty.Winsize, error) {

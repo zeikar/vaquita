@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zeikar/vaquita/daemon/internal/status"
 	"golang.org/x/sys/unix"
 )
 
@@ -290,6 +291,74 @@ func TestSessionInputOverflow(t *testing.T) {
 		t.Errorf("exit code %d, want %d", r.code, 128+int(syscall.SIGKILL))
 	}
 	ts.waitClosed(t)
+}
+
+// A program killed in its own process group, as claude runs under the
+// session's shell, ends neither the session nor its working view by itself;
+// the poll of the foreground group it reported from clears the view. The
+// child waits before reporting so that the shell has made it the foreground
+// group by then.
+func TestForegroundGroupDeathClearsView(t *testing.T) {
+	ts := startSession(t, `set -m; sh -c 'sleep 0.2; printf "\033]7501;state=working:app=x\007"; exec sleep 60'; read l; printf "after:%s" "$l"`, nil)
+	deadline := time.After(testTimeout)
+	for {
+		ts.Lock()
+		v, _ := ts.out.View()
+		reporter := ts.out.reporter
+		fg, fgErr := ts.out.Foreground()
+		ts.Unlock()
+		if v.State == status.ViewWorking {
+			// The job still runs, so it is still the foreground group.
+			if reporter <= 1 || reporter == ts.PID() || reporter != fg || fgErr != nil {
+				t.Fatalf("reporter %d, foreground %d (%v), shell %d; want the job's own group", reporter, fg, fgErr, ts.PID())
+			}
+			// Only a group in this test's PTY session is ever signalled.
+			if sid, err := unix.Getsid(reporter); err != nil || sid != ts.PID() {
+				t.Fatalf("Getsid(%d) = %d, %v; want %d", reporter, sid, err, ts.PID())
+			}
+			if err := unix.Kill(-reporter, unix.SIGKILL); err != nil {
+				t.Fatalf("kill job group %d: %v", reporter, err)
+			}
+			break
+		}
+		select {
+		case <-ts.output:
+		case <-deadline:
+			t.Fatalf("view never turned working; output ends %q", tail(ringText(ts.Session)))
+		}
+	}
+
+	// The shell reaps the job some time after the kill; until then the group
+	// is still there.
+	stop := time.Now().Add(testTimeout)
+	for {
+		ts.Lock()
+		v, _ := ts.out.View()
+		d, ok := ts.out.NextDeadline(ts.out.Now())
+		if v == (status.View{}) {
+			ts.Unlock()
+			break
+		}
+		if !ok {
+			ts.Unlock()
+			t.Fatalf("no poll scheduled for view %+v", v)
+		}
+		ts.out.Tick(d)
+		ts.Unlock()
+		if time.Now().After(stop) {
+			t.Fatalf("view %+v outlived the reporter's group", v)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	ts.Lock()
+	exited, _ := ts.State()
+	ts.Unlock()
+	if exited {
+		t.Fatal("the session exited with the job")
+	}
+	ts.write(t, "x\n")
+	ts.waitOutput(t, "after:x")
 }
 
 // panicOnce panics the first time it sees OSC 4242, standing in for a

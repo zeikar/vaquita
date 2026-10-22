@@ -344,6 +344,111 @@ func TestOutputClearStatus(t *testing.T) {
 	}
 }
 
+// watchedOutput returns a statusOutput whose foreground process group is 42
+// and whose groups are alive while *alive is true, counting the polls in
+// *polls.
+func watchedOutput() (o *Output, now *time.Time, alive *bool, polls *int) {
+	o, now = statusOutput()
+	alive, polls = new(bool), new(int)
+	*alive = true
+	o.Foreground = func() (int, error) { return 42, nil }
+	o.GroupAlive = func(pgid int) bool {
+		*polls++
+		return *alive && pgid == 42
+	}
+	return o, now, alive, polls
+}
+
+func TestOutputForegroundGroupPoll(t *testing.T) {
+	o, now, alive, polls := watchedOutput()
+	t0 := *now
+	o.Feed([]byte(working + "\x1b]7501;id=a:state=done\x07\x1b]7501;id=b:state=working\x07"))
+	o.TakeStatus()
+	if o.reporter != 42 {
+		t.Fatalf("reporter %d, want 42", o.reporter)
+	}
+	d, ok := o.NextDeadline(t0)
+	if !ok || !d.Equal(t0.Add(time.Second)) {
+		t.Fatalf("deadline %v, %v; want the poll at %v", d, ok, t0.Add(time.Second))
+	}
+	o.Tick(t0.Add(500 * time.Millisecond))
+	if *polls != 0 {
+		t.Fatalf("%d polls before the deadline", *polls)
+	}
+
+	o.Tick(d)
+	if *polls != 1 || o.HasStatus() {
+		t.Fatalf("%d polls, pending %v", *polls, o.HasStatus())
+	}
+	if d2, ok := o.NextDeadline(d); !ok || !d2.Equal(d.Add(time.Second)) {
+		t.Fatalf("deadline after a live poll %v, %v; want %v", d2, ok, d.Add(time.Second))
+	}
+
+	*alive = false
+	o.Tick(d.Add(time.Second))
+	changed, notes := o.TakeStatus()
+	if v, _ := o.View(); !changed || len(notes) != 0 || v != (status.View{}) {
+		t.Fatalf("changed %v, notes %v, view %+v; want an empty view and no notification", changed, notes, v)
+	}
+	// As at a new prompt, only the done record outlives the reporter.
+	if recs := o.Status().Records; len(recs) != 1 || recs[0].ID != "a" {
+		t.Fatalf("records after the group died: %+v", recs)
+	}
+	if _, ok := o.NextDeadline(d.Add(time.Second)); ok {
+		t.Fatal("deadline left after the group died")
+	}
+}
+
+func TestOutputForegroundGroupPollSkipsDone(t *testing.T) {
+	o, now, alive, polls := watchedOutput()
+	t0 := *now
+	*alive = false
+	o.Feed([]byte(working + codexPong))
+	// The done's quiet period, not the poll a second after the working.
+	if d, ok := o.NextDeadline(t0); !ok || !d.Equal(t0.Add(status.DoneQuiet)) {
+		t.Fatalf("deadline %v, %v; want %v", d, ok, t0.Add(status.DoneQuiet))
+	}
+	o.Tick(t0.Add(time.Minute))
+	_, notes := o.TakeStatus()
+	if want := []status.Notification{{Kind: status.NotifyDone, Msg: "pong"}}; !slices.Equal(notes, want) {
+		t.Fatalf("notes %v", notes)
+	}
+	if v, _ := o.View(); v.State != status.ViewDone || *polls != 0 {
+		t.Fatalf("view %+v after %d polls; want done and no poll", v, *polls)
+	}
+}
+
+func TestOutputForegroundGroupUnknown(t *testing.T) {
+	for _, fg := range []func() (int, error){
+		func() (int, error) { return 0, nil }, // no foreground group
+		func() (int, error) { return 1, nil },
+		func() (int, error) { return 0, ErrClosed },
+	} {
+		o, now, _, _ := watchedOutput()
+		o.Feed([]byte(working))
+		o.Foreground = fg
+		o.Feed([]byte("\x1b]7501;state=blocked:kind=permission\x07"))
+		if _, ok := o.NextDeadline(*now); ok || o.reporter != 0 {
+			t.Fatalf("deadline %v with reporter %d; want no poll", ok, o.reporter)
+		}
+	}
+}
+
+func TestOutputForegroundGroupForgotten(t *testing.T) {
+	for name, seq := range map[string]string{
+		"clear":        "\x1b]7501;state=clear\x07",
+		"RIS":          "\x1bc",
+		"prompt start": "\x1b]133;A\x07",
+	} {
+		o, _, _, _ := watchedOutput()
+		o.Feed([]byte(working))
+		o.Feed([]byte(seq))
+		if o.reporter != 0 {
+			t.Errorf("%s: reporter %d left", name, o.reporter)
+		}
+	}
+}
+
 func TestOutputReplaceScannerKeepsStatusSink(t *testing.T) {
 	o := NewOutput()
 	o.ReplaceScanner()
