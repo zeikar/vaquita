@@ -15,4 +15,9 @@ describe('shellQuoteAll', () => {
 	it('joins paths with a space and ends with one', () => {
 		expect(shellQuoteAll(['/tmp/a', '/tmp/b c'])).toBe("'/tmp/a' '/tmp/b c' ");
 	});
+
+	it('refuses a path with control characters', () => {
+		expect(() => shellQuoteAll(['/tmp/x\x15touch /tmp/pwned\r'])).toThrow('control character');
+		expect(() => shellQuoteAll(['/tmp/ok', '/tmp/a\x7fb'])).toThrow('control character');
+	});
 });

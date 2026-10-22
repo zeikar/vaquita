@@ -1,9 +1,9 @@
-import { ClipboardAddon, type ClipboardSelectionType, type IClipboardProvider } from '@xterm/addon-clipboard';
+import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
-import { writeClipboard } from './clipboard';
+import { clipboardProvider } from './clipboard-provider';
 import { installHangulFix, type HangulFix } from './hangul-fix';
 import { keyHandler } from './keys';
 import { openExternal } from './links';
@@ -11,13 +11,11 @@ import type { ViewLike } from './manager';
 import type { SessionCore, Size } from './session-core';
 import { theme } from './theme';
 
-const MAX_CLIPBOARD = 1024 * 1024;
-
 function errText(e: unknown): string {
 	return e instanceof Error ? e.message : String(e);
 }
 
-export function createTerminal(cols: number, rows: number, report: (message: string) => void): Terminal {
+export function createTerminal(cols: number, rows: number): Terminal {
 	return new Terminal({
 		cols,
 		rows,
@@ -29,8 +27,6 @@ export function createTerminal(cols: number, rows: number, report: (message: str
 		fontSize: 13,
 		// Plain drag selects only when the app has mouse reporting off; Option forces it.
 		macOptionClickForcesSelection: true,
-		// For OSC 8 hyperlinks xterm passes the link's URI here, not the visible text.
-		linkHandler: { activate: (_e, uri) => openExternal(uri, (e) => report(`open link failed: ${errText(e)}`)) },
 	});
 }
 
@@ -67,8 +63,21 @@ export class TermView implements ViewLike {
 		this.core.beforeData = this.hangul.flush;
 		this.fit = new FitAddon();
 		this.term.loadAddon(this.fit);
-		this.term.loadAddon(new WebLinksAddon((_e, uri) => openExternal(uri, (e) => this.report(`open link failed: ${errText(e)}`))));
-		this.term.loadAddon(new ClipboardAddon(undefined, this.clipboardProvider()));
+		// Output chooses both the visible text and the URI, so a link opens only on
+		// Cmd+click and its URI is shown as a tooltip while hovered. For OSC 8
+		// hyperlinks xterm passes the link's URI to linkHandler, not the visible text.
+		const activate = (e: MouseEvent, uri: string) => {
+			if (e.metaKey) openExternal(uri, (err) => this.report(`open link failed: ${errText(err)}`));
+		};
+		const hover = (_e: MouseEvent, uri: string) => {
+			container.title = uri;
+		};
+		const leave = () => {
+			container.title = '';
+		};
+		this.term.options.linkHandler = { activate, hover, leave };
+		this.term.loadAddon(new WebLinksAddon(activate, { hover, leave }));
+		this.term.loadAddon(new ClipboardAddon(undefined, clipboardProvider(() => this.core.pendingReplay > 0, this.report)));
 		this.term.attachCustomKeyEventHandler(keyHandler((text) => this.core.sendInput(text)));
 		// The pane can show a view before it has created the view's element.
 		if (this.visible) this.start(container);
@@ -126,26 +135,6 @@ export class TermView implements ViewLike {
 			},
 			(text) => term.input(text, true),
 		);
-	}
-
-	// OSC 52 is write only: a program in the terminal must not read the clipboard.
-	private clipboardProvider(): IClipboardProvider {
-		return {
-			readText: (_selection: ClipboardSelectionType) => '',
-			writeText: async (selection: ClipboardSelectionType, text: string) => {
-				// Like the default provider, only the system clipboard is written.
-				if (selection !== 'c') return;
-				if (text.length > MAX_CLIPBOARD) {
-					this.report('clipboard write ignored: too large');
-					return;
-				}
-				try {
-					await writeClipboard(text);
-				} catch (e) {
-					this.report(`clipboard write failed: ${errText(e)}`);
-				}
-			},
-		};
 	}
 
 	private start(container: HTMLElement): void {

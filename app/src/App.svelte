@@ -15,7 +15,7 @@
 		readEndpoint,
 		startDaemon,
 		connect: (endpoint, handlers) => new DaemonConnection(endpoint, handlers),
-		createTerminal: (cols, rows) => createTerminal(cols, rows, (m) => manager.report(m)),
+		createTerminal: (cols, rows) => createTerminal(cols, rows),
 		createView: (term, core) => new TermView(term, core, (m) => manager.report(m)),
 	});
 	manager.start();
@@ -26,7 +26,13 @@
 		const unlisten = getCurrentWebview().onDragDropEvent((e) => {
 			if (e.payload.type !== 'drop') return;
 			const { sessions, selected } = $manager;
-			sessions.find((r) => r.info.sid === selected)?.view?.sendInput(shellQuoteAll(e.payload.paths));
+			const view = sessions.find((r) => r.info.sid === selected)?.view;
+			if (!view) return;
+			try {
+				view.sendInput(shellQuoteAll(e.payload.paths));
+			} catch (err) {
+				manager.report(`file drop refused: ${err instanceof Error ? err.message : String(err)}`);
+			}
 		});
 		unlisten.catch((e) => manager.report(`file drop unavailable: ${e instanceof Error ? e.message : String(e)}`));
 		onDestroy(() => void unlisten.then((f) => f(), () => {}));

@@ -288,6 +288,9 @@ describe('SessionManager', () => {
 			await vi.advanceTimersByTimeAsync(1000);
 			expect(t.conns).toHaveLength(2);
 			expect(t.start).toHaveBeenCalledTimes(1);
+			t.conns[1].emit.closed({ kind: 'failed', detail: 'code 1006' });
+			expect(t.state().status).toBe('not-running');
+			expect(t.state().message).toBe('hint');
 			t.m.stop();
 		});
 
@@ -504,6 +507,16 @@ describe('SessionManager sessions', () => {
 		t.c.emit.error({ t: 'error', code: 'no-session', sid: 3 });
 		expect(t.state().message).toBeUndefined();
 		expect(t.c.subscribes).toEqual([3, 1]);
+		t.m.stop();
+	});
+
+	it('subscribes an exited session of this run when it is selected', async () => {
+		const t = await connected([info(1), info(4, 'i', 'exited')], 1);
+		answer(t.c, 1);
+		expect(t.c.subscribes).toEqual([1]);
+		t.m.select(4);
+		expect(t.c.subscribes).toEqual([1, 4]);
+		expect(t.row(4)?.view).toBeDefined();
 		t.m.stop();
 	});
 

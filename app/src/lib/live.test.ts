@@ -3,10 +3,10 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Terminal } from '@xterm/headless';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DaemonConnection } from './connection';
+import { DaemonConnection, type CloseReason } from './connection';
 import type { Endpoint } from './endpoint';
 import { SessionManager, type ConnectionLike, type ManagerState } from './manager';
-import { FRAME_LIVE, type Frame, type Live, type Replay, type Sessions } from './protocol';
+import { FRAME_LIVE, type Frame, type Live, type Replay, type SessionInfo, type Sessions } from './protocol';
 import type { SessionCore } from './session-core';
 
 // End-to-end checks against the dev daemon, which must be running:
@@ -105,6 +105,33 @@ async function until(cond: () => boolean, what: string, ms = 10_000): Promise<vo
 	}
 }
 
+// A subscriber becomes the writer ahead of attach clients, so before any
+// manager connects, a handshake alone (which subscribes to nothing) checks
+// that the dev daemon has no running session of someone else's.
+async function requireIdleDaemon(): Promise<void> {
+	const endpoint = JSON.parse(readFileSync(ENDPOINT, 'utf8')) as Endpoint;
+	const list = await new Promise<SessionInfo[]>((resolve, reject) => {
+		const conn: DaemonConnection = new DaemonConnection(endpoint, {
+			ready: (l) => {
+				// Resolved first: close() reports through closed, whose reject is then ignored.
+				resolve(l);
+				conn.close();
+			},
+			sessions: () => {},
+			replay: () => {},
+			live: () => {},
+			exit: () => {},
+			error: () => {},
+			frame: () => {},
+			closed: (r: CloseReason) => reject(new Error(`daemon check failed: ${JSON.stringify(r)}`)),
+		});
+	});
+	const running = list.filter((i) => i.state === 'running');
+	if (running.length > 0) {
+		throw new Error(`the dev daemon has ${running.length} running session(s); stop them before running the live test`);
+	}
+}
+
 function screen(term: Terminal): string[] {
 	const b = term.buffer.active;
 	const lines: string[] = [];
@@ -153,6 +180,7 @@ describe.skipIf(process.env.VAQUITA_LIVE !== '1')('live daemon', () => {
 	afterEach(() => vi.unstubAllGlobals());
 
 	it('creates, shares, streams without loss and kills a session', { timeout: 120_000 }, async () => {
+		await requireIdleDaemon();
 		const a = client();
 		const b = client();
 		let sid: number | undefined;

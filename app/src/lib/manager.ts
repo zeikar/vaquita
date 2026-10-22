@@ -126,6 +126,12 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 
 	select(sid: number): void {
 		save(SELECTED_KEY, String(sid));
+		// An exited session of this daemon run keeps its screen but was never subscribed.
+		const e = this.entries.get(sid);
+		if (e && !e.core && !e.subscribed && this.readyConn) {
+			this.requests.enqueue(sid);
+			this.pump();
+		}
 		this.publish({ selected: sid });
 	}
 
@@ -406,7 +412,9 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 			void this.startDaemon(this.attempt);
 			return;
 		}
-		this.retry('disconnected', reason.detail);
+		// Keep the start failure's message rather than replace it with the close code.
+		if (reason.kind === 'failed' && this.state.status === 'not-running') this.retry('not-running', this.state.message);
+		else this.retry('disconnected', reason.detail);
 	}
 
 	// One attempt per not-running episode; success re-runs the connect loop at once.
