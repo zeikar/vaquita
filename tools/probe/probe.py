@@ -2,7 +2,7 @@
 """Run an agent CLI in a PTY, answer terminal queries the way vaquita plans to,
 and record queries, mode changes, titles, OSC 7501 reports and OSC 9/777 notifications.
 
-usage: probe.py claude|claude-noanswer|claude-perm|claude-perm-ghostty|claude-perm-ghostty-blur|codex|codex-notify <outdir>
+usage: probe.py claude|claude-noanswer|claude-perm|claude-perm-ghostty|claude-perm-ghostty-blur|codex|codex-notify|codex-plan|codex-question <outdir>
 """
 import base64
 import fcntl
@@ -451,11 +451,12 @@ def run_claude_perm(outdir, channel=None, focus_out=False):
     return p, code, cwd
 
 
-def run_codex(outdir, notify=False):
-    name = 'codex-notify' if notify else 'codex'
+def start_codex(outdir, name, notify):
     cwd = tempfile.mkdtemp(prefix=f'vq-{name}-')
     subprocess.run(['git', 'init', '-q', cwd], check=True)
-    argv = [shutil.which('codex'), '-a', 'on-request', '-s', 'read-only', '-c', 'model_reasoning_effort="low"']
+    # The cheapest listed model; it also offers request_user_input_async (codex-question).
+    argv = [shutil.which('codex'), '-m', 'gpt-6-luna', '-a', 'on-request', '-s', 'read-only',
+            '-c', 'model_reasoning_effort="low"', '-c', 'plan_mode_reasoning_effort="low"']
     if notify:
         # Codex's own terminal notifications, as a per-session override like Claude's --settings.
         # "always" because vaquita, not Codex, decides whether to show the notification.
@@ -469,12 +470,27 @@ def run_codex(outdir, notify=False):
         p.key(b'\r', 'Enter(trust)')
     p.wait_text(r'(?i)context left|esc to|send a message|ask codex|for shortcuts', 40)
     time.sleep(3)
+    return p, cwd
+
+
+def stop_codex(p):
+    p.ev('scenario', v='exit')
+    p.key(b'\x03', 'Ctrl-C')
+    time.sleep(1.5)
+    if not p.eof:
+        p.key(b'\x03', 'Ctrl-C')
+    return p.finish(20)
+
+
+def run_codex(outdir, notify=False):
+    p, cwd = start_codex(outdir, 'codex-notify' if notify else 'codex', notify)
     p.ev('scenario', v='turn')
     p.type('Reply with exactly one word: pong')
     p.wait_states([('working',), ('idle', 'done', 'error')], 180)
     time.sleep(4)
     p.ev('scenario', v='permission')
-    p.type('Run this shell command: touch probe.txt')
+    # Some models just report the read-only sandbox failure unless told to escalate.
+    p.type('Run this shell command with escalated permissions, outside the sandbox: touch probe.txt')
     if p.wait_states([('blocked',)], 180):
         time.sleep(2)
     p.key(b'\x1b', 'Esc(deny)')
@@ -489,13 +505,49 @@ def run_codex(outdir, notify=False):
     time.sleep(3)
     p.ev('scenario', v='nudge')
     p.nudge()
-    p.ev('scenario', v='exit')
-    p.key(b'\x03', 'Ctrl-C')
-    time.sleep(1.5)
-    if not p.eof:
-        p.key(b'\x03', 'Ctrl-C')
-    code = p.finish(20)
-    return p, code, cwd
+    return p, stop_codex(p), cwd
+
+
+def run_codex_plan(outdir):
+    p, cwd = start_codex(outdir, 'codex-plan', notify=True)
+    # A proposed plan ends the turn with the "Implement this plan?" prompt.
+    p.ev('scenario', v='plan-prompt')
+    p.type('/plan Propose a two-step plan to create hello.txt containing hi. Ask me nothing.')
+    p.wait_states([('working',), ('idle', 'blocked')], 180)
+    if p.wait_text(r'(?i)implement this plan\?', 20):
+        time.sleep(2)
+        p.key(b'\x1b', 'Esc(stay in plan)')
+    time.sleep(3)
+    # request_user_input is offered in Plan mode only; it blocks the turn until answered.
+    p.ev('scenario', v='plan-question')
+    p.type('Use the request_user_input tool to ask me one question: should hello.txt end with a newline? Options: Yes, No.')
+    if p.wait_states([('blocked',)], 180):
+        time.sleep(2)
+        p.key(b'\r', 'Enter(first option)')
+        p.wait_states([('idle',)], 180)
+    # The prompt comes back only if the answer led to a new plan.
+    if p.wait_text(r'(?i)implement this plan\?', 10):
+        time.sleep(2)
+        p.key(b'\x1b', 'Esc(stay in plan)')
+    time.sleep(3)
+    return p, stop_codex(p), cwd
+
+
+def run_codex_question(outdir):
+    p, cwd = start_codex(outdir, 'codex-question', notify=True)
+    # request_user_input_async asks without ending the turn; the answer arrives mid-turn.
+    p.ev('scenario', v='async-question')
+    p.type('Use the request_user_input_async tool to ask me one question: tea or coffee? Options: Tea, Coffee. '
+           'Then wait for my answer and reply with only my answer.')
+    if p.wait_states([('blocked',)], 180):
+        time.sleep(2)
+        # Alt-Up opens the question; Enter sends the preselected first option.
+        p.key(b'\x1b[1;3A', 'Alt-Up')
+        time.sleep(1)
+        p.key(b'\r', 'Enter(first option)')
+    p.wait_states([('idle',)], 180)
+    time.sleep(3)
+    return p, stop_codex(p), cwd
 
 
 def summarize(p, code, cwd, outdir):
@@ -535,5 +587,7 @@ if __name__ == '__main__':
               'claude-perm-ghostty': lambda: run_claude_perm(outdir, 'ghostty'),
               'claude-perm-ghostty-blur': lambda: run_claude_perm(outdir, 'ghostty', True),
               'codex': lambda: run_codex(outdir),
-              'codex-notify': lambda: run_codex(outdir, notify=True)}[which]
+              'codex-notify': lambda: run_codex(outdir, notify=True),
+              'codex-plan': lambda: run_codex_plan(outdir),
+              'codex-question': lambda: run_codex_question(outdir)}[which]
     summarize(*runner(), outdir)
