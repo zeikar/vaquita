@@ -201,19 +201,20 @@ func TestReopenRecord(t *testing.T) {
 
 // The agent is resumed by the recorded conversation id, or by its continue
 // without one, through AgentCommand; the new record keeps the restored
-// command and the agent and id. An unnamed agent session is named after the
-// agent, so that its title shows no id.
+// command and the agent and id. An agent session with neither name nor title
+// is titled after the agent, so that its row shows no id: claude's by its
+// title, which its topic replaces later, codex's by its name.
 func TestReopenMapsAgentCommands(t *testing.T) {
 	cases := []struct {
-		rec            state.SessionRecord
-		out, cmd, name string
+		rec                   state.SessionRecord
+		out, cmd, name, title string
 	}{
-		{goneRecord(t, 1, t.TempDir(), "claude --model x"), "stub:claude:--continue", "claude --continue", "x"},
-		{goneRecord(t, 2, t.TempDir(), "codex"), "stub:codex:" + stubCodexOptions + " resume --last", "codex resume --last", "codex"},
-		{goneRecord(t, 3, t.TempDir(), ""), "stub:claude:--resume " + convA, "claude --resume '" + convA + "'", "claude"},
-		{goneRecord(t, 4, t.TempDir(), "codex"), "stub:codex:" + stubCodexOptions + " resume " + convB, "codex resume '" + convB + "'", "codex"},
+		{goneRecord(t, 1, t.TempDir(), "claude --model x"), "stub:claude:--continue", "claude --continue", "x", ""},
+		{goneRecord(t, 2, t.TempDir(), "codex"), "stub:codex:" + stubCodexOptions + " resume --last", "codex resume --last", "codex", ""},
+		{goneRecord(t, 3, t.TempDir(), ""), "stub:claude:--resume " + convA, "claude --resume '" + convA + "'", "", "claude"},
+		{goneRecord(t, 4, t.TempDir(), "codex"), "stub:codex:" + stubCodexOptions + " resume " + convB, "codex resume '" + convB + "'", "codex", ""},
 		// A plain shell prints nothing to wait for.
-		{goneRecord(t, 5, t.TempDir(), "old"), "", "", ""},
+		{goneRecord(t, 5, t.TempDir(), "old"), "", "", "", ""},
 	}
 	cases[0].rec.Name = "x"
 	cases[2].rec.Agent, cases[2].rec.Conversation = "claude", convA
@@ -229,12 +230,12 @@ func TestReopenMapsAgentCommands(t *testing.T) {
 	for _, c := range cases {
 		sid := a.reopen(uint32(c.rec.SID), 80, 24)
 		a.waitLive(sid, c.out)
-		if i := a.waitListed(sid, running); i.Cmd != c.cmd || i.Name != c.name {
-			t.Errorf("record %d reopened listed as cmd %q, name %q, want %q, %q", c.rec.SID, i.Cmd, i.Name, c.cmd, c.name)
+		if i := a.waitListed(sid, running); i.Cmd != c.cmd || i.Name != c.name || i.Title != c.title {
+			t.Errorf("record %d reopened listed as cmd %q, name %q, title %q, want %q, %q, %q", c.rec.SID, i.Cmd, i.Name, i.Title, c.cmd, c.name, c.title)
 		}
 		r := savedRecord(t, srv, sid)
-		if r == nil || r.Cmd != c.cmd || r.Name != c.name || r.Agent != c.rec.Agent || r.Conversation != c.rec.Conversation {
-			t.Errorf("state.json holds %+v for record %d's new session, want cmd %q, name %q, agent %q, conversation %q", r, c.rec.SID, c.cmd, c.name, c.rec.Agent, c.rec.Conversation)
+		if r == nil || r.Cmd != c.cmd || r.Name != c.name || r.Title != c.title || r.Agent != c.rec.Agent || r.Conversation != c.rec.Conversation {
+			t.Errorf("state.json holds %+v for record %d's new session, want cmd %q, name %q, title %q, agent %q, conversation %q", r, c.rec.SID, c.cmd, c.name, c.title, c.rec.Agent, c.rec.Conversation)
 		}
 	}
 }

@@ -745,7 +745,6 @@ func TestOutputReplaceScannerKeepsStatusSink(t *testing.T) {
 }
 
 func TestOutputAppChange(t *testing.T) {
-	const idleClaude = "\x1b]7501;state=idle:app=claude-code\x07"
 	o, _ := statusOutput()
 	if o.App() != "" || o.NeedsDrain() {
 		t.Fatalf("app %q, drain %v before any output", o.App(), o.NeedsDrain())
@@ -784,4 +783,154 @@ func TestOutputAppChangeWithoutViewChange(t *testing.T) {
 	if changed, _ := o.TakeStatus(); changed {
 		t.Fatal("the view changed")
 	}
+}
+
+func TestNormalizeTitle(t *testing.T) {
+	for in, want := range map[string]string{
+		"Pong reply":       "Pong reply",
+		"⠋ my-folder":      "my-folder",
+		"✳ Claude Code":    "Claude Code",
+		"  · ✶ Fix tests ": "Fix tests",
+		"42 files":         "42 files",
+		"한글 제목":            "한글 제목",
+		"⠙ ⠙":              "",
+		" ":                "",
+	} {
+		if got := normalizeTitle([]byte(in)); got != want {
+			t.Errorf("normalizeTitle(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+const (
+	idleClaude = "\x1b]7501;state=idle:app=claude-code\x07"
+	clearAgent = "\x1b]7501;state=clear\x07"
+)
+
+// claudeOutput returns an Output that claude-code has reported to, with the
+// app change taken.
+func claudeOutput(t *testing.T) *Output {
+	t.Helper()
+	o, _ := statusOutput()
+	o.Feed([]byte(idleClaude))
+	o.TakeStatus()
+	if !o.TakeAppChange() || o.NeedsDrain() {
+		t.Fatal("the report left something to drain besides the app change")
+	}
+	return o
+}
+
+// checkTitle fails unless o keeps title and has a change to take exactly when
+// changed is set.
+func checkTitle(t *testing.T, o *Output, title string, changed bool) {
+	t.Helper()
+	if o.Title() != title || o.NeedsDrain() != changed || o.TakeTitleChange() != changed || o.TakeTitleChange() {
+		t.Fatalf("title %q, drain %v; want %q with a change %v taken once", o.Title(), o.NeedsDrain(), title, changed)
+	}
+}
+
+func TestOutputTitleFromClaude(t *testing.T) {
+	for _, seq := range []string{
+		"\x1b]0;Pong reply\x07",
+		"\x1b]0;Pong reply\x1b\\",
+		"\x1b]2;✳ Pong reply\x07",
+		"\x1b]2;Pong reply \x1b\\",
+	} {
+		o := claudeOutput(t)
+		o.Feed([]byte(seq))
+		checkTitle(t, o, "Pong reply", true)
+		// The same title again is no change.
+		o.Feed([]byte(seq))
+		checkTitle(t, o, "Pong reply", false)
+	}
+	o := claudeOutput(t)
+	o.Feed([]byte("\x1b]0;Claude Code\x07\x1b]0;\x07\x1b]1;Icon\x07"))
+	checkTitle(t, o, "Claude Code", true)
+	o.Feed([]byte("\x1b]0;" + strings.Repeat("x", 5000) + "\x07"))
+	checkTitle(t, o, "Claude Code", false)
+}
+
+// Codex's spinner frames are never a change, so they ask for no drain.
+func TestOutputTitleFromCodexIgnored(t *testing.T) {
+	o, _ := statusOutput()
+	o.Feed([]byte("\x1b]7501;state=working:app=codex\x07"))
+	o.TakeStatus()
+	o.TakeAppChange()
+	for _, frame := range []string{"⠋", "⠙", "⠹"} {
+		o.Feed([]byte("\x1b]0;" + frame + " my-folder\x07"))
+		checkTitle(t, o, "", false)
+	}
+}
+
+// A title set before any app has reported is kept, to be taken with the app
+// change.
+func TestOutputTitleBeforeApp(t *testing.T) {
+	o, _ := statusOutput()
+	o.Feed([]byte("\x1b]0;Pong reply\x07"))
+	checkTitle(t, o, "Pong reply", false)
+	o.Feed([]byte(idleClaude))
+	if !o.TakeAppChange() {
+		t.Fatal("no app change")
+	}
+	checkTitle(t, o, "Pong reply", false)
+}
+
+// Once the agent has gone, by its clear report or an interrupt, titles are
+// the shell's until it reports again.
+func TestOutputTitleAfterAgentGone(t *testing.T) {
+	for _, gone := range []string{clearAgent, "\x1b]133;A\x07"} {
+		o := claudeOutput(t)
+		o.Feed([]byte("\x1b]0;Pong reply\x07"))
+		o.TakeTitleChange()
+		o.Feed([]byte(gone + "\x1b]2;user@host: ~/src/example\x07"))
+		o.TakeStatus()
+		checkTitle(t, o, "Pong reply", false)
+		o.Feed([]byte(idleClaude + "\x1b]0;Claude Code\x07"))
+		o.TakeStatus()
+		checkTitle(t, o, "Claude Code", true)
+	}
+}
+
+// With a watch, a title counts as claude's only while its reporter holds the
+// terminal: a shell that takes it back after a SIGKILL, which sends no clear,
+// sets its own before the next poll finds the reporter gone.
+func TestOutputTitleNeedsReporterInForeground(t *testing.T) {
+	o, now := statusOutput()
+	fg, alive := 42, true
+	o.leader = 7
+	o.Foreground = func() (int, error) { return fg, nil }
+	o.GroupAlive = func(pgid int) bool { return alive && pgid == 42 }
+	o.Feed([]byte(idleClaude + "\x1b]0;Pong reply\x07"))
+	o.TakeStatus()
+	o.TakeAppChange()
+	// Arms the timer for the poll, due a second later.
+	o.Tick(*now)
+	checkTitle(t, o, "Pong reply", true)
+
+	fg = 7
+	o.Feed([]byte("\x1b]2;user@host: ~/src/example\x07"))
+	checkTitle(t, o, "Pong reply", false)
+	fg, alive = 42, false
+	o.Feed([]byte("\x1b]2;user@host: ~/src/example\x07"))
+	checkTitle(t, o, "Pong reply", false)
+}
+
+// A topic belongs to claude's conversation: another agent drops it, so a
+// claude started after that one does not get it back.
+func TestOutputTitleDroppedWithClaude(t *testing.T) {
+	o := claudeOutput(t)
+	o.Feed([]byte("\x1b]0;Pong reply\x07"))
+	o.TakeTitleChange()
+	o.Feed([]byte("\x1b]7501;state=working:app=codex\x07"))
+	o.TakeStatus()
+	if !o.TakeAppChange() {
+		t.Fatal("no app change to codex")
+	}
+	checkTitle(t, o, "", false)
+	o.Feed([]byte("\x1b]0;Claude Code\x07" + idleClaude))
+	o.TakeStatus()
+	if !o.TakeAppChange() {
+		t.Fatal("no app change back to claude")
+	}
+	checkTitle(t, o, "", false)
 }

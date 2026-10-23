@@ -15,8 +15,9 @@ export interface Notifier {
 	show(n: Notice): void;
 }
 
-// What the sidebar and notifications call a session; the daemon sends no title.
-export const sessionTitle = (info: SessionInfo | undefined) => info?.name || info?.cmd || 'shell';
+// What the sidebar, notifications and messages call a session: the user's
+// name for it, else Claude Code's topic, else its command.
+export const sessionTitle = (info: SessionInfo | undefined) => info?.name || info?.title || info?.cmd || 'shell';
 
 const SUFFIX = { done: 'done', error: 'failed', input: 'needs input', auth: 'needs login' };
 

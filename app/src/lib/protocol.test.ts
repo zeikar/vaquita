@@ -114,10 +114,10 @@ describe('parseMessage', () => {
 		});
 	});
 
-	it('parses a sessions list with a status and unread', () => {
+	it('parses a sessions list with a status, unread and a title', () => {
 		const info = {
-			sid: 1, inc: 'a', cwd: '/tmp/repo', cmd: 'sh', name: '', cols: 80, rows: 24,
-			state: 'running', pid: 10, code: 0, status: { state: 'done', msg: 'ok' }, unread: true,
+			sid: 1, inc: 'a', cwd: '/tmp/repo', cmd: 'claude', name: '', cols: 80, rows: 24,
+			state: 'running', pid: 10, code: 0, status: { state: 'done', msg: 'ok' }, unread: true, title: 'Pong reply',
 		};
 		expect(parseMessage(JSON.stringify({ t: 'sessions', list: [info] }))).toEqual({ t: 'sessions', list: [info] });
 	});

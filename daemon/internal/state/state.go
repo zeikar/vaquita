@@ -43,6 +43,11 @@ type SessionRecord struct {
 	// while it was alive; a reopen resumes it.
 	Agent        string `json:"agent,omitempty"`
 	Conversation string `json:"conversation,omitempty"`
+	// Title is the topic Claude Code last gave the session as its window
+	// title, kept while claude is the agent, so that a reopened session shows
+	// it until Claude Code gives another; "claude" for a reopened claude
+	// session that had neither a topic nor a name.
+	Title string `json:"title,omitempty"`
 }
 
 // Load reads state.json from home. A missing file yields the defaults, as do

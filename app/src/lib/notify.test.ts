@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { isTarget, notificationFor, shouldShow } from './notify';
 import type { Notify, SessionInfo } from './protocol';
 
-const info = (name: string, cmd: string): SessionInfo => ({
-	sid: 3, inc: 'a', cwd: '/tmp/repo', cmd, name, cols: 80, rows: 24, state: 'running', pid: 2, code: 0,
+const info = (name: string, cmd: string, title?: string): SessionInfo => ({
+	sid: 3, inc: 'a', cwd: '/tmp/repo', cmd, name, title, cols: 80, rows: 24, state: 'running', pid: 2, code: 0,
 });
 
 describe('notificationFor', () => {
@@ -18,8 +18,10 @@ describe('notificationFor', () => {
 		});
 	});
 
-	it('names a row by its name, else its cmd, else shell', () => {
+	it("names a row by its name, else Claude's topic, else its cmd, else shell", () => {
 		const m: Notify = { t: 'notify', sid: 3, kind: 'done' };
+		expect(notificationFor(info('build', 'claude', 'Fix tests'), m).title).toBe('build done');
+		expect(notificationFor(info('', 'claude', 'Fix tests'), m).title).toBe('Fix tests done');
 		expect(notificationFor(info('', 'make'), m).title).toBe('make done');
 		expect(notificationFor(info('', ''), m).title).toBe('shell done');
 		expect(notificationFor(info('', ''), m).body).toBe('');

@@ -170,6 +170,11 @@ type SessionInfo struct {
 	// Restorable marks a record from an earlier daemon run: no PTY here and
 	// no orphans, so Reopen and Dismiss accept it.
 	Restorable bool `json:"restorable,omitempty"`
+	// Title is the topic Claude Code gave the session as its window title
+	// (see state.SessionRecord.Title); left out when there is none, which is
+	// all an older daemon ever sends. A row is titled by its Name, else this,
+	// else its Cmd.
+	Title string `json:"title,omitempty"`
 	// Status and Unread are left out when the row shows nothing, which is
 	// all an older daemon ever sends.
 	Status *StatusInfo `json:"status,omitempty"`

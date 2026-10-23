@@ -24,14 +24,14 @@ func (t *table) rescanRecord(e *entry) (state.SessionRecord, error) {
 }
 
 // reopen starts a new session in place of a restorable record, in its cwd and
-// with its name (the agent's, if it has none), running the agent resumed by
-// the conversation id the record holds, by the agent's continue without one,
-// or a plain shell when the record names no agent. The record is taken as it
-// stands, with no rescan: a PTY session found empty gains no members except
-// by pid reuse, which the rescan rule counts as gone anyway. A record with
-// orphans is refused, and so is one whose conversation is open in a running
-// session or is being reopened from another record, so that one conversation
-// never runs twice.
+// with its name and title (see below for a record with neither), running the
+// agent resumed by the conversation id the record holds, by the agent's
+// continue without one, or a plain shell when the record names no agent. The
+// record is taken as it stands, with no rescan: a PTY session found empty
+// gains no members except by pid reuse, which the rescan rule counts as gone
+// anyway. A record with orphans is refused, and so is one whose conversation
+// is open in a running session or is being reopened from another record, so
+// that one conversation never runs twice.
 func (c *conn) reopen(m protocol.Reopen) {
 	t := c.srv.table
 	t.mu.Lock()
@@ -53,15 +53,21 @@ func (c *conn) reopen(m protocol.Reopen) {
 		return
 	}
 	e.reopening = true
-	cwd, name := e.rec.Cwd, e.rec.Name
+	cwd, name, title := e.rec.Cwd, e.rec.Name, e.rec.Title
 	cmd := session.RestoreCommand(e.rec.Cmd, e.rec.Agent, e.rec.Conversation)
-	// An unnamed session is titled by its cmd, which would show the
-	// conversation id; the agent's name is title enough.
-	if name == "" && cmd != "" {
-		name, _, _ = strings.Cut(cmd, " ")
+	// A session with neither name nor title is titled by its cmd, which would
+	// show the conversation id; the agent's name is title enough. For claude
+	// it goes in as the title, as a name would hide the topic Claude Code
+	// gives the session later.
+	if agent, _, _ := strings.Cut(cmd, " "); name == "" && title == "" && cmd != "" {
+		if agent == "claude" {
+			title = agent
+		} else {
+			name = agent
+		}
 	}
 	t.mu.Unlock()
-	c.startSession(cwd, cmd, name, m.Cols, m.Rows, e)
+	c.startSession(cwd, cmd, name, title, m.Cols, m.Rows, e)
 }
 
 // conversationLiveLocked reports whether e's conversation id, if it has one,

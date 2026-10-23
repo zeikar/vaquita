@@ -29,7 +29,7 @@ A session whose command starts with `codex`, from the app or from `attach --new 
 
 ## Reopening sessions after a restart
 
-Sessions survive a daemon restart as records. While a Claude Code or Codex runs in a session, the daemon notes its conversation id (the agent's own session id, which `--resume` takes) and keeps it in `state.json`: for Claude Code it reads the file Claude Code keeps per process under `~/.claude/sessions`, for Codex it takes the newest conversation file under `~/.codex/sessions` for that session's folder, so it can occasionally pick another conversation.
+Sessions survive a daemon restart as records. While a Claude Code or Codex runs in a session, the daemon notes its conversation id (the agent's own session id, which `--resume` takes) and keeps it in `state.json`: for Claude Code it reads the file Claude Code keeps per process under `~/.claude/sessions`, for Codex it takes the newest conversation file under `~/.codex/sessions` for that session's folder, so it can occasionally pick another conversation. It also keeps the topic Claude Code sets as the terminal title, which the app shows as the session's title.
 
 After the daemon restarts (a crash or a reboot), the app lists every earlier session with Reopen and Dismiss. Reopen starts `claude --resume <id>` or `codex resume <id>` in the session's folder; when no id was noted it falls back to `claude --continue` or `codex resume --last`, and a session that was not running an agent gets a plain shell. A session that left processes behind has to be cleaned up first (Kill shows their pids).
 

@@ -166,7 +166,7 @@ func (t *table) listLocked() []protocol.SessionInfo {
 	for _, sid := range slices.Sorted(maps.Keys(t.entries)) {
 		e := t.entries[sid]
 		info := protocol.SessionInfo{
-			SID: sid, Inc: e.inc, Cwd: e.rec.Cwd, Cmd: e.rec.Cmd, Name: e.rec.Name,
+			SID: sid, Inc: e.inc, Cwd: e.rec.Cwd, Cmd: e.rec.Cmd, Name: e.rec.Name, Title: e.rec.Title,
 			State: protocol.StateExited, PID: e.pid, Orphans: e.rec.Orphans,
 			// Unknown for a record from a previous run, as for a shell
 			// whose wait failed.
@@ -273,11 +273,14 @@ func (t *table) exit(e *entry, code int) {
 	s := e.sess
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	s.Lock()
 	// Before exited is set, which stops the drain: the session's last status
 	// goes out ahead of its exit, as a subscriber's exit is written after the
-	// control messages queued for its connection.
-	t.endStatusLocked(e)
+	// control messages queued for its connection, and a title the drain
+	// changed is listed, the session still running, ahead of its
+	// notifications.
+	t.drainStatus(e)
+	s.Lock()
+	e.endStatusLocked()
 	e.exited, e.code = true, code
 	e.finalOff = s.Output().Ring().End()
 	orphans, scanErr := s.Orphans()
@@ -317,7 +320,7 @@ func badRequest(sid uint32) protocol.Error {
 }
 
 func (c *conn) create(m protocol.Create) {
-	c.startSession(m.Cwd, m.Cmd, m.Name, m.Cols, m.Rows, nil)
+	c.startSession(m.Cwd, m.Cmd, m.Name, "", m.Cols, m.Rows, nil)
 }
 
 // startSession starts a session with c already subscribed. The subscription
@@ -330,7 +333,8 @@ func (c *conn) create(m protocol.Create) {
 // swap. The new record carries old's agent and conversation id over, so a
 // restart before the agent has reported resumes the same conversation, and
 // keeps the restored command as its cmd, which a later reopen maps again.
-func (c *conn) startSession(cwd, cmd, name string, cols, rows int, old *entry) {
+// title is the new record's until the agent gives another.
+func (c *conn) startSession(cwd, cmd, name, title string, cols, rows int, old *entry) {
 	t := c.srv.table
 	e := &entry{sid: t.allocSID(), inc: newInc(), listed: make(chan struct{})}
 	// Before the shell starts, so that output() always finds it.
@@ -364,7 +368,7 @@ func (c *conn) startSession(cwd, cmd, name string, cols, rows int, old *entry) {
 		return
 	}
 	e.sess, e.pid = s, s.PID()
-	e.rec = state.SessionRecord{SID: int(e.sid), PID: e.pid, Started: s.Started(), Cwd: s.Cwd(), Cmd: cmd, Name: name}
+	e.rec = state.SessionRecord{SID: int(e.sid), PID: e.pid, Started: s.Started(), Cwd: s.Cwd(), Cmd: cmd, Name: name, Title: title}
 	c.addSub(sub)
 
 	// Listed only once started: other connections can find the entry once
@@ -388,9 +392,7 @@ func (c *conn) startSession(cwd, cmd, name string, cols, rows int, old *entry) {
 	t.broadcastLocked()
 	// output() asked for no drain before listed was closed, so the status
 	// of what was read until then goes out here, after the list.
-	s.Lock()
-	t.drainStatusLocked(e)
-	s.Unlock()
+	t.drainStatus(e)
 	t.mu.Unlock()
 	if old != nil {
 		slog.Info("session reopened", "sid", e.sid, "record", old.sid, "pid", e.pid, "cwd", cwd, "by_id", byID, "remote", c.remote)

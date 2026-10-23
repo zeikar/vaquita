@@ -121,6 +121,10 @@ export interface SessionInfo {
 	// A record from an earlier daemon run: no PTY here and no orphans, so
 	// Reopen and Dismiss accept it. Left out otherwise.
 	restorable?: boolean;
+	// The topic Claude Code gave the session as its window title; left out
+	// when there is none, which is all an older daemon sends. A row is titled
+	// by its name, else this, else its cmd.
+	title?: string;
 }
 // What a session's row shows. kind (permission or question) refines input
 // and auth; msg is the text to show.

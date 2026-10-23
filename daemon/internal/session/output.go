@@ -1,7 +1,9 @@
 package session
 
 import (
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/zeikar/vaquita/daemon/internal/status"
 )
@@ -80,6 +82,21 @@ type Output struct {
 	app        string
 	appChanged bool
 
+	// title is the last non-empty window title (OSC 0 or 2) that may be the
+	// agent's, without the glyphs an agent puts before it, and titleChanged
+	// says it changed under claude-code since TakeTitleChange last handed it
+	// over. agentUp is set by a root report that leaves an agent running and
+	// cleared by the clear report an agent sends as it exits and by an
+	// interrupt. Once an app is known, a title set while no agent holds the
+	// terminal (see agentHolds) is the shell's, such as the one a zsh precmd
+	// sets after the agent has exited, and is dropped; so are those of an app
+	// other than claude-code: codex shows its folder behind a spinner frame
+	// redrawn about ten times a second. A report from another app drops a
+	// title claude-code set, which belongs to claude's conversation.
+	title        string
+	titleChanged bool
+	agentUp      bool
+
 	// Now stamps the reports the projector sees; tests replace it.
 	Now func() time.Time
 	// Foreground returns the PTY's foreground process group, and GroupAlive
@@ -157,7 +174,9 @@ func (o *Output) HasStatus() bool { return o.proj.Pending() }
 // NeedsDrain reports whether a Tick should follow the last read: there is a
 // status to take, or the watch has a deadline no timer was armed for, as when
 // an agent reports only idle, which changes no view.
-func (o *Output) NeedsDrain() bool { return o.proj.Pending() || o.rearm || o.appChanged }
+func (o *Output) NeedsDrain() bool {
+	return o.proj.Pending() || o.rearm || o.appChanged || o.titleChanged
+}
 
 // App returns the app named by the last root report that had one, "" if none
 // has. Like Feed, it requires the session lock.
@@ -170,6 +189,60 @@ func (o *Output) TakeAppChange() bool {
 	c := o.appChanged
 	o.appChanged = false
 	return c
+}
+
+// claudeApp is the app Claude Code names in its reports.
+const claudeApp = "claude-code"
+
+// Title returns the window title kept by the rules on Output.title, "" if
+// none. Like App, it requires the session lock.
+func (o *Output) Title() string { return o.title }
+
+// TakeTitleChange reports whether Title changed under claude-code since the
+// last call. Like App, it requires the session lock.
+func (o *Output) TakeTitleChange() bool {
+	c := o.titleChanged
+	o.titleChanged = false
+	return c
+}
+
+// setTitle keeps title, already normalized, by the rules on Output.title. One
+// set before any app has reported is kept without a change: the app change
+// that follows asks for the drain that takes it.
+func (o *Output) setTitle(title string) {
+	switch {
+	case title == "":
+	case o.app == "":
+		o.title = title
+	case o.app == claudeApp && title != o.title && o.agentHolds():
+		o.title, o.titleChanged = title, true
+	}
+}
+
+// agentHolds reports whether the agent that last reported can still be what
+// writes to the terminal: it is up and, when the session is watched, its
+// reporter holds the session. An agent killed by SIGKILL sends no clear, and
+// its shell takes the terminal back, and may set a title, before the next
+// poll finds the reporter gone. Without a watch, as in unit tests, agentUp
+// alone decides. Like the poll, it costs a signal and an ioctl, never a wait,
+// and runs only for claude-code's titles.
+func (o *Output) agentHolds() bool {
+	if !o.agentUp {
+		return false
+	}
+	if o.Foreground == nil {
+		return true
+	}
+	return o.reporter != 0 && o.reporterHolds()
+}
+
+// normalizeTitle trims a window title and drops the runes before its first
+// letter or digit: Codex and older Claude Code versions put spinner or status
+// glyphs there.
+func normalizeTitle(p []byte) string {
+	return strings.TrimRightFunc(strings.TrimLeftFunc(string(p), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}), unicode.IsSpace)
 }
 
 // TakeStatus hands over the view change and notifications since the last call.
@@ -191,7 +264,7 @@ func (o *Output) Tick(now time.Time) {
 		return
 	}
 	if o.reporter != 0 {
-		if !o.gone && o.GroupAlive(o.reporter) && o.inForeground() {
+		if o.reporterHolds() {
 			o.nextPoll = now.Add(fgPollGap)
 			return
 		}
@@ -220,6 +293,13 @@ func (o *Output) Tick(now time.Time) {
 	}
 }
 
+// reporterHolds reports whether the reporter still holds the session: no
+// report has marked it gone, its group still exists and it is the PTY's
+// foreground group.
+func (o *Output) reporterHolds() bool {
+	return !o.gone && o.GroupAlive(o.reporter) && o.inForeground()
+}
+
 // inForeground reports whether the reporter's group is the PTY's foreground
 // group. A failed lookup says nothing about who holds the terminal, so it
 // counts as yes and leaves the decision to GroupAlive: the one expected is
@@ -230,12 +310,12 @@ func (o *Output) inForeground() bool {
 }
 
 // interrupt ends whatever was working or waiting for input, in the records
-// and the view, as a new shell prompt or the reporter's death does. Done and
-// error outcomes stay.
+// and the view, as a new shell prompt or the reporter's death does, and takes
+// the agent for no longer up. Done and error outcomes stay.
 func (o *Output) interrupt() {
 	o.records.PromptStart()
 	o.proj.Interrupt()
-	o.reporter, o.gone = 0, false
+	o.reporter, o.gone, o.agentUp = 0, false, false
 }
 
 // NextDeadline reports when Tick next has something to do.
@@ -297,8 +377,12 @@ func (s statusSink) OSC(num int, payload []byte, oversized bool) {
 			// complete its parent.
 			if r.ID == "" {
 				if r.App != "" && r.App != o.app {
+					if o.app == claudeApp {
+						o.title = ""
+					}
 					o.app, o.appChanged = r.App, true
 				}
+				o.agentUp = r.State != status.StateClear
 				now := o.Now()
 				o.watch(r.State, now)
 				o.proj.Report(r, now)
@@ -310,6 +394,11 @@ func (s statusSink) OSC(num int, payload []byte, oversized bool) {
 	case 9:
 		if n, ok := status.ParseNotify(num, payload); ok {
 			o.proj.OSC9(n.Body)
+		}
+	case 0, 2:
+		// A truncated title is not the one the program set.
+		if !oversized {
+			o.setTitle(normalizeTitle(payload))
 		}
 	case 133:
 		// Shell integration: A marks the start of a prompt.

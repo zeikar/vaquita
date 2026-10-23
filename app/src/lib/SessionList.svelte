@@ -86,7 +86,7 @@
 			<li class:selected={r.info.sid === selected} onpointerleave={() => armed === key && disarm()}>
 				<button class="row" onclick={() => onselect(r.info.sid)}>
 					<!-- The dot and the status line keep their space when empty, so rows do not jump. -->
-					<span class="title" class:unread={r.info.unread}>
+					<span class="title" class:unread={r.info.unread} title={sessionTitle(r.info)}>
 						<span class="dot">{r.info.unread ? '•' : ''}</span>{sessionTitle(r.info)}
 					</span>
 					<span class="cwd">{r.info.cwd || '~'}</span>
@@ -177,6 +177,11 @@
 		color: inherit;
 		font: inherit;
 		cursor: pointer;
+	}
+	.title {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.title.unread {
 		font-weight: bold;

@@ -20,7 +20,8 @@ import (
 //
 // The drain is also where the agent's conversation id is read, on a goroutine
 // of its own as well, so that no file is touched under a lock or on the
-// reader (see readConversation).
+// reader (see readConversation), and where Claude Code's topic becomes the
+// title of the session's record (see retitleLocked).
 
 // statusInfo is what a row shows for v, nil for nothing. The status package's
 // view states are the protocol's.
@@ -50,27 +51,63 @@ func (t *table) newStatusTimer(e *entry) *time.Timer {
 func (t *table) statusTick(e *entry) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	s := e.sess
-	s.Lock()
-	defer s.Unlock()
-	t.drainStatusLocked(e)
+	t.drainStatus(e)
 }
 
-// drainStatusLocked raises the notifications whose deadline has passed,
-// sends e's view if it changed and its notifications to the GUI clients, and
-// re-arms e's status timer. When either, or the reporting app, changed, it
-// asks for a read of the agent's conversation id. It requires t.mu and the
-// session lock. After the exit it does nothing, so no status follows a
-// session's exit. Output read after the exit, when the reader outlives the
-// drain timeout, leaves drainDue set, so output() asks for no further drains.
+// drainStatus drains e's status under its session lock and sends what the
+// drain took. A drain that changed e's record saves it and lists it first, so
+// that a notification it raised is titled by the new title, and does so once
+// the session lock is released, as the PTY reader takes that lock for every
+// read and a save waits for the disk. Output read meanwhile may have moved
+// the view past the drain's, and the list shows it as it is by then, so the
+// view is read again for the status that follows: a GUI never gets an older
+// view after a newer one. It requires t.mu.
+func (t *table) drainStatus(e *entry) {
+	s := e.sess
+	d := func() drained {
+		s.Lock()
+		// Deferred, so that a panic in the projector releases it too.
+		defer s.Unlock()
+		return t.drainStatusLocked(e)
+	}()
+	if d.retitled {
+		t.saveLocked()
+		t.broadcastLocked()
+		s.Lock()
+		d.view, d.unread = s.Output().View()
+		s.Unlock()
+	}
+	t.sendStatusLocked(e.sid, d)
+}
+
+// drained is what a drain took from a session's output for its caller to
+// send: the view, which changed if changed is set, the notifications, and
+// whether the record's title changed.
+type drained struct {
+	changed  bool
+	view     status.View
+	unread   bool
+	notes    []status.Notification
+	retitled bool
+}
+
+// drainStatusLocked raises the notifications whose deadline has passed, takes
+// e's view and its notifications for the caller to send, and re-arms e's
+// status timer. When either, or the reporting app, changed, it asks for a
+// read of the agent's conversation id. When the app or Claude Code's title
+// changed, it updates the record's title, which the caller saves and lists
+// before it sends the rest (see drainStatus). It requires t.mu and the session
+// lock. After the exit it takes nothing, so no status follows a session's
+// exit. Output read after the exit, when the reader outlives the drain
+// timeout, leaves drainDue set, so output() asks for no further drains.
 //
 // The Tick may append output: the sequence that undoes the terminal modes of
 // a reporter it found gone. No read of the PTY calls output() for it, and the
 // shell may write nothing more, so the drain wakes the subscribers' writers
 // itself.
-func (t *table) drainStatusLocked(e *entry) {
+func (t *table) drainStatusLocked(e *entry) drained {
 	if e.exited {
-		return
+		return drained{}
 	}
 	e.drainDue = false
 	out := e.sess.Output()
@@ -84,26 +121,53 @@ func (t *table) drainStatusLocked(e *entry) {
 	}
 	changed, notes := out.TakeStatus()
 	appChanged := out.TakeAppChange()
+	titleChanged := out.TakeTitleChange()
 	// Asked before the status is queued: waitConversationRead, in the
 	// tests, relies on that order.
 	if (changed || len(notes) > 0 || appChanged) && agentOf(out.App()) != "" {
 		t.askConversationLocked(e)
 	}
 	e.armStatusLocked(now)
-	v, unread := out.View()
-	t.sendStatusLocked(e.sid, changed, v, unread, notes)
+	d := drained{changed: changed, notes: notes}
+	d.view, d.unread = out.View()
+	d.retitled = (appChanged || titleChanged) && e.retitleLocked(out)
+	return d
+}
+
+// genericTitle is the window title Claude Code sets before it has a topic.
+const genericTitle = "Claude Code"
+
+// retitleLocked sets the title of e's record from out, the session's output,
+// and reports whether that changed it. While claude is the agent, its window
+// title is the conversation's topic, but its generic title keeps the topic
+// already there: a reopened session shows its record's until Claude Code
+// gives one. Any other agent clears it, as a topic belongs to claude's
+// conversation. It requires t.mu and the session lock.
+func (e *entry) retitleLocked(out *session.Output) bool {
+	title := e.rec.Title
+	switch {
+	case agentOf(out.App()) != "claude":
+		title = ""
+	case out.Title() != "" && out.Title() != genericTitle:
+		title = out.Title()
+	}
+	if title == e.rec.Title {
+		return false
+	}
+	e.rec.Title = title
+	return true
 }
 
 // sendStatusLocked queues sid's view, when it changed, and then one notify
 // per notification to every GUI client. Attach clients show neither.
 // Notifications no GUI was connected to receive are counted for the summary
 // the next one gets. It requires t.mu. Notification kinds are the protocol's.
-func (t *table) sendStatusLocked(sid uint32, changed bool, v status.View, unread bool, notes []status.Notification) {
+func (t *table) sendStatusLocked(sid uint32, d drained) {
 	var msgs []any
-	if changed {
-		msgs = append(msgs, protocol.Status{T: protocol.TStatus, SID: sid, Status: statusInfo(v), Unread: unread})
+	if d.changed {
+		msgs = append(msgs, protocol.Status{T: protocol.TStatus, SID: sid, Status: statusInfo(d.view), Unread: d.unread})
 	}
-	for _, n := range notes {
+	for _, n := range d.notes {
 		msgs = append(msgs, protocol.Notify{T: protocol.TNotify, SID: sid, Kind: n.Kind, Msg: n.Msg})
 	}
 	if len(msgs) == 0 {
@@ -120,7 +184,7 @@ func (t *table) sendStatusLocked(sid uint32, changed bool, v status.View, unread
 		}
 	}
 	if !gui {
-		t.missed += len(notes)
+		t.missed += len(d.notes)
 	}
 }
 
@@ -145,12 +209,12 @@ func (e *entry) armStatusLocked(now time.Time) {
 	e.statusTimer.Stop()
 }
 
-// endStatusLocked sends what e's projector has produced as its session exits
-// and discards the rest: a done still waiting out its quiet period is
-// dropped, as the session has ended. It requires t.mu and the session lock,
-// and must run before e.exited is set, which stops the drain.
-func (t *table) endStatusLocked(e *entry) {
-	t.drainStatusLocked(e)
+// endStatusLocked discards what e's projector still holds as its session
+// exits, once the exit's drain has sent what it had produced: a done still
+// waiting out its quiet period is dropped, as the session has ended, and so
+// is output read after that drain, which only a reader that outlived the
+// drain timeout can add. It requires the session lock.
+func (e *entry) endStatusLocked() {
 	e.statusTimer.Stop()
 	e.sess.Output().ClearStatus()
 }
@@ -169,9 +233,13 @@ func (c *conn) seen(sid uint32) {
 	}
 	s := e.sess
 	s.Lock()
-	defer s.Unlock()
-	if !e.exited {
+	exited := e.exited
+	if !exited {
 		s.Output().Seen()
-		t.drainStatusLocked(e)
+	}
+	s.Unlock()
+	// Under t.mu, the exit cannot fall between.
+	if !exited {
+		t.drainStatus(e)
 	}
 }
