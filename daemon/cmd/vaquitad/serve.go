@@ -110,8 +110,9 @@ func serve(args []string) error {
 	return nil
 }
 
-// loadState reads state.json and prunes the records of sessions that are
-// gone. A file that cannot be loaded is moved aside for inspection and the
+// loadState reads state.json and rescans the records of sessions from the
+// previous run, which stay listed as restorable once they hold no processes.
+// A file that cannot be loaded is moved aside for inspection and the
 // daemon starts from the defaults: every change to the sessions saves
 // state.json, which would overwrite it and lose the records and settings it
 // holds, even when the failure was only a passing read error. If it cannot
@@ -119,7 +120,7 @@ func serve(args []string) error {
 func loadState(log *slog.Logger, home string) (state.State, error) {
 	st, err := state.Load(home)
 	if err == nil {
-		return st, pruneState(log, home, &st)
+		return st, rescanState(log, home, &st, session.SessionPIDs)
 	}
 	path := state.StatePath(home)
 	aside := fmt.Sprintf("%s.bad-%d", path, time.Now().Unix())
@@ -133,16 +134,20 @@ func loadState(log *slog.Logger, home string) (state.State, error) {
 	return st, nil
 }
 
-// pruneState drops the records of sessions from a previous run that are
-// gone, reports the ones that are not, and saves the result.
-func pruneState(log *slog.Logger, home string, st *state.State) error {
-	kept, err := st.PruneDead(session.SessionPIDs)
+// rescanState re-checks the records of sessions from a previous run, reports
+// the ones that still have processes, and saves the result. No record is
+// dropped: one without processes is restorable. It fails when a scan fails,
+// since a record is listed as restorable only once a scan has confirmed its
+// session is empty; nothing is saved then.
+func rescanState(log *slog.Logger, home string, st *state.State, scan func(sid int) ([]int, time.Time, error)) error {
+	holding, err := st.Rescan(scan)
 	if err != nil {
-		log.Warn("scan sessions from the previous run; their records are kept", "err", err)
+		return fmt.Errorf("cannot tell whether the previous run's sessions left processes; not starting: %w", err)
 	}
-	for _, r := range kept {
+	for _, r := range holding {
 		log.Warn("session from the previous run still has processes", "sid", r.SID, "pid", r.PID, "cwd", r.Cwd, "orphans", r.Orphans)
 	}
+	log.Info("sessions from the previous run", "restorable", len(st.Sessions)-len(holding))
 	if err := st.Save(home); err != nil {
 		return fmt.Errorf("save state: %w", err)
 	}

@@ -473,7 +473,7 @@ func (c *conn) resize(m protocol.Resize) {
 // kill ends a running session and removes its record once it has exited. An
 // exited session is never signalled, as its pids may belong to anything by
 // now; its record goes only if a fresh scan finds its PTY session empty, by
-// the rule startup pruning applies.
+// the rule SessionRecord.Rescan applies.
 func (c *conn) kill(sid uint32) {
 	t := c.srv.table
 	e := t.lookup(sid)
@@ -499,9 +499,9 @@ func (c *conn) kill(sid uint32) {
 
 	// The scan reads every process on the system, so it runs without t.mu.
 	t.mu.Lock()
-	scan := state.State{Sessions: []state.SessionRecord{e.rec}}
+	rec := e.rec
 	t.mu.Unlock()
-	kept, err := scan.PruneDead(session.SessionPIDs)
+	err := rec.Rescan(session.SessionPIDs)
 	if err != nil {
 		slog.Warn("kill of an exited session: scan failed, so the record is kept", "sid", sid, "pid", e.pid, "err", err)
 	}
@@ -512,7 +512,7 @@ func (c *conn) kill(sid uint32) {
 	if t.entries[sid] != e {
 		return
 	}
-	if len(kept) == 0 {
+	if err == nil && len(rec.Orphans) == 0 {
 		delete(t.entries, sid)
 		slog.Info("session removed", "sid", sid, "pid", e.pid)
 		t.saveLocked()
@@ -520,7 +520,7 @@ func (c *conn) kill(sid uint32) {
 		return
 	}
 	if err == nil {
-		e.rec.Orphans = kept[0].Orphans
+		e.rec.Orphans = rec.Orphans
 		slog.Warn("kill of an exited session: processes remain, so the record is kept", "sid", sid, "pid", e.pid, "orphans", e.rec.Orphans)
 		t.saveLocked()
 		t.broadcastLocked()

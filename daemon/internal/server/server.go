@@ -43,7 +43,7 @@ type Options struct {
 	Home string
 	// State is state.json as loaded. Its records are of a previous run's
 	// sessions, which have no PTY here: they are listed as exited until a
-	// kill finds them gone.
+	// rescan decides what becomes of them.
 	State state.State
 }
 

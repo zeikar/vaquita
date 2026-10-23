@@ -1,11 +1,13 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/zeikar/vaquita/daemon/internal/state"
 )
@@ -54,5 +56,22 @@ func TestLoadStateRefusesWhenMoveFails(t *testing.T) {
 	}
 	if got, err := os.ReadFile(state.StatePath(home)); err != nil || string(got) != "not json" {
 		t.Errorf("state.json = %q, %v; want it untouched", got, err)
+	}
+}
+
+// A record whose session could not be scanned must not be listed as
+// restorable, so the daemon refuses to start and leaves state.json alone.
+func TestRescanStateRefusesWhenScanFails(t *testing.T) {
+	home := t.TempDir()
+	st := state.State{Shell: "/bin/zsh", Sessions: []state.SessionRecord{{SID: 1, PID: 4242, Cwd: "/tmp/repo"}}}
+	scanErr := errors.New("test: scan failed")
+	err := rescanState(slog.New(slog.NewTextHandler(io.Discard, nil)), home, &st, func(int) ([]int, time.Time, error) {
+		return nil, time.Time{}, scanErr
+	})
+	if !errors.Is(err, scanErr) {
+		t.Fatalf("rescanState error %v, want the scan's", err)
+	}
+	if _, err := os.Stat(state.StatePath(home)); !os.IsNotExist(err) {
+		t.Errorf("state.json written despite the failure: %v", err)
 	}
 }

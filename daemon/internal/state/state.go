@@ -20,6 +20,9 @@ type State struct {
 	// no $SHELL to fall back on.
 	Shell    string          `json:"shell"`
 	Sessions []SessionRecord `json:"sessions"`
+	// Repos are the registered repos: cleaned absolute paths, sorted and
+	// unique. Nil in files written before repos existed.
+	Repos []string `json:"repos"`
 }
 
 // SessionRecord describes a session the daemon started.
@@ -34,6 +37,11 @@ type SessionRecord struct {
 	// exited. They are reported, never signalled: the pids may since have
 	// been reused.
 	Orphans []int `json:"orphans,omitempty"`
+	// Agent is the agent last seen reporting in the session, claude or
+	// codex, and Conversation that agent's conversation id as last read
+	// while it was alive; a reopen resumes it.
+	Agent        string `json:"agent,omitempty"`
+	Conversation string `json:"conversation,omitempty"`
 }
 
 // Load reads state.json from home. A missing file yields the defaults, as do
@@ -62,34 +70,41 @@ func (st State) Save(home string) error {
 	return WriteAtomic(StatePath(home), data, 0o600)
 }
 
-// PruneDead re-scans each record's PTY session with scan, whose argument is
-// the record's PID and which reports the members' pids and, if the process
-// with that pid still leads the session, when it started. A record is dropped
-// when its session is empty, or when its leader started at another time than
-// the record says: the pid has been reused for someone else's session. Any
-// other record is kept with Orphans set to what the scan found, except that a
-// record whose scan failed is kept unchanged and its error joined into the
-// one returned. PruneDead sets st.Sessions to the kept records and returns
-// them for the caller to log.
-func (st *State) PruneDead(scan func(sid int) (pids []int, leaderStart time.Time, err error)) ([]SessionRecord, error) {
-	var kept []SessionRecord
-	var errs []error
-	for _, r := range st.Sessions {
-		pids, leaderStart, err := scan(r.PID)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("scan session %d (pid %d): %w", r.SID, r.PID, err))
-			kept = append(kept, r)
-			continue
-		}
-		if len(pids) == 0 {
-			continue
-		}
-		if d := leaderStart.Sub(r.Started); !leaderStart.IsZero() && (d > startSlack || d < -startSlack) {
-			continue
-		}
-		r.Orphans = pids
-		kept = append(kept, r)
+// Rescan re-scans the record's PTY session with scan, whose argument is the
+// record's PID and which reports the members' pids and, if the process with
+// that pid still leads the session, when it started. Orphans becomes what the
+// scan found, or nil when the session is empty or its leader started at
+// another time than the record says (the pid has been reused for someone
+// else's session). When the scan fails the record is left as it was and the
+// error returned.
+func (r *SessionRecord) Rescan(scan func(sid int) (pids []int, leaderStart time.Time, err error)) error {
+	pids, leaderStart, err := scan(r.PID)
+	if err != nil {
+		return err
 	}
-	st.Sessions = kept
-	return kept, errors.Join(errs...)
+	if d := leaderStart.Sub(r.Started); len(pids) == 0 || (!leaderStart.IsZero() && (d > startSlack || d < -startSlack)) {
+		pids = nil
+	}
+	r.Orphans = pids
+	return nil
+}
+
+// Rescan calls SessionRecord.Rescan for every record. No record is dropped: a
+// record whose session holds no processes is restorable, so it stays until
+// the user reopens or dismisses it. It returns the records that still hold
+// processes for the caller to log (one whose scan failed counts by what it
+// already holds), and the scan errors joined.
+func (st *State) Rescan(scan func(sid int) (pids []int, leaderStart time.Time, err error)) ([]SessionRecord, error) {
+	var holding []SessionRecord
+	var errs []error
+	for i := range st.Sessions {
+		r := &st.Sessions[i]
+		if err := r.Rescan(scan); err != nil {
+			errs = append(errs, fmt.Errorf("scan session %d (pid %d): %w", r.SID, r.PID, err))
+		}
+		if len(r.Orphans) > 0 {
+			holding = append(holding, *r)
+		}
+	}
+	return holding, errors.Join(errs...)
 }
