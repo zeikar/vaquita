@@ -12,12 +12,14 @@ import (
 // A tail tracker scans exactly the bytes the ring evicts, in order, so it
 // knows the modes in effect at the ring start. Those are what a replay from
 // Ring().Start() needs re-established first; modes changed later are
-// reproduced by the replayed bytes themselves.
+// reproduced by the replayed bytes themselves. The live scanner's sink tracks
+// the modes in effect at the ring end the same way.
 //
 // Output is not safe for concurrent use; the session lock guards it.
 type Output struct {
-	live *Scanner
-	ring *Ring
+	live      *Scanner
+	ring      *Ring
+	liveModes Modes
 
 	tailModes   Modes
 	tailScanner *Scanner
@@ -26,16 +28,23 @@ type Output struct {
 	proj    status.Projector
 
 	// reporter is the foreground process group when the last root working or
-	// blocked report was read, 0 when unknown. While the view is working or
-	// waiting for input, Tick polls it from nextPoll on: the program runs in
-	// a group of its own under the session's shell, so its death, even by
-	// SIGKILL, ends neither the session nor anything the projector sees. The
-	// poll takes the reporter for gone once its group no longer exists or is
-	// no longer the PTY's foreground group. The group alone is not enough: a
-	// helper the program started, such as the caffeinate Claude Code runs, can
-	// outlive it there for minutes. The shell takes the terminal back as soon
-	// as it reaps the dead job, so the foreground says whether the program
-	// still holds the session.
+	// blocked report was read, 0 when unknown. As long as it is known, Tick
+	// polls it from nextPoll on: the program runs in a group of its own under
+	// the session's shell, so its death, even by SIGKILL, ends neither the
+	// session nor anything the projector sees. The poll takes the reporter
+	// for gone once its group no longer exists or is no longer the PTY's
+	// foreground group. The group alone is not enough: a helper the program
+	// started, such as the caffeinate Claude Code runs, can outlive it there
+	// for minutes. The shell takes the terminal back as soon as it reaps the
+	// dead job, so the foreground says whether the program still holds the
+	// session.
+	//
+	// A reporter found gone can leave a working or input view behind, which
+	// Tick ends, and terminal modes on, which Tick undoes: with mouse
+	// tracking left on, every mouse move over the terminal types a report
+	// into the shell. The poll goes on after a done or idle report, as an
+	// agent killed at its prompt leaves its modes on just the same; the clear
+	// report an agent sends as it exits forgets the reporter.
 	//
 	// leader is the process group of the session's shell, 0 in unit tests. An
 	// agent normally runs as a foreground job of its own, so a report read
@@ -135,10 +144,13 @@ func (o *Output) Seen() { o.proj.Seen() }
 
 // Tick raises a notification whose deadline has passed and, once the poll is
 // due, checks that the reporter's process group is still there and still in
-// the foreground.
+// the foreground. When it is not, Tick appends to the output the sequence
+// that undoes the modes the reporter left on, so that every terminal showing
+// the session, and every later replay, gets it. The caller sends it on, as
+// it would a read.
 func (o *Output) Tick(now time.Time) {
 	o.proj.Tick(now)
-	if !o.polling() || now.Before(o.nextPoll) {
+	if o.reporter == 0 || now.Before(o.nextPoll) {
 		return
 	}
 	if !o.gone && o.GroupAlive(o.reporter) && o.inForeground() {
@@ -146,6 +158,11 @@ func (o *Output) Tick(now time.Time) {
 		return
 	}
 	o.interrupt()
+	// Each sequence starts with ESC, which abandons one the reporter left
+	// unfinished, in the live scanner and in terminals alike.
+	if seq := o.liveModes.ReleaseSeq(); seq != nil {
+		o.Feed(seq)
+	}
 }
 
 // inForeground reports whether the reporter's group is the PTY's foreground
@@ -169,24 +186,10 @@ func (o *Output) interrupt() {
 // NextDeadline reports when Tick next has something to do.
 func (o *Output) NextDeadline() (time.Time, bool) {
 	d, ok := o.proj.Deadline()
-	if o.polling() && (!ok || o.nextPoll.Before(d)) {
+	if o.reporter != 0 && (!ok || o.nextPoll.Before(d)) {
 		return o.nextPoll, true
 	}
 	return d, ok
-}
-
-// polling reports whether Tick polls the reporter's process group: only a
-// view that is working or waiting for input can be left behind by its death.
-func (o *Output) polling() bool {
-	if o.reporter == 0 {
-		return false
-	}
-	v, _ := o.proj.View()
-	switch v.State {
-	case status.ViewWorking, status.ViewInput, status.ViewAuth:
-		return true
-	}
-	return false
 }
 
 // watch records the foreground process group as the reporter of a root
@@ -212,8 +215,9 @@ func (o *Output) watch(state string, now time.Time) {
 // the held OSC 9, as the session's exit does.
 func (o *Output) ClearStatus() { o.proj = status.Projector{} }
 
-// statusSink feeds the live output's status sequences to an Output. Parsers
-// copy what they keep, as the scanner's slices are only valid during a call.
+// statusSink feeds the live output's status sequences and terminal modes to
+// an Output. Parsers copy what they keep, as the scanner's slices are only
+// valid during a call.
 type statusSink struct{ o *Output }
 
 func (s statusSink) OSC(num int, payload []byte, oversized bool) {
@@ -250,9 +254,12 @@ func (s statusSink) OSC(num int, payload []byte, oversized bool) {
 	}
 }
 
-func (statusSink) CSI(_, _ []byte, _ byte) {}
+func (s statusSink) CSI(params, intermediates []byte, final byte) {
+	s.o.liveModes.CSI(params, intermediates, final)
+}
 
 func (s statusSink) ESC(final byte) {
+	s.o.liveModes.ESC(final)
 	if final == 'c' {
 		s.o.records.Reset()
 		// A done already due is raised before the clear drops it, so the

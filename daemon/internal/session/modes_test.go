@@ -240,6 +240,56 @@ func TestModesPrefixOrder(t *testing.T) {
 	}
 }
 
+func TestModesReleaseSeq(t *testing.T) {
+	for _, tc := range []struct {
+		name, in, release string
+	}{
+		{"defaults", "", ""},
+		{"only the line editor's modes", "\x1b[?1h\x1b[?2004h", ""},
+		{
+			"full-screen agent",
+			"\x1b[?2004h\x1b[?1049h\x1b[?25l\x1b[?1003h\x1b[?1006h\x1b[?1004h\x1b[?2026h",
+			"\x1b[?1049l\x1b[?25h\x1b[?1004l\x1b[?2026l\x1b[?1003l\x1b[?1006l",
+		},
+		{
+			"everything",
+			everything,
+			"\x1b[<1u\x1b[?1049l\x1b[<1u\x1b[?7h\x1b[?25h\x1b[?1004l\x1b[?2026l\x1b[?1003l\x1b[?1006l",
+		},
+		{
+			"inactive alternate stack",
+			"\x1b[>1u\x1b[?1049h\x1b[>7u\x1b[?1049l",
+			"\x1b[?1049h\x1b[<1u\x1b[?1049l\x1b[<1u",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := modesFrom(tc.in).ReleaseSeq()
+			if string(got) != tc.release || (tc.release == "") != (got == nil) {
+				t.Errorf("ReleaseSeq = %q, want %q", got, tc.release)
+			}
+		})
+	}
+}
+
+// ReleaseSeq leaves on exactly the line editor's modes that were on.
+func TestModesReleaseSeqRandom(t *testing.T) {
+	var shell uint8
+	for i, f := range flagModes {
+		if f.shell {
+			shell |= 1 << i
+		}
+	}
+	rng := rand.New(rand.NewPCG(7, 7))
+	for range 3000 {
+		in := randomModeStream(rng)
+		m := modesFrom(in)
+		release := string(m.ReleaseSeq())
+		if got, want := canonical(*modesFrom(in + release)), (Modes{changed: m.changed & shell}); got != want {
+			t.Fatalf("input %q\nReleaseSeq %q\nleft %+v\nwant %+v", in, release, got, want)
+		}
+	}
+}
+
 // checkRoundTrip checks that Prefix rebuilds m on a fresh tracker and that
 // ResetSeq then returns it to the defaults. Since the rebuilt state equals m,
 // that covers ResetSeq applied to m itself.

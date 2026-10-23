@@ -58,6 +58,11 @@ func (t *table) statusTick(e *entry) {
 // exit it does nothing, so no status follows a session's exit. Output read
 // after the exit, when the reader outlives the drain timeout, leaves drainDue
 // set, so output() asks for no further drains.
+//
+// The Tick may append output: the sequence that undoes the terminal modes of
+// a reporter it found gone. No read of the PTY calls output() for it, and the
+// shell may write nothing more, so the drain wakes the subscribers' writers
+// itself.
 func (t *table) drainStatusLocked(e *entry) {
 	if e.exited {
 		return
@@ -65,7 +70,13 @@ func (t *table) drainStatusLocked(e *entry) {
 	e.drainDue = false
 	out := e.sess.Output()
 	now := out.Now()
+	end := out.Ring().End()
 	out.Tick(now)
+	if out.Ring().End() != end {
+		for _, sub := range e.subs {
+			sub.conn.wakeWriter()
+		}
+	}
 	changed, notes := out.TakeStatus()
 	e.armStatusLocked(now)
 	v, unread := out.View()

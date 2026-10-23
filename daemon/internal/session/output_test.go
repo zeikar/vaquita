@@ -498,22 +498,115 @@ func TestOutputReportFromReplacedLeaderIsWatched(t *testing.T) {
 	}
 }
 
-func TestOutputForegroundGroupPollSkipsDone(t *testing.T) {
+// appended returns what f appends to o's ring.
+func appended(o *Output, f func()) string {
+	end := o.Ring().End()
+	f()
+	return string(o.Ring().CopyRange(end, o.Ring().End(), nil))
+}
+
+// A done view is polled too, as an agent killed at its prompt leaves its
+// modes on just the same. Its death keeps the done view, and the done is
+// still notified once it has stood for its quiet period.
+func TestOutputForegroundGroupPollKeepsDone(t *testing.T) {
 	o, now, alive, polls := watchedOutput()
 	t0 := *now
+	o.Feed([]byte("\x1b[?1003h" + working + codexPong))
+	o.TakeStatus()
 	*alive = false
-	o.Feed([]byte(working + codexPong))
-	// The done's quiet period, not the poll a second after the working.
-	if d, ok := o.NextDeadline(); !ok || !d.Equal(t0.Add(status.DoneQuiet)) {
-		t.Fatalf("deadline %v, %v; want %v", d, ok, t0.Add(status.DoneQuiet))
+	// The poll a second after the working comes before the done's deadline.
+	if d, ok := o.NextDeadline(); !ok || !d.Equal(t0.Add(fgPollGap)) {
+		t.Fatalf("deadline %v, %v; want the poll at %v", d, ok, t0.Add(fgPollGap))
 	}
-	o.Tick(t0.Add(time.Minute))
+	if got := appended(o, func() { o.Tick(t0.Add(fgPollGap)) }); got != "\x1b[?1003l" || *polls != 1 {
+		t.Fatalf("appended %q after %d polls; want %q after 1", got, *polls, "\x1b[?1003l")
+	}
+	if changed, notes := o.TakeStatus(); changed || len(notes) != 0 {
+		t.Fatalf("changed %v, notes %v; want the done view kept and its notification still pending", changed, notes)
+	}
+	d, ok := o.NextDeadline()
+	if !ok || !d.Equal(t0.Add(status.DoneQuiet)) {
+		t.Fatalf("deadline %v, %v; want the done's at %v", d, ok, t0.Add(status.DoneQuiet))
+	}
+	o.Tick(d)
 	_, notes := o.TakeStatus()
 	if want := []status.Notification{{Kind: status.NotifyDone, Msg: "pong"}}; !slices.Equal(notes, want) {
 		t.Fatalf("notes %v", notes)
 	}
-	if v, _ := o.View(); v.State != status.ViewDone || *polls != 0 {
-		t.Fatalf("view %+v after %d polls; want done and no poll", v, *polls)
+	if v, unread := o.View(); v != (status.View{State: status.ViewDone, Msg: "pong"}) || !unread {
+		t.Fatalf("view %+v unread %v; want the done unread", v, unread)
+	}
+}
+
+// The poll that finds the reporter gone undoes the modes it left on, but not
+// those a line editor sets for its prompt, which the shell may have drawn by
+// then.
+func TestOutputReporterDeathReleasesModes(t *testing.T) {
+	o, now, alive, _ := watchedOutput()
+	t0 := *now
+	o.Feed([]byte("\x1b[?1049h\x1b[>1u\x1b[?25l\x1b[?1002h\x1b[?1006h\x1b[?2026h" + working))
+	*alive = false
+	o.Feed([]byte("\x1b[?2004h\x1b[?1h$ "))
+	const want = "\x1b[<1u\x1b[?1049l\x1b[?25h\x1b[?2026l\x1b[?1002l\x1b[?1006l"
+	if got := appended(o, func() { o.Tick(t0.Add(fgPollGap)) }); got != want {
+		t.Fatalf("appended %q, want %q", got, want)
+	}
+	if got := string(o.liveModes.Prefix()); got != "\x1b[?1h\x1b[?2004h" {
+		t.Fatalf("modes left on %q, want only the prompt's", got)
+	}
+	if v, _ := o.View(); v != (status.View{}) {
+		t.Fatalf("view %+v, want it cleared", v)
+	}
+	if _, ok := o.NextDeadline(); ok {
+		t.Fatal("deadline left after the reporter's death")
+	}
+}
+
+// A reporter killed in the middle of a sequence leaves the live scanner inside
+// it; the release starts with ESC, which abandons it, so it still takes effect.
+func TestOutputReleaseAfterUnfinishedSequence(t *testing.T) {
+	for _, unfinished := range []string{"\x1b[?10", "\x1b]0;title", "\x1b]0;title\x1b", "\x1bP1$r", "\x1b(", "\xe2\x94"} {
+		o, now, alive, _ := watchedOutput()
+		o.Feed([]byte("\x1b[?1049h\x1b[?1003h\x1b[?1006h" + working + unfinished))
+		*alive = false
+		o.Tick(now.Add(fgPollGap))
+		if m := canonical(o.liveModes); m != (Modes{}) || !o.live.AtBoundary() {
+			t.Errorf("after %q: modes %+v, scanner at a boundary %v; want the defaults at a boundary", unfinished, m, o.live.AtBoundary())
+		}
+	}
+}
+
+// Only a reporter's death undoes modes: not without a watch, not while the
+// reporter lives, and not after the clear an agent sends as it exits.
+func TestOutputReleaseNeedsReporterDeath(t *testing.T) {
+	const modes = "\x1b[?1049h\x1b[?1003h"
+	for _, tc := range []struct {
+		name         string
+		watch, alive bool
+		in           string
+		reporter     int // after the polls
+	}{
+		{"no watch", false, false, modes + working, 0},
+		{"reporter alive", true, true, modes + working, 42},
+		{"after clear", true, false, modes + working + "\x1b]7501;state=clear\x07", 0},
+		{"no modes on", true, false, working, 0},
+	} {
+		o, now := statusOutput()
+		if tc.watch {
+			var alive *bool
+			o, now, alive, _ = watchedOutput()
+			*alive = tc.alive
+		}
+		t0 := *now
+		o.Feed([]byte(tc.in))
+		got := appended(o, func() {
+			for i := 1; i <= 3; i++ {
+				o.Tick(t0.Add(time.Duration(i) * fgPollGap))
+			}
+		})
+		if got != "" || o.reporter != tc.reporter {
+			t.Errorf("%s: appended %q with reporter %d; want nothing and %d", tc.name, got, o.reporter, tc.reporter)
+		}
 	}
 }
 

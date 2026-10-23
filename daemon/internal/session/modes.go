@@ -28,13 +28,16 @@ var flagModes = [...]struct {
 	// (xterm keeps 1004 and 2004, xterm.js clears 2026); leaving 2026 set is
 	// deliberate and harmless, since ResetSeq always ends it.
 	decstr bool
+	// shell is whether shells' line editors set the mode for their prompt
+	// themselves, so that ReleaseSeq leaves it to them.
+	shell bool
 }{
-	{1, false, true},     // application cursor keys
-	{7, true, true},      // autowrap
-	{25, true, true},     // cursor visible
-	{1004, false, true},  // focus events
-	{2004, false, true},  // bracketed paste
-	{2026, false, false}, // synchronized output
+	{1, false, true, true},      // application cursor keys
+	{7, true, true, false},      // autowrap
+	{25, true, true, false},     // cursor visible
+	{1004, false, true, false},  // focus events
+	{2004, false, true, true},   // bracketed paste
+	{2026, false, false, false}, // synchronized output
 }
 
 // Modes follows the terminal modes that a stream of output sets: DEC private
@@ -242,6 +245,24 @@ func (m *Modes) ResetSeq() []byte {
 	}
 	b = m.keys[mainScreen].appendPop(b)
 	return m.appendModes(b, true)
+}
+
+// ReleaseSeq returns the sequence that undoes what a program that died
+// without restoring the terminal left on, for the shell that gets the
+// terminal back, or nil when there is nothing to undo. Unlike ResetSeq it
+// leaves application cursor keys and bracketed paste as they are: line
+// editors set those for their own prompt, which may already be on the
+// screen, and resetting them under it would break arrow keys or pasting
+// there. Leaving the alternate screen hides such a prompt if the shell drew
+// it there; Enter brings a new one.
+func (m *Modes) ReleaseSeq() []byte {
+	rest := *m
+	for i, f := range flagModes {
+		if f.shell {
+			rest.changed &^= 1 << i
+		}
+	}
+	return rest.ResetSeq()
 }
 
 // appendModes appends a DECSET or DECRST for each mode other than the

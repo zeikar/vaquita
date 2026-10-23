@@ -267,6 +267,18 @@ func TestStatusBeforeExit(t *testing.T) {
 	}
 }
 
+// A program that ends without restoring the terminal, here by exiting with
+// mouse tracking on, leaves it to the daemon, whose poll then writes the
+// sequence that undoes it. That output comes from no read of the PTY, and the
+// shell writes nothing more, so the drain itself must send it on. An attach
+// client gets no status, which would wake its writer anyway.
+func TestReporterDeathReleasesModesLive(t *testing.T) {
+	srv := startSessionServer(t, Options{})
+	at := dialKind(t, srv, protocol.ClientAttach)
+	sid := at.create(`set -m; sh -c 'sleep 0.2; printf "\033[?1049h\033[?1003h\033[?1006h\033]7501;state=working\007"; exec sleep 1'; read l`)
+	at.waitLive(sid, "\x1b[?1049l\x1b[?1003l\x1b[?1006l")
+}
+
 // Reports read in a burst are drained by one timer callback at a time, never
 // one per read, and their statuses arrive in order.
 func TestStatusBurst(t *testing.T) {
