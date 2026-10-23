@@ -1,10 +1,7 @@
 import type { Notify, SessionInfo } from './protocol';
 
 // The session a notification's click selects. A restarted daemon can give
-// its sid to another session, so the inc goes with it. A type alias, not an
-// interface: the notification plugin carries it in an extra typed
-// Record<string, unknown>, which an interface without an index signature
-// does not satisfy.
+// its sid to another session, so the inc goes with it.
 export type Target = { sid: number; inc: string };
 
 export interface Notice {

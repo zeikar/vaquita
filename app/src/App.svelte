@@ -49,14 +49,17 @@
 			.catch((e) => manager.report(`bringing the window up failed: ${e instanceof Error ? e.message : String(e)}`));
 	}
 
-	// Only notifications sent after the click listener is registered report
-	// their clicks, so the manager, which sends them, starts once it is.
-	const tauriNotifier = isTauri() ? createTauriNotifier(openNotified) : undefined;
+	// The manager starts once the notifier is set up, so the notifications it
+	// sends on connecting, such as the missed summary, do not go to the console.
+	const tauriNotifier = isTauri()
+		? createTauriNotifier(openNotified, (e) => manager.report(`notification failed: ${e instanceof Error ? e.message : String(e)}`))
+		: undefined;
 	onDestroy(() => void tauriNotifier?.then((n) => n.stop()).catch(() => {}));
 	void Promise.resolve(tauriNotifier)
 		.then(
 			(n) => {
 				if (n) notifier = n;
+				return n?.allowed === false ? 'notifications are turned off for vaquita in System Settings' : undefined;
 			},
 			(e) => `notifications unavailable: ${e instanceof Error ? e.message : String(e)}`,
 		)

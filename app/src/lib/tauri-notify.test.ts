@@ -1,102 +1,102 @@
-import type { ActionPerformed, ActiveNotification, Options } from '@tauri-apps/plugin-notification';
 import { describe, expect, it } from 'vitest';
-import type { Target } from './notify';
+import type { Notice, Target } from './notify';
 import { createTauriNotifier, type NotificationApi } from './tauri-notify';
 
-class FakePlugin implements NotificationApi {
+class FakeNative implements NotificationApi {
 	calls: string[] = [];
-	sent: Options[] = [];
-	granted = true;
-	listener?: (event: ActionPerformed) => void;
-	registered?: () => void;
-	unregistered = false;
+	sent: Notice[] = [];
+	allowed: boolean | string = true;
+	sendError?: string;
+	listener?: (payload: unknown) => void;
+	unlistened = false;
 
-	onAction(cb: (event: ActionPerformed) => void) {
-		this.calls.push('onAction');
-		this.listener = cb;
-		const unregister = async () => void (this.unregistered = true);
-		return new Promise<{ unregister(): Promise<void> }>((resolve) => (this.registered = () => resolve({ unregister })));
+	async listen(onClick: (payload: unknown) => void) {
+		this.calls.push('listen');
+		this.listener = onClick;
+		return () => void (this.unlistened = true);
 	}
-	async isPermissionGranted() {
-		this.calls.push('isPermissionGranted');
-		return this.granted;
+	async permission() {
+		this.calls.push('permission');
+		// The Rust command rejects with its error string.
+		if (typeof this.allowed === 'string') throw this.allowed;
+		return this.allowed;
 	}
-	async requestPermission() {
-		this.calls.push('requestPermission');
-		return 'granted';
+	async notify(n: Notice) {
+		this.sent.push(n);
+		if (this.sendError) throw this.sendError;
 	}
-	sendNotification(options: Options) {
-		this.sent.push(options);
-	}
-	tap(actionId: string, extra?: Record<string, unknown>) {
-		const notification = extra && ({ id: 1, groupSummary: false, data: {}, extra, attachments: [] } as ActiveNotification);
-		this.listener!({ actionId, inputValue: null, notification: notification ?? null });
+	click(payload: unknown) {
+		this.listener!(payload);
 	}
 }
 
-async function ready(plugin: FakePlugin, onClick: (target?: Target) => void = () => {}) {
-	const notifier = createTauriNotifier(onClick, plugin);
-	await Promise.resolve();
-	plugin.registered!();
-	return notifier;
-}
+const ignore = () => {};
 
 describe('createTauriNotifier', () => {
-	it('resolves only once the click listener is registered', async () => {
-		const plugin = new FakePlugin();
-		let done = false;
-		const notifier = createTauriNotifier(() => {}, plugin).then(() => (done = true));
-		await new Promise((r) => setTimeout(r));
-		expect(plugin.calls).toEqual(['onAction']);
-		expect(done).toBe(false);
-		plugin.registered!();
-		await notifier;
-		expect(plugin.calls).toEqual(['onAction', 'isPermissionGranted']);
+	it('asks for the permission, then listens for clicks', async () => {
+		const native = new FakeNative();
+		await createTauriNotifier(ignore, ignore, native);
+		expect(native.calls).toEqual(['permission', 'listen']);
 	});
 
-	it('asks for permission when it is not granted', async () => {
-		const plugin = new FakePlugin();
-		plugin.granted = false;
-		await ready(plugin);
-		expect(plugin.calls).toEqual(['onAction', 'isPermissionGranted', 'requestPermission']);
+	it('says whether macOS allows the notifications', async () => {
+		const native = new FakeNative();
+		expect((await createTauriNotifier(ignore, ignore, native)).allowed).toBe(true);
 	});
 
-	it('sends the target in the extra payload, and none for the summary', async () => {
-		const plugin = new FakePlugin();
-		const notifier = await ready(plugin);
+	it('still sends when notifications are turned off, since they may be turned on later', async () => {
+		const native = new FakeNative();
+		native.allowed = false;
+		const notifier = await createTauriNotifier(ignore, ignore, native);
+		expect(notifier.allowed).toBe(false);
+		notifier.show({ title: 'build done', body: 'ok', target: { sid: 3, inc: 'a' } });
+		expect(native.sent).toHaveLength(1);
+	});
+
+	it('fails without listening when macOS cannot be asked', async () => {
+		const native = new FakeNative();
+		native.allowed = 'notifications need the app bundle';
+		await expect(createTauriNotifier(ignore, ignore, native)).rejects.toBe('notifications need the app bundle');
+		expect(native.calls).toEqual(['permission']);
+	});
+
+	it('sends each notice with its target, and none for the summary', async () => {
+		const native = new FakeNative();
+		const notifier = await createTauriNotifier(ignore, ignore, native);
 		notifier.show({ title: 'build done', body: 'ok', target: { sid: 3, inc: 'a' } });
 		notifier.show({ title: 'vaquita', body: '2 notifications while you were away' });
-		expect(plugin.sent).toEqual([
-			{ title: 'build done', body: 'ok', extra: { sid: 3, inc: 'a' } },
+		expect(native.sent).toEqual([
+			{ title: 'build done', body: 'ok', target: { sid: 3, inc: 'a' } },
 			{ title: 'vaquita', body: '2 notifications while you were away' },
 		]);
-		expect('extra' in plugin.sent[1]).toBe(false);
+	});
+
+	it('reports a notice that could not be sent instead of throwing', async () => {
+		const native = new FakeNative();
+		const errors: unknown[] = [];
+		const notifier = await createTauriNotifier(ignore, (e) => errors.push(e), native);
+		native.sendError = 'ipc down';
+		expect(() => notifier.show({ title: 'build done', body: 'ok' })).not.toThrow();
+		await new Promise((r) => setTimeout(r));
+		expect(errors).toEqual(['ipc down']);
 	});
 
 	it('hands a click the target its notification carries, else none', async () => {
-		const plugin = new FakePlugin();
+		const native = new FakeNative();
 		const clicks: (Target | undefined)[] = [];
-		await ready(plugin, (t) => clicks.push(t));
-		plugin.tap('tap', { sid: 3, inc: 'a' });
-		plugin.tap('tap', {});
-		plugin.tap('tap');
-		plugin.tap('tap', { sid: '3', inc: 'a' });
+		await createTauriNotifier((t) => clicks.push(t), ignore, native);
+		native.click({ sid: 3, inc: 'a' });
+		native.click(null);
+		native.click({});
+		native.click({ sid: '3', inc: 'a' });
 		expect(clicks).toEqual([{ sid: 3, inc: 'a' }, undefined, undefined, undefined]);
 	});
 
 	it('removes the click listener on stop', async () => {
-		const plugin = new FakePlugin();
-		const notifier = await ready(plugin);
-		expect(plugin.unregistered).toBe(false);
-		await notifier.stop();
-		expect(plugin.unregistered).toBe(true);
-	});
-
-	it('ignores actions other than a click on the notification', async () => {
-		const plugin = new FakePlugin();
-		const clicks: (Target | undefined)[] = [];
-		await ready(plugin, (t) => clicks.push(t));
-		plugin.tap('snooze', { sid: 3, inc: 'a' });
-		expect(clicks).toEqual([]);
+		const native = new FakeNative();
+		const notifier = await createTauriNotifier(ignore, ignore, native);
+		expect(native.unlistened).toBe(false);
+		notifier.stop();
+		expect(native.unlistened).toBe(true);
 	});
 });

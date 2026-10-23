@@ -1,5 +1,6 @@
 mod home;
 mod launchd;
+mod notify;
 mod wait;
 
 use serde::{Deserialize, Serialize};
@@ -48,8 +49,16 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_notification::init())
-        .invoke_handler(tauri::generate_handler![endpoint, start_daemon])
+        .setup(|app| {
+            notify::setup(app.handle());
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            endpoint,
+            start_daemon,
+            notify::notification_permission,
+            notify::notify
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
