@@ -25,11 +25,11 @@ From another terminal, after the same `export`:
 
 ## Codex notifications
 
-A session whose command starts with `codex`, from the app or from `attach --new -- codex`, runs it with `-c` options that turn on Codex's OSC 9 notifications for that session only: the daemon tells a finished Codex turn from a cancelled one by them. Codex typed into a plain shell session runs without them, so its finished turns are not shown.
+A session whose command starts with `codex`, from the app or from `attach --new -- codex`, runs it with `-c` options that turn on Codex's OSC 9 notifications for that session only: the daemon tells a finished Codex turn from a cancelled one by them. The options also make the terminal title the thread's name, which the app shows as the session's title. Codex typed into a shell, in a plain shell session or after the session's own Codex has exited, runs without them, so its finished turns are not shown and the session gets no title from it.
 
 ## Reopening sessions after a restart
 
-Sessions survive a daemon restart as records. While a Claude Code or Codex runs in a session, the daemon notes its conversation id (the agent's own session id, which `--resume` takes) and keeps it in `state.json`: for Claude Code it reads the file Claude Code keeps per process under `~/.claude/sessions`, for Codex it takes the newest conversation file under `~/.codex/sessions` for that session's folder, so it can occasionally pick another conversation. It also keeps the topic Claude Code sets as the terminal title, which the app shows as the session's title.
+Sessions survive a daemon restart as records. While a Claude Code or Codex runs in a session, the daemon notes its conversation id (the agent's own session id, which `--resume` takes) and keeps it in `state.json`: for Claude Code it reads the file Claude Code keeps per process under `~/.claude/sessions`, for Codex it takes the newest conversation file under `~/.codex/sessions` for that session's folder, so it can occasionally pick another conversation. It also keeps the title the agent sets as the terminal title (Claude Code's topic, Codex's thread name), which the app shows as the session's title.
 
 After the daemon restarts (a crash or a reboot), the app lists every earlier session with Reopen and Dismiss. Reopen starts `claude --resume <id>` or `codex resume <id>` in the session's folder; when no id was noted it falls back to `claude --continue` or `codex resume --last`, and a session that was not running an agent gets a plain shell. A session that left processes behind has to be cleaned up first (Kill shows their pids).
 

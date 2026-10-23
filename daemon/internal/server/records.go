@@ -56,15 +56,11 @@ func (c *conn) reopen(m protocol.Reopen) {
 	cwd, name, title := e.rec.Cwd, e.rec.Name, e.rec.Title
 	cmd := session.RestoreCommand(e.rec.Cmd, e.rec.Agent, e.rec.Conversation)
 	// A session with neither name nor title is titled by its cmd, which would
-	// show the conversation id; the agent's name is title enough. For claude
-	// it goes in as the title, as a name would hide the topic Claude Code
-	// gives the session later.
-	if agent, _, _ := strings.Cut(cmd, " "); name == "" && title == "" && cmd != "" {
-		if agent == "claude" {
-			title = agent
-		} else {
-			name = agent
-		}
+	// show the conversation id; the agent's name is title enough. It goes in
+	// as the title, as a name would hide the title the agent gives the
+	// session later.
+	if name == "" && title == "" && cmd != "" {
+		title, _, _ = strings.Cut(cmd, " ")
 	}
 	t.mu.Unlock()
 	c.startSession(cwd, cmd, name, title, m.Cols, m.Rows, e)

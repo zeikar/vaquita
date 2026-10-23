@@ -157,7 +157,7 @@ func TestCreateKeepsTheTypedCommandForCodex(t *testing.T) {
 	}
 	a := dialClient(t, srv)
 	sid := a.create("codex resume --last")
-	a.waitLive(sid, `stub:-c tui.notifications=["agent-turn-complete","approval-requested","plan-mode-prompt","async-question"] -c tui.notification_method="osc9" -c tui.notification_condition="always" resume --last`)
+	a.waitLive(sid, "stub:"+stubCodexOptions+" resume --last")
 	i := a.waitListed(sid, running)
 	if i.Cmd != "codex resume --last" {
 		t.Errorf("listed cmd %q, want what the user typed", i.Cmd)

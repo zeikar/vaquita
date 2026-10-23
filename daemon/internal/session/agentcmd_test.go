@@ -11,7 +11,8 @@ const (
 	optNotifications = `tui.notifications=["agent-turn-complete","approval-requested","plan-mode-prompt","async-question"]`
 	optMethod        = `tui.notification_method="osc9"`
 	optCondition     = `tui.notification_condition="always"`
-	codexOpts        = " -c '" + optNotifications + "' -c '" + optMethod + "' -c '" + optCondition + "'"
+	optTitle         = `tui.terminal_title=["thread-name"]`
+	codexOpts        = " -c '" + optNotifications + "' -c '" + optMethod + "' -c '" + optCondition + "' -c '" + optTitle + "'"
 )
 
 func TestAgentCommand(t *testing.T) {
@@ -34,6 +35,24 @@ func TestAgentCommand(t *testing.T) {
 	}
 }
 
+func TestCodexCommand(t *testing.T) {
+	for cmd, want := range map[string]bool{
+		"codex":                     true,
+		"  codex resume --last":     true,
+		"'codex' 'resume' '--last'": true,
+		"codex\necho done":          true,
+		"":                          false,
+		"claude":                    false,
+		"cd /tmp/repo && codex":     false,
+		"codexx":                    false,
+		"'codex":                    false,
+	} {
+		if got := codexCommand(cmd); got != want {
+			t.Errorf("codexCommand(%q) = %v, want %v", cmd, got, want)
+		}
+	}
+}
+
 func TestAgentCommandSurvivesTheShell(t *testing.T) {
 	got := AgentCommand("codex resume --last")
 	if !strings.HasPrefix(got, "codex ") {
@@ -44,7 +63,7 @@ func TestAgentCommandSurvivesTheShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"-c", optNotifications, "-c", optMethod, "-c", optCondition, "resume", "--last"}
+	want := []string{"-c", optNotifications, "-c", optMethod, "-c", optCondition, "-c", optTitle, "resume", "--last"}
 	if lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n"); !slices.Equal(lines, want) {
 		t.Errorf("shell argv = %q, want %q", lines, want)
 	}

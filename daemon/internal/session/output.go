@@ -84,18 +84,27 @@ type Output struct {
 
 	// title is the last non-empty window title (OSC 0 or 2) that may be the
 	// agent's, without the glyphs an agent puts before it, and titleChanged
-	// says it changed under claude-code since TakeTitleChange last handed it
-	// over. agentUp is set by a root report that leaves an agent running and
-	// cleared by the clear report an agent sends as it exits and by an
-	// interrupt. Once an app is known, a title set while no agent holds the
-	// terminal (see agentHolds) is the shell's, such as the one a zsh precmd
-	// sets after the agent has exited, and is dropped; so are those of an app
-	// other than claude-code: codex shows its folder behind a spinner frame
-	// redrawn about ten times a second. A report from another app drops a
-	// title claude-code set, which belongs to claude's conversation.
+	// says it changed under an app whose titles count (see titles) since
+	// TakeTitleChange last handed it over. agentUp is set by a root report
+	// that leaves an agent running and cleared by the clear report an agent
+	// sends as it exits and by an interrupt. Once an app is known, a title set
+	// while no agent holds the terminal (see agentHolds) is the shell's, such
+	// as the one a zsh precmd sets after the agent has exited, and is dropped;
+	// so are those of apps whose titles do not count. A report from another
+	// app than the one before drops the title, which belongs to that one's
+	// conversation, and titleDropped says so until TakeTitleChange hands it
+	// over.
+	//
+	// codexTitled is set when the session's command started codex with the
+	// session's options, which make its title the thread's name (see
+	// AgentCommand), and cleared when the first agent to be up stops, which
+	// is that codex, or a report comes from another reporter (see watch): a
+	// codex typed into the shell after it runs without them.
 	title        string
 	titleChanged bool
+	titleDropped bool
 	agentUp      bool
+	codexTitled  bool
 
 	// Now stamps the reports the projector sees; tests replace it.
 	Now func() time.Time
@@ -191,19 +200,31 @@ func (o *Output) TakeAppChange() bool {
 	return c
 }
 
-// claudeApp is the app Claude Code names in its reports.
-const claudeApp = "claude-code"
+// titles reports whether the reporting app's window titles name its
+// conversation: Claude Code's topic, or the thread's name of the codex the
+// session's options went to. Any other codex shows its folder behind a
+// spinner frame.
+func (o *Output) titles() bool {
+	switch o.app {
+	case "claude-code":
+		return true
+	case "codex":
+		return o.codexTitled
+	}
+	return false
+}
 
 // Title returns the window title kept by the rules on Output.title, "" if
 // none. Like App, it requires the session lock.
 func (o *Output) Title() string { return o.title }
 
-// TakeTitleChange reports whether Title changed under claude-code since the
-// last call. Like App, it requires the session lock.
-func (o *Output) TakeTitleChange() bool {
-	c := o.titleChanged
-	o.titleChanged = false
-	return c
+// TakeTitleChange reports whether Title changed under an app whose titles
+// count since the last call, and whether a report from another app dropped
+// the title the one before it had set. Like App, it requires the session lock.
+func (o *Output) TakeTitleChange() (changed, dropped bool) {
+	changed, dropped = o.titleChanged, o.titleDropped
+	o.titleChanged, o.titleDropped = false, false
+	return changed, dropped
 }
 
 // setTitle keeps title, already normalized, by the rules on Output.title. One
@@ -214,7 +235,7 @@ func (o *Output) setTitle(title string) {
 	case title == "":
 	case o.app == "":
 		o.title = title
-	case o.app == claudeApp && title != o.title && o.agentHolds():
+	case title != o.title && o.titles() && o.agentHolds():
 		o.title, o.titleChanged = title, true
 	}
 }
@@ -225,7 +246,7 @@ func (o *Output) setTitle(title string) {
 // its shell takes the terminal back, and may set a title, before the next
 // poll finds the reporter gone. Without a watch, as in unit tests, agentUp
 // alone decides. Like the poll, it costs a signal and an ioctl, never a wait,
-// and runs only for claude-code's titles.
+// and runs only for new titles of an app whose titles count.
 func (o *Output) agentHolds() bool {
 	if !o.agentUp {
 		return false
@@ -315,7 +336,16 @@ func (o *Output) inForeground() bool {
 func (o *Output) interrupt() {
 	o.records.PromptStart()
 	o.proj.Interrupt()
-	o.reporter, o.gone, o.agentUp = 0, false, false
+	o.reporter, o.gone = 0, false
+	o.agentDown()
+}
+
+// agentDown records that the agent is no longer up. The first agent to go
+// down was the codex the session's command started, if it did.
+func (o *Output) agentDown() {
+	if o.agentUp {
+		o.agentUp, o.codexTitled = false, false
+	}
 }
 
 // NextDeadline reports when Tick next has something to do.
@@ -331,8 +361,11 @@ func (o *Output) NextDeadline() (time.Time, bool) {
 // report, or forgets it. A working or blocked report replaces the reporter; an
 // idle, done or error one only arms the watch when there is none, so an agent
 // killed before its first turn is found too. The leader's group is recorded
-// as gone when the leader is a shell, for the next poll to find.
+// as gone when the leader is a shell, for the next poll to find. A reporter in
+// another group than the one before is another invocation, so it ends the
+// titles of the codex the session's command started, which was the first.
 func (o *Output) watch(state string, now time.Time) {
+	prev := o.reporter
 	switch state {
 	case status.StateClear:
 		o.reporter, o.release = 0, false
@@ -348,6 +381,9 @@ func (o *Output) watch(state string, now time.Time) {
 		return
 	}
 	if pgid, err := o.Foreground(); err == nil && pgid > 1 {
+		if prev != 0 && pgid != prev {
+			o.codexTitled = false
+		}
 		o.reporter, o.nextPoll, o.rearm = pgid, now.Add(fgPollGap), true
 		o.gone = pgid == o.leader && o.LeaderIsShell != nil && o.LeaderIsShell()
 	}
@@ -377,12 +413,21 @@ func (s statusSink) OSC(num int, payload []byte, oversized bool) {
 			// complete its parent.
 			if r.ID == "" {
 				if r.App != "" && r.App != o.app {
-					if o.app == claudeApp {
-						o.title = ""
+					if o.app != "" {
+						o.title, o.titleDropped = "", true
 					}
 					o.app, o.appChanged = r.App, true
+					// A title kept from before any app reported is not this
+					// one's either when its titles do not count.
+					if !o.titles() {
+						o.title = ""
+					}
 				}
-				o.agentUp = r.State != status.StateClear
+				if r.State == status.StateClear {
+					o.agentDown()
+				} else {
+					o.agentUp = true
+				}
 				now := o.Now()
 				o.watch(r.State, now)
 				o.proj.Report(r, now)

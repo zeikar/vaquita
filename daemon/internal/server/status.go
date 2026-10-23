@@ -20,8 +20,8 @@ import (
 //
 // The drain is also where the agent's conversation id is read, on a goroutine
 // of its own as well, so that no file is touched under a lock or on the
-// reader (see readConversation), and where Claude Code's topic becomes the
-// title of the session's record (see retitleLocked).
+// reader (see readConversation), and where the title the agent shows becomes
+// the title of the session's record (see retitleLocked).
 
 // statusInfo is what a row shows for v, nil for nothing. The status package's
 // view states are the protocol's.
@@ -94,7 +94,7 @@ type drained struct {
 // drainStatusLocked raises the notifications whose deadline has passed, takes
 // e's view and its notifications for the caller to send, and re-arms e's
 // status timer. When either, or the reporting app, changed, it asks for a
-// read of the agent's conversation id. When the app or Claude Code's title
+// read of the agent's conversation id. When the app or the agent's title
 // changed, it updates the record's title, which the caller saves and lists
 // before it sends the rest (see drainStatus). It requires t.mu and the session
 // lock. After the exit it takes nothing, so no status follows a session's
@@ -121,7 +121,7 @@ func (t *table) drainStatusLocked(e *entry) drained {
 	}
 	changed, notes := out.TakeStatus()
 	appChanged := out.TakeAppChange()
-	titleChanged := out.TakeTitleChange()
+	titleChanged, titleDropped := out.TakeTitleChange()
 	// Asked before the status is queued: waitConversationRead, in the
 	// tests, relies on that order.
 	if (changed || len(notes) > 0 || appChanged) && agentOf(out.App()) != "" {
@@ -130,7 +130,7 @@ func (t *table) drainStatusLocked(e *entry) drained {
 	e.armStatusLocked(now)
 	d := drained{changed: changed, notes: notes}
 	d.view, d.unread = out.View()
-	d.retitled = (appChanged || titleChanged) && e.retitleLocked(out)
+	d.retitled = (appChanged || titleChanged) && e.retitleLocked(out, titleDropped)
 	return d
 }
 
@@ -138,18 +138,25 @@ func (t *table) drainStatusLocked(e *entry) drained {
 const genericTitle = "Claude Code"
 
 // retitleLocked sets the title of e's record from out, the session's output,
-// and reports whether that changed it. While claude is the agent, its window
-// title is the conversation's topic, but its generic title keeps the topic
-// already there: a reopened session shows its record's until Claude Code
-// gives one. Any other agent clears it, as a topic belongs to claude's
-// conversation. It requires t.mu and the session lock.
-func (e *entry) retitleLocked(out *session.Output) bool {
+// and reports whether that changed it. While claude or codex is the agent,
+// its window title as out keeps it is the conversation's topic or thread name
+// (see session.Output, which keeps codex's only from the codex the session's
+// options went to), except for the generic title Claude Code shows before it
+// has a topic. What is not a title keeps the one already there, so a
+// reopened session shows its record's until the agent gives one. When the
+// previous agent's title was dropped, so is the record's, which belongs to
+// that agent's conversation, and an app whose titles are not read clears it.
+// It requires t.mu and the session lock.
+func (e *entry) retitleLocked(out *session.Output, dropped bool) bool {
 	title := e.rec.Title
-	switch {
-	case agentOf(out.App()) != "claude":
+	if dropped {
 		title = ""
-	case out.Title() != "" && out.Title() != genericTitle:
-		title = out.Title()
+	}
+	switch t := out.Title(); {
+	case agentOf(out.App()) == "":
+		title = ""
+	case t != "" && t != genericTitle:
+		title = t
 	}
 	if title == e.rec.Title {
 		return false

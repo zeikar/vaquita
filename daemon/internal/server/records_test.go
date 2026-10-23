@@ -94,7 +94,7 @@ func TestRecordWithOrphansIsCleanedByKill(t *testing.T) {
 
 // stubCodexOptions are the options AgentCommand gives codex, as the stub
 // prints them.
-const stubCodexOptions = `-c tui.notifications=["agent-turn-complete","approval-requested","plan-mode-prompt","async-question"] -c tui.notification_method="osc9" -c tui.notification_condition="always"`
+const stubCodexOptions = `-c tui.notifications=["agent-turn-complete","approval-requested","plan-mode-prompt","async-question"] -c tui.notification_method="osc9" -c tui.notification_condition="always" -c tui.terminal_title=["thread-name"]`
 
 // stubAgents defines shell functions for claude and codex in $HOME/.profile,
 // which a login shell sources before the command, so that a reopen never
@@ -202,17 +202,17 @@ func TestReopenRecord(t *testing.T) {
 // The agent is resumed by the recorded conversation id, or by its continue
 // without one, through AgentCommand; the new record keeps the restored
 // command and the agent and id. An agent session with neither name nor title
-// is titled after the agent, so that its row shows no id: claude's by its
-// title, which its topic replaces later, codex's by its name.
+// gets the agent's name as its title, so that its row shows no id until the
+// agent gives the session a title of its own.
 func TestReopenMapsAgentCommands(t *testing.T) {
 	cases := []struct {
 		rec                   state.SessionRecord
 		out, cmd, name, title string
 	}{
 		{goneRecord(t, 1, t.TempDir(), "claude --model x"), "stub:claude:--continue", "claude --continue", "x", ""},
-		{goneRecord(t, 2, t.TempDir(), "codex"), "stub:codex:" + stubCodexOptions + " resume --last", "codex resume --last", "codex", ""},
+		{goneRecord(t, 2, t.TempDir(), "codex"), "stub:codex:" + stubCodexOptions + " resume --last", "codex resume --last", "", "codex"},
 		{goneRecord(t, 3, t.TempDir(), ""), "stub:claude:--resume " + convA, "claude --resume '" + convA + "'", "", "claude"},
-		{goneRecord(t, 4, t.TempDir(), "codex"), "stub:codex:" + stubCodexOptions + " resume " + convB, "codex resume '" + convB + "'", "codex", ""},
+		{goneRecord(t, 4, t.TempDir(), "codex"), "stub:codex:" + stubCodexOptions + " resume " + convB, "codex resume '" + convB + "'", "", "codex"},
 		// A plain shell prints nothing to wait for.
 		{goneRecord(t, 5, t.TempDir(), "old"), "", "", "", ""},
 	}

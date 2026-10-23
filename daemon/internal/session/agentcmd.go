@@ -7,13 +7,16 @@ import (
 )
 
 // codexOptions make Codex emit OSC 9 notifications for turn completion,
-// approval requests, plan-mode prompts and questions.
+// approval requests, plan-mode prompts and questions, and set the terminal
+// title to the thread's name alone, which titles the session.
 // vaquita judges turn completion from those notifications, and decides itself
-// whether to show one, so the condition is "always".
+// whether to show one, so the condition is "always". Codex's default title is
+// a spinner and the folder's name.
 var codexOptions = []string{
 	`tui.notifications=["agent-turn-complete","approval-requested","plan-mode-prompt","async-question"]`,
 	`tui.notification_method="osc9"`,
 	`tui.notification_condition="always"`,
+	`tui.terminal_title=["thread-name"]`,
 }
 
 // AgentCommand adds per-session options to a command that starts Codex. The
@@ -22,16 +25,24 @@ var codexOptions = []string{
 // `vaquitad attach --new -- codex` sends it. Other commands come back
 // unchanged. Callers keep the typed command for display and the record.
 func AgentCommand(cmd string) string {
-	rest, end := firstWord(cmd)
-	if word := rest[:end]; word != "codex" && word != "'codex'" {
+	if !codexCommand(cmd) {
 		return cmd
 	}
+	rest, end := firstWord(cmd)
 	var b strings.Builder
 	b.WriteString(rest[:end])
 	for _, o := range codexOptions {
 		b.WriteString(" -c " + shellQuote(o))
 	}
 	return b.String() + rest[end:]
+}
+
+// codexCommand reports whether cmd starts Codex by the rule AgentCommand adds
+// the session's options by.
+func codexCommand(cmd string) bool {
+	rest, end := firstWord(cmd)
+	word := rest[:end]
+	return word == "codex" || word == "'codex'"
 }
 
 // firstWord returns cmd without its leading blanks and the length of the

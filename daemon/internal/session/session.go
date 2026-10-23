@@ -115,7 +115,9 @@ type Session struct {
 
 // Start runs cfg.Shell on a new PTY of cfg.Cols x cfg.Rows. With a Cmd the
 // shell runs it first and then replaces itself with an interactive shell,
-// so the session outlives the command.
+// so the session outlives the command. A Cmd that starts codex is taken to
+// have been through AgentCommand, whose options make the titles of that codex
+// name its thread (see Output.codexTitled).
 func Start(cfg Config) (*Session, error) {
 	ws, err := winsize(cfg.Cols, cfg.Rows)
 	if err != nil {
@@ -187,6 +189,7 @@ func Start(cfg Config) (*Session, error) {
 		inWake:     make(chan struct{}, 1),
 	}
 	s.out.leader = s.pid
+	s.out.codexTitled = codexCommand(cfg.Cmd)
 	s.out.LeaderIsShell = leaderIsShell(s.pid, cfg.Shell)
 	s.out.Foreground = s.foreground
 	s.out.GroupAlive = groupAlive

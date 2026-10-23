@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,11 +17,15 @@ import (
 // nth, then reads a line from the terminal before it goes on. A step is shell
 // code for inside single quotes. The marks are computed, so that the command
 // itself never matches one.
-func agentJob(steps ...string) string {
+func agentJob(steps ...string) string { return agentJobFrom(1, steps...) }
+
+// agentJobFrom is agentJob with marks numbered from first, for a job that
+// follows another in the same session.
+func agentJobFrom(first int, steps ...string) string {
 	var b strings.Builder
 	b.WriteString(`set -m; sh -c '`)
 	for i, s := range steps {
-		b.WriteString(s + `; echo mark-$((` + strconv.Itoa(i) + `+1)); read l; `)
+		b.WriteString(s + `; echo mark-$((` + strconv.Itoa(first+i-1) + `+1)); read l; `)
 	}
 	b.WriteString(`'`)
 	return b.String()
@@ -48,6 +53,12 @@ func (tc *tclient) step(sid uint32, n int) {
 	if n > 1 {
 		tc.typeLine(sid, "")
 	}
+	tc.stepDone(sid, n)
+}
+
+// stepDone is step without the typing.
+func (tc *tclient) stepDone(sid uint32, n int) {
+	tc.t.Helper()
 	tc.waitLive(sid, "mark-"+strconv.Itoa(n))
 	if err := tc.c.Seen(sid); err != nil {
 		tc.t.Fatal(err)
@@ -95,13 +106,96 @@ func TestClaudeTopicTitlesTheSession(t *testing.T) {
 	}
 }
 
-// Codex's titles, its folder behind a spinner frame, title nothing and save
-// nothing.
-func TestCodexTitlesIgnored(t *testing.T) {
+// A Claude Code topic that happens to be the name of the session's folder is
+// a topic all the same.
+func TestClaudeTopicNamedLikeTheFolder(t *testing.T) {
 	srv := startSessionServer(t, Options{})
+	cwd := filepath.Join(t.TempDir(), "my-folder")
+	if err := os.Mkdir(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	a := dialClient(t, srv)
-	frames := `for f in ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏; do ` + jobTitle("0", "$f my-folder") + `; done`
-	sid := a.create(agentJob(jobReport("working", "codex"), frames))
+	sid := a.createIn(cwd, agentJob(jobReport("idle", "claude-code")+"; "+jobTitle("0", "my-folder")))
+	a.step(sid, 1)
+	checkTitle(t, srv, a, sid, "my-folder")
+}
+
+// stubCodexJob defines codex in $HOME/.profile as an agentJob of steps, so
+// that a session created with the command codex runs it with the options
+// AgentCommand adds. Call it after startSessionServer, which points HOME at a
+// temporary directory.
+func stubCodexJob(t *testing.T, steps ...string) {
+	t.Helper()
+	stub := "codex() { " + agentJob(steps...) + "; }\n"
+	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), ".profile"), []byte(stub), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Codex's thread name, which the session's options make its title, titles
+// the session. Once that codex has exited, a codex typed into the shell after
+// it runs without them and shows its folder, here one it was started in after
+// a cd, behind spinner frames: that changes no title and saves nothing.
+func TestCodexThreadNameTitlesTheSession(t *testing.T) {
+	srv := startSessionServer(t, Options{})
+	stubCodexJob(t, jobReport("working", "codex"), jobTitle("0", "Reply pong"), jobReport("clear", ""))
+	other := filepath.Join(t.TempDir(), "other")
+	if err := os.Mkdir(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := dialClient(t, srv)
+	sid := a.create("codex")
+	a.step(sid, 1)
+	checkTitle(t, srv, a, sid, "")
+	a.step(sid, 2)
+	checkTitle(t, srv, a, sid, "Reply pong")
+	a.step(sid, 3)
+	checkTitle(t, srv, a, sid, "Reply pong")
+
+	// The line ends the stub, and the shell that replaces it reads the next.
+	a.typeLine(sid, "")
+	frames := `for f in ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏; do ` + jobTitle("0", "$f other") + `; done; ` + jobTitle("0", "other")
+	a.typeLine(sid, "cd '"+other+"' && "+agentJobFrom(4, jobReport("working", "codex"), frames))
+	a.stepDone(sid, 4)
+	waitConversationRead(t, srv, sid)
+	path := state.StatePath(srv.opts.Home)
+	saved, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a.step(sid, 5)
+	checkTitle(t, srv, a, sid, "Reply pong")
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) || !bytes.Equal(now, saved) {
+		t.Errorf("state.json was saved again after the second codex's folder titles: %s", now)
+	}
+}
+
+// A codex typed into a plain shell session runs without the session's
+// options, so its title is the name of its folder, here one it was started
+// in after a cd, behind spinner frames: it titles nothing and saves nothing.
+func TestCodexInPlainShellGetsNoTitle(t *testing.T) {
+	srv := startSessionServer(t, Options{})
+	other := filepath.Join(t.TempDir(), "other")
+	if err := os.Mkdir(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := dialClient(t, srv)
+	sid := a.create("")
+	frames := `for f in ⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏; do ` + jobTitle("0", "$f other") + `; done; ` + jobTitle("0", "other")
+	a.typeLine(sid, "cd '"+other+"' && "+agentJob(jobReport("working", "codex"), frames))
 	a.step(sid, 1)
 	waitRecord(t, srv, sid, "codex as the agent", func(r state.SessionRecord) bool { return r.Agent == "codex" })
 	waitConversationRead(t, srv, sid)
@@ -126,25 +220,32 @@ func TestCodexTitlesIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !after.ModTime().Equal(before.ModTime()) || !bytes.Equal(now, saved) {
-		t.Errorf("state.json was saved again after codex's titles: %s", now)
+		t.Errorf("state.json was saved again after codex's folder titles: %s", now)
 	}
 }
 
-// A topic belongs to claude: codex reporting in its place clears it, and a
-// claude started after codex does not bring it back.
+// A title belongs to the agent that set it: another agent reporting in its
+// place clears it, and claude's generic title, which keeps a title of its own,
+// does not keep codex's.
 func TestAgentChangeClearsTitle(t *testing.T) {
 	srv := startSessionServer(t, Options{})
-	a := dialClient(t, srv)
-	sid := a.create(agentJob(
-		jobReport("idle", "claude-code")+"; "+jobTitle("0", "Pong reply"),
+	// Run as codex, whose titles count only with the session's options.
+	stubCodexJob(t,
+		jobReport("working", "codex")+"; "+jobTitle("0", "Reply pong"),
+		// One printf, so that both reach one drain.
+		`printf "\033]7501;state=idle:app=claude-code\007\033]0;Claude Code\007"`,
+		jobTitle("0", "Pong reply"),
 		jobReport("working", "codex"),
-		jobTitle("0", "Claude Code")+"; "+jobReport("idle", "claude-code"),
-	))
+	)
+	a := dialClient(t, srv)
+	sid := a.create("codex")
 	a.step(sid, 1)
-	checkTitle(t, srv, a, sid, "Pong reply")
+	checkTitle(t, srv, a, sid, "Reply pong")
 	a.step(sid, 2)
 	checkTitle(t, srv, a, sid, "")
 	a.step(sid, 3)
+	checkTitle(t, srv, a, sid, "Pong reply")
+	a.step(sid, 4)
 	checkTitle(t, srv, a, sid, "")
 }
 

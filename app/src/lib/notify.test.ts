@@ -18,7 +18,7 @@ describe('notificationFor', () => {
 		});
 	});
 
-	it("names a row by its name, else Claude's topic, else its cmd, else shell", () => {
+	it("names a row by its name, else its agent's title, else its cmd, else shell", () => {
 		const m: Notify = { t: 'notify', sid: 3, kind: 'done' };
 		expect(notificationFor(info('build', 'claude', 'Fix tests'), m).title).toBe('build done');
 		expect(notificationFor(info('', 'claude', 'Fix tests'), m).title).toBe('Fix tests done');
