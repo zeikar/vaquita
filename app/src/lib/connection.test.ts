@@ -40,7 +40,7 @@ function setup() {
 	const closed: CloseReason[] = [];
 	const h = {
 		ready: vi.fn(), sessions: vi.fn(), replay: vi.fn(), live: vi.fn(), exit: vi.fn(), error: vi.fn(), frame: vi.fn(),
-		status: vi.fn(), notify: vi.fn(),
+		status: vi.fn(), notify: vi.fn(), repos: vi.fn(),
 		closed: (r: CloseReason) => closed.push(r),
 	} satisfies ConnectionHandlers;
 	const conn = new DaemonConnection({ url: 'ws://127.0.0.1:1', token: 'tok' }, h, () => socket);
@@ -123,6 +123,33 @@ describe('DaemonConnection', () => {
 		expect(h.status).toHaveBeenCalledWith({ t: 'status', sid: 1, status: null, unread: false });
 		socket.receiveText('{"t":"notify","kind":"missed","count":2}');
 		expect(h.notify).toHaveBeenCalledWith({ t: 'notify', kind: 'missed', count: 2 });
+	});
+
+	it('dispatches repos after ready', () => {
+		const { socket, h } = ready();
+		socket.receiveText('{"t":"repos","list":["/tmp/repo"]}');
+		expect(h.repos).toHaveBeenCalledWith(['/tmp/repo']);
+	});
+
+	it('sends the repo, reopen and dismiss messages only when ready', () => {
+		const a = setup();
+		a.socket.open();
+		a.conn.reposAdd('/tmp/repo');
+		a.conn.reposRemove('/tmp/repo');
+		a.conn.reopen(7, 120, 40);
+		a.conn.dismiss(7);
+		expect(a.socket.sent).toHaveLength(1);
+		const b = ready();
+		b.conn.reposAdd('/tmp/repo');
+		b.conn.reposRemove('/tmp/repo');
+		b.conn.reopen(7, 120, 40);
+		b.conn.dismiss(7);
+		expect(b.socket.sent).toEqual([
+			'{"t":"repos.add","path":"/tmp/repo"}',
+			'{"t":"repos.remove","path":"/tmp/repo"}',
+			'{"t":"reopen","sid":7,"cols":120,"rows":40}',
+			'{"t":"dismiss","sid":7}',
+		]);
 	});
 
 	it('sends seen only when ready', () => {

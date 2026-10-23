@@ -101,6 +101,8 @@ describe('parseMessage', () => {
 	it.each([
 		['status', { t: 'status', sid: 3, status: { state: 'input', kind: 'permission', msg: 'Run make?' }, unread: false }],
 		['notify', { t: 'notify', sid: 3, kind: 'error', msg: 'build failed' }],
+		['repos list', { t: 'repos', list: ['/tmp/repo', '/tmp/repo-feature'] }],
+		['empty repos list', { t: 'repos', list: [] }],
 		['missed summary', { t: 'notify', kind: 'missed', count: 2 }],
 	])('round-trips a %s', (_, m) => {
 		expect(parseMessage(JSON.stringify(m))).toEqual(m);

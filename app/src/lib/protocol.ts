@@ -15,6 +15,8 @@ export const CODE_NO_SESSION = 'no-session';
 export const CODE_INPUT_OVERFLOW = 'input-overflow';
 export const CODE_BAD_REQUEST = 'bad-request';
 export const CODE_ORPHANS = 'orphans';
+export const CODE_BAD_PATH = 'bad-path';
+export const CODE_CONVERSATION_LIVE = 'conversation-live';
 
 export const STATE_RUNNING = 'running';
 export const STATE_EXITED = 'exited';
@@ -62,7 +64,39 @@ export interface Seen {
 	t: 'seen';
 	sid: number;
 }
-export type ClientMessage = ClientHello | Create | Subscribe | Unsubscribe | Ack | Resize | Kill | Seen;
+export interface ReposAdd {
+	t: 'repos.add';
+	path: string;
+}
+export interface ReposRemove {
+	t: 'repos.remove';
+	path: string;
+}
+// Starts a new session from the restorable record sid, like a Create; the
+// connection that sent it is subscribed to the new session.
+export interface Reopen {
+	t: 'reopen';
+	sid: number;
+	cols: number;
+	rows: number;
+}
+export interface Dismiss {
+	t: 'dismiss';
+	sid: number;
+}
+export type ClientMessage =
+	| ClientHello
+	| Create
+	| Subscribe
+	| Unsubscribe
+	| Ack
+	| Resize
+	| Kill
+	| Seen
+	| ReposAdd
+	| ReposRemove
+	| Reopen
+	| Dismiss;
 
 // Daemon to client.
 export interface DaemonHello {
@@ -84,6 +118,9 @@ export interface SessionInfo {
 	// Left out when the row shows nothing, which is all an older daemon sends.
 	status?: StatusInfo;
 	unread?: boolean;
+	// A record from an earlier daemon run: no PTY here and no orphans, so
+	// Reopen and Dismiss accept it. Left out otherwise.
+	restorable?: boolean;
 }
 // What a session's row shows. kind (permission or question) refines input
 // and auth; msg is the text to show.
@@ -140,9 +177,23 @@ export interface Notify {
 	msg?: string;
 	count?: number;
 }
-export type DaemonMessage = DaemonHello | Sessions | Replay | Live | Exit | ErrorMessage | Status | Notify;
+// The registered repo list; never null on the wire.
+export interface Repos {
+	t: 'repos';
+	list: string[];
+}
+export type DaemonMessage =
+	| DaemonHello
+	| Sessions
+	| Replay
+	| Live
+	| Exit
+	| ErrorMessage
+	| Status
+	| Notify
+	| Repos;
 
-const DAEMON_TYPES = new Set(['hello', 'sessions', 'replay', 'live', 'exit', 'error', 'status', 'notify']);
+const DAEMON_TYPES = new Set(['hello', 'sessions', 'replay', 'live', 'exit', 'error', 'status', 'notify', 'repos']);
 
 export class UnknownMessageError extends Error {}
 

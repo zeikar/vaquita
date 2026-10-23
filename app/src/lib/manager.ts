@@ -249,6 +249,7 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 				error: current((m) => this.onError(m)),
 				status: current((m) => this.onStatus(m)),
 				notify: current((m) => this.onNotify(m)),
+				repos: () => {},
 				frame: current((f) => this.entries.get(f.sid)?.core?.frame(f)),
 				closed: current((reason) => this.onClosed(reason)),
 			});

@@ -49,6 +49,7 @@ export interface ConnectionHandlers {
 	error(m: ErrorMessage): void;
 	status(m: Status): void;
 	notify(m: Notify): void;
+	repos(list: string[]): void;
 	frame(f: Frame): void;
 	closed(reason: CloseReason): void;
 }
@@ -116,6 +117,22 @@ export class DaemonConnection {
 
 	seen(sid: number): void {
 		this.sendReady({ t: 'seen', sid });
+	}
+
+	reposAdd(path: string): void {
+		this.sendReady({ t: 'repos.add', path });
+	}
+
+	reposRemove(path: string): void {
+		this.sendReady({ t: 'repos.remove', path });
+	}
+
+	reopen(sid: number, cols: number, rows: number): void {
+		this.sendReady({ t: 'reopen', sid, cols, rows });
+	}
+
+	dismiss(sid: number): void {
+		this.sendReady({ t: 'dismiss', sid });
 	}
 
 	input(sid: number, gen: number, bytes: Uint8Array): void {
@@ -226,6 +243,8 @@ export class DaemonConnection {
 				return this.handlers.status(m);
 			case 'notify':
 				return this.handlers.notify(m);
+			case 'repos':
+				return this.handlers.repos(m.list);
 			case 'hello':
 				console.warn('ignoring a second hello');
 		}

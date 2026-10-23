@@ -130,6 +130,7 @@ async function requireIdleDaemon(): Promise<void> {
 			error: () => {},
 			status: () => {},
 			notify: () => {},
+			repos: () => {},
 			frame: () => {},
 			closed: (r: CloseReason) => reject(new Error(`daemon check failed: ${JSON.stringify(r)}`)),
 		});
