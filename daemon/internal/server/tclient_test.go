@@ -250,6 +250,27 @@ func (tc *tclient) createIn(cwd, cmd string) uint32 {
 	return sid
 }
 
+// reopen reopens the record sid at cols x rows and returns the new session's
+// sid, which the reopener learns from its first replay.
+func (tc *tclient) reopen(sid uint32, cols, rows int) uint32 {
+	tc.t.Helper()
+	before := maps.Clone(tc.streams)
+	if err := tc.c.Reopen(sid, cols, rows); err != nil {
+		tc.t.Fatal(err)
+	}
+	var newSID uint32
+	tc.waitFor("replay of the reopened session", func() bool {
+		for id, st := range tc.streams {
+			if before[id] == nil && len(st.replays) > 0 {
+				newSID = id
+				return true
+			}
+		}
+		return false
+	})
+	return newSID
+}
+
 // subscribe subscribes to sid and waits for the live that ends the replay.
 func (tc *tclient) subscribe(sid uint32) protocol.Live {
 	tc.t.Helper()

@@ -2,6 +2,7 @@ package server
 
 import (
 	"log/slog"
+	"strings"
 
 	"github.com/zeikar/vaquita/daemon/internal/protocol"
 	"github.com/zeikar/vaquita/daemon/internal/session"
@@ -20,6 +21,75 @@ func (t *table) rescanRecord(e *entry) (state.SessionRecord, error) {
 	rec := e.rec
 	t.mu.Unlock()
 	return rec, rec.Rescan(rescanPIDs)
+}
+
+// reopen starts a new session in place of a restorable record, in its cwd and
+// with its name (the agent's, if it has none), running the agent resumed by
+// the conversation id the record holds, by the agent's continue without one,
+// or a plain shell when the record names no agent. The record is taken as it
+// stands, with no rescan: a PTY session found empty gains no members except
+// by pid reuse, which the rescan rule counts as gone anyway. A record with
+// orphans is refused, and so is one whose conversation is open in a running
+// session or is being reopened from another record, so that one conversation
+// never runs twice.
+func (c *conn) reopen(m protocol.Reopen) {
+	t := c.srv.table
+	t.mu.Lock()
+	e := t.entries[m.SID]
+	var refusal protocol.Error
+	switch {
+	case e == nil:
+		refusal = noSession(m.SID)
+	case e.sess != nil || e.reopening:
+		refusal = badRequest(m.SID)
+	case len(e.rec.Orphans) > 0:
+		refusal = protocol.Error{T: protocol.TError, Code: protocol.CodeOrphans, SID: m.SID, PIDs: e.rec.Orphans}
+	case t.conversationLiveLocked(e):
+		refusal = protocol.Error{T: protocol.TError, Code: protocol.CodeConversationLive, SID: m.SID}
+	}
+	if refusal.Code != "" {
+		t.mu.Unlock()
+		c.send(refusal)
+		return
+	}
+	e.reopening = true
+	cwd, name := e.rec.Cwd, e.rec.Name
+	cmd := session.RestoreCommand(e.rec.Cmd, e.rec.Agent, e.rec.Conversation)
+	// An unnamed session is titled by its cmd, which would show the
+	// conversation id; the agent's name is title enough.
+	if name == "" && cmd != "" {
+		name, _, _ = strings.Cut(cmd, " ")
+	}
+	t.mu.Unlock()
+	c.startSession(cwd, cmd, name, m.Cols, m.Rows, e)
+}
+
+// conversationLiveLocked reports whether e's conversation id, if it has one,
+// is also that of a running session or of a record being reopened, whose
+// session is starting and not yet in the table. It requires t.mu, and takes
+// one session lock at a time, which keeps the lock order.
+func (t *table) conversationLiveLocked(e *entry) bool {
+	id := e.rec.Conversation
+	if id == "" {
+		return false
+	}
+	for _, o := range t.entries {
+		if o == e || o.rec.Conversation != id {
+			continue
+		}
+		if o.reopening {
+			return true
+		}
+		if o.sess != nil {
+			o.sess.Lock()
+			running := !o.exited
+			o.sess.Unlock()
+			if running {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // dismiss removes the record of a session from an earlier daemon run, once a

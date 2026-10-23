@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zeikar/vaquita/daemon/internal/convid"
 	"github.com/zeikar/vaquita/daemon/internal/protocol"
 	"github.com/zeikar/vaquita/daemon/internal/session"
 	"github.com/zeikar/vaquita/daemon/internal/state"
@@ -302,11 +303,21 @@ func badRequest(sid uint32) protocol.Error {
 	return protocol.Error{T: protocol.TError, Code: protocol.CodeBadRequest, SID: sid}
 }
 
-// create starts a session with c already subscribed. The subscription exists
-// before the shell does and starts at offset 0, so everything the program
-// writes goes to c live: an agent sends terminal queries within milliseconds
-// of starting, and only live output is answered.
 func (c *conn) create(m protocol.Create) {
+	c.startSession(m.Cwd, m.Cmd, m.Name, m.Cols, m.Rows, nil)
+}
+
+// startSession starts a session with c already subscribed. The subscription
+// exists before the shell does and starts at offset 0, so everything the
+// program writes goes to c live: an agent sends terminal queries within
+// milliseconds of starting, and only live output is answered.
+//
+// With old, the record a reopen is starting from, the new session replaces it
+// in the table: in one step, so that one save and one broadcast show the
+// swap. The new record carries old's agent and conversation id over, so a
+// restart before the agent has reported resumes the same conversation, and
+// keeps the restored command as its cmd, which a later reopen maps again.
+func (c *conn) startSession(cwd, cmd, name string, cols, rows int, old *entry) {
 	t := c.srv.table
 	e := &entry{sid: t.allocSID(), inc: newInc(), listed: make(chan struct{})}
 	// Before the shell starts, so that output() always finds it.
@@ -314,36 +325,52 @@ func (c *conn) create(m protocol.Create) {
 	sub := newSubscriber(c, e)
 	e.subs = []*subscriber{sub}
 	e.setWriter(sub)
-	// Only the shell gets the added options; the record keeps what the user typed.
+	// Only the shell gets the added options; the record keeps cmd without them.
 	s, err := session.Start(session.Config{
 		SID:      int(e.sid),
 		Shell:    c.srv.opts.Shell,
-		Cwd:      m.Cwd,
-		Cmd:      session.AgentCommand(m.Cmd),
-		Name:     m.Name,
-		Cols:     m.Cols,
-		Rows:     m.Rows,
+		Cwd:      cwd,
+		Cmd:      session.AgentCommand(cmd),
+		Name:     name,
+		Cols:     cols,
+		Rows:     rows,
 		OnOutput: e.output,
 		OnExit:   func(code int) { t.exit(e, code) },
 	})
 	if err != nil {
-		slog.Warn("create session", "remote", c.remote, "sid", e.sid, "err", err)
-		c.send(protocol.Error{T: protocol.TError, Code: protocol.CodeBadRequest})
+		if old == nil {
+			slog.Warn("create session", "remote", c.remote, "sid", e.sid, "err", err)
+			c.send(protocol.Error{T: protocol.TError, Code: protocol.CodeBadRequest})
+			return
+		}
+		slog.Warn("reopen session", "remote", c.remote, "record", old.sid, "err", err)
+		t.mu.Lock()
+		old.reopening = false
+		t.mu.Unlock()
+		c.send(badRequest(old.sid))
 		return
 	}
 	e.sess, e.pid = s, s.PID()
-	e.rec = state.SessionRecord{SID: int(e.sid), PID: e.pid, Started: s.Started(), Cwd: m.Cwd, Cmd: m.Cmd, Name: m.Name}
+	e.rec = state.SessionRecord{SID: int(e.sid), PID: e.pid, Started: s.Started(), Cwd: cwd, Cmd: cmd, Name: name}
 	c.addSub(sub)
 
 	// Listed only once started: other connections can find the entry once
-	// t.mu is released, and a kill from this one is read only after create
-	// returns, so a close requested right away always finds a started
-	// session. listed is closed first, so that output from then on wakes
-	// whoever subscribes. exit waits for it holding no lock, so closing it
-	// under t.mu cannot deadlock.
+	// t.mu is released, and a kill from this one is read only after
+	// startSession returns, so a close requested right away always finds a
+	// started session. listed is closed first, so that output from then on
+	// wakes whoever subscribes. exit waits for it holding no lock, so closing
+	// it under t.mu cannot deadlock.
 	t.mu.Lock()
 	t.entries[e.sid] = e
 	close(e.listed)
+	byID := false
+	if old != nil {
+		e.rec.Agent, e.rec.Conversation = old.rec.Agent, old.rec.Conversation
+		byID = convid.ValidID(e.rec.Conversation)
+		if t.entries[old.sid] == old {
+			delete(t.entries, old.sid)
+		}
+	}
 	t.saveLocked()
 	t.broadcastLocked()
 	// output() asked for no drain before listed was closed, so the status
@@ -352,7 +379,11 @@ func (c *conn) create(m protocol.Create) {
 	t.drainStatusLocked(e)
 	s.Unlock()
 	t.mu.Unlock()
-	slog.Info("session created", "sid", e.sid, "pid", e.pid, "cwd", m.Cwd, "remote", c.remote)
+	if old != nil {
+		slog.Info("session reopened", "sid", e.sid, "record", old.sid, "pid", e.pid, "cwd", cwd, "by_id", byID, "remote", c.remote)
+	} else {
+		slog.Info("session created", "sid", e.sid, "pid", e.pid, "cwd", cwd, "remote", c.remote)
+	}
 	c.wakeWriter()
 }
 

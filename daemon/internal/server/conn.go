@@ -184,6 +184,8 @@ func (c *conn) handle(m any) {
 		c.resize(m)
 	case protocol.Kill:
 		c.kill(m.SID)
+	case protocol.Reopen:
+		c.reopen(m)
 	case protocol.Dismiss:
 		c.dismiss(m.SID)
 	case protocol.Seen:
