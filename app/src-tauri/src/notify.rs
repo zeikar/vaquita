@@ -7,7 +7,7 @@
 //! so the delegate only holds the thread-safe AppHandle.
 
 use std::ptr::NonNull;
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::time::Duration;
 
 use block2::{DynBlock, RcBlock};
@@ -30,6 +30,11 @@ pub struct Target {
     sid: u32,
     inc: String,
 }
+
+// The last clicked target, kept until the page takes it: a click that launches
+// the app is delivered before the page listens or has its session list, and
+// an event emitted then is lost.
+static LAST_CLICK: Mutex<Option<Target>> = Mutex::new(None);
 
 const NO_BUNDLE: &str = "not running from the app bundle, as in a `tauri dev` run";
 
@@ -73,6 +78,7 @@ define_class!(
             let default_action = unsafe { UNNotificationDefaultActionIdentifier };
             if &*response.actionIdentifier() == default_action {
                 let target = target_of(&response.notification().request().content().userInfo());
+                *LAST_CLICK.lock().unwrap_or_else(|e| e.into_inner()) = target.clone();
                 if let Err(e) = self.ivars().emit_to("main", "notification-click", target) {
                     eprintln!("vaquita: reporting a notification click failed: {e}");
                 }
@@ -104,9 +110,9 @@ fn log_error(what: &str, error: *mut NSError) {
     }
 }
 
-// Hands clicks to the webview for as long as the app runs. A click that
-// launches the app comes before the page listens, so it only brings the app
-// up. Without a bundle there are no notifications.
+// Hands clicks to the webview for as long as the app runs: as an event while
+// the page listens, and through take_notification_click for one that came
+// before. Without a bundle there are no notifications.
 pub fn setup(app: &AppHandle) {
     if !has_bundle() {
         return;
@@ -119,6 +125,14 @@ pub fn setup(app: &AppHandle) {
     // The center holds its delegate weakly, and this one answers for as long
     // as the app runs, so it is never released.
     std::mem::forget(delegate);
+}
+
+// The target of the last click that nobody has taken, once. A click macOS
+// delivers before the app is running is lost; one it delivers during launch
+// waits here.
+#[tauri::command]
+pub fn take_notification_click() -> Option<Target> {
+    LAST_CLICK.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
 // Whether macOS lets the app show notifications. The first time, macOS asks

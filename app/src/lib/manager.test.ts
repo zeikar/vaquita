@@ -784,4 +784,29 @@ describe('SessionManager status', () => {
 		expect(t.state().selected).toBe(1);
 		t.m.stop();
 	});
+
+	it('applies a click that came before the first list once it has been applied, only once', async () => {
+		const t = setup();
+		t.m.openNotified({ sid: 3, inc: 'i' });
+		t.m.openNotified({ sid: 3, inc: 'i' });
+		t.m.start();
+		await vi.advanceTimersByTimeAsync(0);
+		t.conns[0].emit.ready([info(1), info(3)]);
+		expect(t.state().selected).toBe(3);
+		t.m.select(1);
+		const c = { ...t, c: t.conns[0] };
+		await reconnect(c, [info(1), info(3)]);
+		expect(t.state().selected).toBe(1);
+		t.m.stop();
+	});
+
+	it('ignores a click from before the first list whose session is not there', async () => {
+		const t = setup();
+		t.m.openNotified({ sid: 3, inc: 'old' });
+		t.m.start();
+		await vi.advanceTimersByTimeAsync(0);
+		t.conns[0].emit.ready([info(1), info(3)]);
+		expect(t.state().selected).not.toBe(3);
+		t.m.stop();
+	});
 });

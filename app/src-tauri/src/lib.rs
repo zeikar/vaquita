@@ -57,7 +57,8 @@ pub fn run() {
             endpoint,
             start_daemon,
             notify::notification_permission,
-            notify::notify
+            notify::notify,
+            notify::take_notification_click
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

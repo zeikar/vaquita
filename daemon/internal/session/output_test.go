@@ -366,6 +366,10 @@ func watchedOutput() (o *Output, now *time.Time, alive *bool, polls *int) {
 	o, now = statusOutput()
 	alive, polls = new(bool), new(int)
 	*alive = true
+	// The reporter shares the leader's group, so the shell counts as holding
+	// the terminal once the reporter is dead; LeaderIsShell is nil, so the
+	// group is polled like any other.
+	o.leader = 42
 	o.Foreground = func() (int, error) { return 42, nil }
 	o.GroupAlive = func(pgid int) bool {
 		*polls++
@@ -437,8 +441,14 @@ func TestOutputForegroundMovedClearsView(t *testing.T) {
 	if v, _ := o.View(); !changed || len(notes) != 0 || v != (status.View{}) {
 		t.Fatalf("changed %v, notes %v, view %+v; want an empty view and no notification", changed, notes, v)
 	}
+	// The mode release waits for the shell to have the terminal.
+	if _, ok := o.NextDeadline(); !ok {
+		t.Fatal("no poll for the pending release")
+	}
+	fg = 42
+	o.Tick(t0.Add(4 * fgPollGap))
 	if _, ok := o.NextDeadline(); ok {
-		t.Fatal("deadline left after the foreground moved")
+		t.Fatal("deadline left after the release")
 	}
 }
 
@@ -607,6 +617,90 @@ func TestOutputReleaseNeedsReporterDeath(t *testing.T) {
 		if got != "" || o.reporter != tc.reporter {
 			t.Errorf("%s: appended %q with reporter %d; want nothing and %d", tc.name, got, o.reporter, tc.reporter)
 		}
+	}
+}
+
+// A program in front of the shell when the poll finds the agent dead keeps
+// the release pending, polled at the usual gap, until the shell has the
+// terminal back, as in `claude; sleep 10`. A successor TUI restores its own
+// modes by then, so the release emits only what is still on.
+func TestOutputReleaseWaitsForShellForeground(t *testing.T) {
+	o, now, alive, _ := watchedOutput()
+	t0 := *now
+	fg := 42
+	o.Foreground = func() (int, error) { return fg, nil }
+	o.Feed([]byte("\x1b[?1003h" + working))
+	*alive = false
+	fg = 77
+	for i := 1; i <= 3; i++ {
+		at := t0.Add(time.Duration(i) * fgPollGap)
+		if got := appended(o, func() { o.Tick(at) }); got != "" {
+			t.Fatalf("appended %q while another job held the terminal", got)
+		}
+		if d, ok := o.NextDeadline(); !ok || !d.Equal(at.Add(fgPollGap)) {
+			t.Fatalf("deadline %v, %v; want the next poll at %v", d, ok, at.Add(fgPollGap))
+		}
+	}
+	fg = 42
+	if got := appended(o, func() { o.Tick(t0.Add(4 * fgPollGap)) }); got != "\x1b[?1003l" {
+		t.Fatalf("appended %q, want %q", got, "\x1b[?1003l")
+	}
+	if _, ok := o.NextDeadline(); ok {
+		t.Fatal("deadline left after the release")
+	}
+}
+
+func TestOutputReleaseAfterSuccessorRestoredItsModes(t *testing.T) {
+	o, now, alive, _ := watchedOutput()
+	t0 := *now
+	fg := 42
+	o.Foreground = func() (int, error) { return fg, nil }
+	o.Feed([]byte("\x1b[?1003h" + working))
+	*alive = false
+	fg = 77
+	o.Feed([]byte("\x1b[?1049h\x1b[?1000h"))
+	o.Tick(t0.Add(fgPollGap))
+	o.Feed([]byte("\x1b[?1000l\x1b[?1049l"))
+	fg = 42
+	if got := appended(o, func() { o.Tick(t0.Add(2 * fgPollGap)) }); got != "" {
+		t.Fatalf("appended %q after the successor restored its modes", got)
+	}
+}
+
+// A shell that draws its prompt before the poll forgets the reporter, but the
+// modes are still undone by the next Tick.
+func TestOutputReleaseSurvivesPromptStart(t *testing.T) {
+	o, now, _, _ := watchedOutput()
+	t0 := *now
+	o.Feed([]byte("\x1b[?1003h" + working))
+	if got := appended(o, func() { o.Feed([]byte("\x1b]133;A\x07")) }); !strings.HasSuffix(got, "\x1b]133;A\x07") || strings.Contains(got, "1003l") {
+		t.Fatalf("scanner callback appended %q", got)
+	}
+	if d, ok := o.NextDeadline(); !ok || d.After(t0) {
+		t.Fatalf("deadline %v, %v; want the release due now", d, ok)
+	}
+	if got := appended(o, func() { o.Tick(t0) }); got != "\x1b[?1003l" {
+		t.Fatalf("appended %q, want %q", got, "\x1b[?1003l")
+	}
+	if _, ok := o.NextDeadline(); ok {
+		t.Fatal("deadline left after the release")
+	}
+}
+
+// An agent that reported only its startup idle is watched too.
+func TestOutputIdleOnlyReporterReleasedOnDeath(t *testing.T) {
+	o, now, alive, _ := watchedOutput()
+	t0 := *now
+	o.Feed([]byte("\x1b[?1003h\x1b]7501;state=idle\x07"))
+	if v, _ := o.View(); v != (status.View{}) {
+		t.Fatalf("view %+v, want the projection unchanged", v)
+	}
+	if !o.NeedsDrain() {
+		t.Fatal("no drain asked for the new watch")
+	}
+	*alive = false
+	if got := appended(o, func() { o.Tick(t0.Add(fgPollGap)) }); got != "\x1b[?1003l" {
+		t.Fatalf("appended %q, want %q", got, "\x1b[?1003l")
 	}
 }
 

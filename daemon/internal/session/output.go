@@ -27,24 +27,32 @@ type Output struct {
 	records status.Records
 	proj    status.Projector
 
-	// reporter is the foreground process group when the last root working or
-	// blocked report was read, 0 when unknown. As long as it is known, Tick
-	// polls it from nextPoll on: the program runs in a group of its own under
-	// the session's shell, so its death, even by SIGKILL, ends neither the
-	// session nor anything the projector sees. The poll takes the reporter
-	// for gone once its group no longer exists or is no longer the PTY's
-	// foreground group. The group alone is not enough: a helper the program
-	// started, such as the caffeinate Claude Code runs, can outlive it there
-	// for minutes. The shell takes the terminal back as soon as it reaps the
-	// dead job, so the foreground says whether the program still holds the
-	// session.
+	// reporter is the foreground process group when the last root report that
+	// left an agent running was read (idle, working, blocked, done or error;
+	// a working or blocked one replaces it, the others keep a known one), 0
+	// when unknown. As long as it is known, Tick polls it from nextPoll on:
+	// the program runs in a group of its own under the session's shell, so its
+	// death, even by SIGKILL, ends neither the session nor anything the
+	// projector sees. The poll takes the reporter for gone once its group no
+	// longer exists or is no longer the PTY's foreground group. The group alone
+	// is not enough: a helper the program started, such as the caffeinate
+	// Claude Code runs, can outlive it there for minutes. The shell takes the
+	// terminal back as soon as it reaps the dead job, so the foreground says
+	// whether the program still holds the session.
 	//
 	// A reporter found gone can leave a working or input view behind, which
-	// Tick ends, and terminal modes on, which Tick undoes: with mouse
-	// tracking left on, every mouse move over the terminal types a report
-	// into the shell. The poll goes on after a done or idle report, as an
-	// agent killed at its prompt leaves its modes on just the same; the clear
-	// report an agent sends as it exits forgets the reporter.
+	// Tick ends at once, and terminal modes on: with mouse tracking left on,
+	// every mouse move over the terminal types a report into the shell. Undoing
+	// the modes is the separate step release marks pending, which a Tick
+	// performs only once the leader's group holds the foreground: another job
+	// in front, a successor TUI or the sleep in `claude; sleep 10`, keeps it
+	// pending and polled until the shell has the terminal back, as a program
+	// there may be mid-way through setting its own modes. A prompt start
+	// also forgets the reporter but leaves the release pending, as a shell
+	// that draws its prompt before the poll has taken the terminal back. The
+	// poll goes on after a done or idle report, as an agent killed at its
+	// prompt leaves its modes on just the same; the clear report an agent sends
+	// as it exits forgets the reporter and the release.
 	//
 	// leader is the process group of the session's shell, 0 in unit tests. An
 	// agent normally runs as a foreground job of its own, so a report read
@@ -60,6 +68,10 @@ type Output struct {
 	reporter int
 	leader   int
 	gone     bool
+	release  bool
+	// rearm is set when a report or prompt start gave the watch a deadline of
+	// its own, which a drain must arm a timer for although no status changed.
+	rearm    bool
 	nextPoll time.Time
 
 	// Now stamps the reports the projector sees; tests replace it.
@@ -136,6 +148,11 @@ func (o *Output) View() (status.View, bool) { return o.proj.View() }
 // HasStatus reports whether TakeStatus has a view change or notification.
 func (o *Output) HasStatus() bool { return o.proj.Pending() }
 
+// NeedsDrain reports whether a Tick should follow the last read: there is a
+// status to take, or the watch has a deadline no timer was armed for, as when
+// an agent reports only idle, which changes no view.
+func (o *Output) NeedsDrain() bool { return o.proj.Pending() || o.rearm }
+
 // TakeStatus hands over the view change and notifications since the last call.
 func (o *Output) TakeStatus() (changed bool, notes []status.Notification) { return o.proj.Take() }
 
@@ -144,20 +161,39 @@ func (o *Output) Seen() { o.proj.Seen() }
 
 // Tick raises a notification whose deadline has passed and, once the poll is
 // due, checks that the reporter's process group is still there and still in
-// the foreground. When it is not, Tick appends to the output the sequence
-// that undoes the modes the reporter left on, so that every terminal showing
-// the session, and every later replay, gets it. The caller sends it on, as
-// it would a read.
+// the foreground. When it is not, Tick ends the view and, if the shell has
+// the terminal, appends to the output the sequence that undoes the modes the
+// reporter left on, so that every terminal showing the session, and every
+// later replay, gets it. The caller sends it on, as it would a read.
 func (o *Output) Tick(now time.Time) {
+	o.rearm = false
 	o.proj.Tick(now)
-	if o.reporter == 0 || now.Before(o.nextPoll) {
+	if (o.reporter == 0 && !o.release) || now.Before(o.nextPoll) {
 		return
 	}
-	if !o.gone && o.GroupAlive(o.reporter) && o.inForeground() {
-		o.nextPoll = now.Add(fgPollGap)
+	if o.reporter != 0 {
+		if !o.gone && o.GroupAlive(o.reporter) && o.inForeground() {
+			o.nextPoll = now.Add(fgPollGap)
+			return
+		}
+		o.interrupt()
+	}
+	// While another job holds the foreground, such as the sleep in
+	// `claude; sleep 10`, the release stays pending and is polled for: it is
+	// performed when the shell has the terminal back. If that job was a TUI,
+	// it has restored its own modes by then, so the release emits only what
+	// is still on, possibly nothing. A failed lookup means the session is
+	// ending.
+	fg, err := o.Foreground()
+	if err != nil || o.leader == 0 {
+		o.release = false
 		return
 	}
-	o.interrupt()
+	if fg != o.leader {
+		o.release, o.nextPoll = true, now.Add(fgPollGap)
+		return
+	}
+	o.release = false
 	// Each sequence starts with ESC, which abandons one the reporter left
 	// unfinished, in the live scanner and in terminals alike.
 	if seq := o.liveModes.ReleaseSeq(); seq != nil {
@@ -186,28 +222,35 @@ func (o *Output) interrupt() {
 // NextDeadline reports when Tick next has something to do.
 func (o *Output) NextDeadline() (time.Time, bool) {
 	d, ok := o.proj.Deadline()
-	if o.reporter != 0 && (!ok || o.nextPoll.Before(d)) {
+	if (o.reporter != 0 || o.release) && (!ok || o.nextPoll.Before(d)) {
 		return o.nextPoll, true
 	}
 	return d, ok
 }
 
 // watch records the foreground process group as the reporter of a root
-// report, or forgets it. The leader's group is recorded as gone when the
-// leader is a shell, for the next poll to find.
+// report, or forgets it. A working or blocked report replaces the reporter; an
+// idle, done or error one only arms the watch when there is none, so an agent
+// killed before its first turn is found too. The leader's group is recorded
+// as gone when the leader is a shell, for the next poll to find.
 func (o *Output) watch(state string, now time.Time) {
 	switch state {
+	case status.StateClear:
+		o.reporter, o.release = 0, false
+		return
 	case status.StateWorking, status.StateBlocked:
 		o.reporter, o.gone = 0, false
-		if o.Foreground == nil {
+	default:
+		if o.reporter != 0 {
 			return
 		}
-		if pgid, err := o.Foreground(); err == nil && pgid > 1 {
-			o.reporter, o.nextPoll = pgid, now.Add(fgPollGap)
-			o.gone = pgid == o.leader && o.LeaderIsShell != nil && o.LeaderIsShell()
-		}
-	case status.StateClear:
-		o.reporter = 0
+	}
+	if o.Foreground == nil {
+		return
+	}
+	if pgid, err := o.Foreground(); err == nil && pgid > 1 {
+		o.reporter, o.nextPoll, o.rearm = pgid, now.Add(fgPollGap), true
+		o.gone = pgid == o.leader && o.LeaderIsShell != nil && o.LeaderIsShell()
 	}
 }
 
@@ -249,6 +292,10 @@ func (s statusSink) OSC(num int, payload []byte, oversized bool) {
 	case 133:
 		// Shell integration: A marks the start of a prompt.
 		if len(payload) > 0 && payload[0] == 'A' && (len(payload) == 1 || payload[1] == ';') {
+			// The scanner is mid-callback, so the next Tick undoes the modes.
+			if o.reporter != 0 {
+				o.release, o.nextPoll, o.rearm = true, o.Now(), true
+			}
 			o.interrupt()
 		}
 	}
@@ -266,6 +313,6 @@ func (s statusSink) ESC(final byte) {
 		// outcome does not depend on how late the timer fired.
 		s.o.proj.Tick(s.o.Now())
 		s.o.proj.Clear()
-		s.o.reporter = 0
+		s.o.reporter, s.o.release = 0, false
 	}
 }

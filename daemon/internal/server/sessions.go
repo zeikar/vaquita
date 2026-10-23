@@ -220,7 +220,7 @@ func (e *entry) output() {
 	// The drain runs on the timer's goroutine. Reads made before it runs
 	// ask for no other, so a burst of output has one drain waiting for
 	// table.mu, not one per read.
-	if !e.drainDue && s.Output().HasStatus() {
+	if !e.drainDue && s.Output().NeedsDrain() {
 		e.drainDue = true
 		e.statusTimer.Reset(0)
 	}

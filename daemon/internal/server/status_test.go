@@ -279,6 +279,16 @@ func TestReporterDeathReleasesModesLive(t *testing.T) {
 	at.waitLive(sid, "\x1b[?1049l\x1b[?1003l\x1b[?1006l")
 }
 
+// An agent that reported only its startup idle, which changes no view, and
+// is killed before its first turn is found too: the read that carried the
+// report must get a drain scheduled for the watch.
+func TestIdleOnlyReporterDeathReleasesModesLive(t *testing.T) {
+	srv := startSessionServer(t, Options{})
+	at := dialKind(t, srv, protocol.ClientAttach)
+	sid := at.create(`set -m; sh -c 'sleep 0.2; printf "\033[?1003h\033[?1006h\033]7501;state=idle\007"; exec sleep 1'; read l`)
+	at.waitLive(sid, "\x1b[?1003l\x1b[?1006l")
+}
+
 // Reports read in a burst are drained by one timer callback at a time, never
 // one per read, and their statuses arrive in order.
 func TestStatusBurst(t *testing.T) {

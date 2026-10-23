@@ -2,9 +2,11 @@ import { isTarget, type Notice, type Notifier, type Target } from './notify';
 
 // The app's notification commands (src-tauri/src/notify.rs). listen hears
 // clicks, whose payload is the clicked notification's target or null.
-// permission says whether macOS lets the app show notifications.
+// takeClick returns the last click nobody has taken, once: one that came
+// before the page listened. permission says whether macOS lets the app show notifications.
 export interface NotificationApi {
 	listen(onClick: (payload: unknown) => void): Promise<() => void>;
+	takeClick(): Promise<unknown>;
 	permission(): Promise<boolean>;
 	notify(n: Notice): Promise<void>;
 }
@@ -22,6 +24,7 @@ async function tauriApi(): Promise<NotificationApi> {
 	const [{ invoke }, { listen }] = await Promise.all([import('@tauri-apps/api/core'), import('@tauri-apps/api/event')]);
 	return {
 		listen: (onClick) => listen('notification-click', (event) => onClick(event.payload)),
+		takeClick: () => invoke('take_notification_click'),
 		permission: () => invoke<boolean>('notification_permission'),
 		notify: ({ title, body, target }) => invoke('notify', { title, body, target }),
 	};
@@ -38,6 +41,19 @@ export async function createTauriNotifier(
 ): Promise<TauriNotifier> {
 	const native = api ?? (await tauriApi());
 	const allowed = await native.permission();
-	const stop = await native.listen((payload) => onClick(isTarget(payload) ? payload : undefined));
+	let live = false;
+	const stop = await native.listen((payload) => {
+		live = true;
+		onClick(isTarget(payload) ? payload : undefined);
+	});
+	// After listening, so no click falls between. A click that arrived live
+	// while the take was out is newer than the one it returns, which would
+	// otherwise be applied after it.
+	try {
+		const pending = await native.takeClick();
+		if (!live && isTarget(pending)) onClick(pending);
+	} catch (e) {
+		onError(e);
+	}
 	return { allowed, show: (n) => void native.notify(n).catch(onError), stop };
 }

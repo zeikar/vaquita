@@ -119,6 +119,9 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 	private entries = new Map<number, Entry<T, V>>();
 	private readonly requests = new RequestSlot();
 	private lastSize = DEFAULT_SIZE;
+	// Whether a session list has been applied yet, and the click that came before.
+	private listed = false;
+	private pendingClick?: Target;
 
 	constructor(private readonly deps: ManagerDeps<T, V>) {}
 
@@ -161,9 +164,15 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 
 	// Selects the session a clicked notification was about, if it is still
 	// there: a sid with another inc is another session, from a restarted
-	// daemon. The missed summary has no target.
+	// daemon. The missed summary has no target. A click that comes before the
+	// first session list waits for it, the latest one only.
 	openNotified(target?: Target): void {
-		if (target && this.entries.get(target.sid)?.info.inc === target.inc) this.select(target.sid);
+		if (!target) return;
+		if (!this.listed) {
+			this.pendingClick = target;
+			return;
+		}
+		if (this.entries.get(target.sid)?.info.inc === target.inc) this.select(target.sid);
 	}
 
 	// Refused without a connection and while another create waits or is in flight.
@@ -290,6 +299,10 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		this.publish({ status: 'connected', selected, message: undefined });
 		// The selected session may have become unread while no GUI was connected.
 		this.seeSelected();
+		this.listed = true;
+		const click = this.pendingClick;
+		this.pendingClick = undefined;
+		this.openNotified(click);
 	}
 
 	private onSessions(list: SessionInfo[]): void {

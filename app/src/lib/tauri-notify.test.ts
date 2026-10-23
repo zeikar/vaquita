@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Notice, Target } from './notify';
 import { createTauriNotifier, type NotificationApi } from './tauri-notify';
 
@@ -9,11 +9,18 @@ class FakeNative implements NotificationApi {
 	sendError?: string;
 	listener?: (payload: unknown) => void;
 	unlistened = false;
+	pending: unknown = null;
 
 	async listen(onClick: (payload: unknown) => void) {
 		this.calls.push('listen');
 		this.listener = onClick;
 		return () => void (this.unlistened = true);
+	}
+	async takeClick() {
+		this.calls.push('takeClick');
+		const p = this.pending;
+		this.pending = null;
+		return p;
 	}
 	async permission() {
 		this.calls.push('permission');
@@ -36,7 +43,44 @@ describe('createTauriNotifier', () => {
 	it('asks for the permission, then listens for clicks', async () => {
 		const native = new FakeNative();
 		await createTauriNotifier(ignore, ignore, native);
-		expect(native.calls).toEqual(['permission', 'listen']);
+		expect(native.calls).toEqual(['permission', 'listen', 'takeClick']);
+	});
+
+	it('hands over a click that came before the page listened, once', async () => {
+		const native = new FakeNative();
+		native.pending = { sid: 3, inc: 'a' };
+		const clicks: unknown[] = [];
+		await createTauriNotifier((t) => clicks.push(t), ignore, native);
+		expect(clicks).toEqual([{ sid: 3, inc: 'a' }]);
+		await createTauriNotifier((t) => clicks.push(t), ignore, native);
+		expect(clicks).toHaveLength(1);
+	});
+
+	it('drops the pending click when a live one arrived while it was being taken', async () => {
+		const native = new FakeNative();
+		let resolve!: (v: unknown) => void;
+		native.takeClick = () => new Promise((r) => (resolve = r));
+		const clicks: unknown[] = [];
+		const made = createTauriNotifier((t) => clicks.push(t), ignore, native);
+		await vi.waitFor(() => expect(resolve).toBeTypeOf('function'));
+		native.click({ sid: 4, inc: 'b' });
+		resolve({ sid: 3, inc: 'a' });
+		await made;
+		expect(clicks).toEqual([{ sid: 4, inc: 'b' }]);
+	});
+
+	it('ignores a pending click that is no target and reports a failed take', async () => {
+		const native = new FakeNative();
+		native.pending = { sid: 'x' };
+		const clicks: unknown[] = [];
+		await createTauriNotifier((t) => clicks.push(t), ignore, native);
+		expect(clicks).toEqual([]);
+		const errors: unknown[] = [];
+		native.takeClick = async () => {
+			throw 'boom';
+		};
+		await createTauriNotifier(ignore, (e) => errors.push(e), native);
+		expect(errors).toEqual(['boom']);
 	});
 
 	it('says whether macOS allows the notifications', async () => {
