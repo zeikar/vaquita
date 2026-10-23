@@ -17,6 +17,8 @@ commands:
            attach this terminal to a session, or to a new one running
            CMD (a plain shell without one); Ctrl-\ detaches and is never
            sent to the session
+  repos ls | add DIR | rm DIR
+           manage the repos the app groups sessions by
   install [--print | --bootstrap]
            write the LaunchAgent plist (--print: show it only;
            --bootstrap: also load it with launchctl)
@@ -39,6 +41,8 @@ func main() {
 		err = ls(os.Args[2:])
 	case "attach":
 		err = attach(os.Args[2:])
+	case "repos":
+		err = repos(os.Args[2:])
 	case "install":
 		err = install(os.Args[2:])
 	case "-h", "--help", "help":
