@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Terminal } from '@xterm/headless';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -76,6 +76,10 @@ function client() {
 				subscribe: (sid) => conn.subscribe(sid),
 				kill: (sid) => conn.kill(sid),
 				seen: (sid) => conn.seen(sid),
+				reposAdd: (path) => conn.reposAdd(path),
+				reposRemove: (path) => conn.reposRemove(path),
+				reopen: (sid, cols, rows) => conn.reopen(sid, cols, rows),
+				dismiss: (sid) => conn.dismiss(sid),
 				ack: (sid, gen, off) => conn.ack(sid, gen, off),
 				resize: (sid, cols, rows) => conn.resize(sid, cols, rows),
 				input: (sid, gen, bytes) => {
@@ -292,6 +296,23 @@ describe.skipIf(process.env.VAQUITA_LIVE !== '1')('live daemon', () => {
 		} finally {
 			if (sid !== undefined) a.m.kill(sid);
 			a.m.stop();
+		}
+	});
+
+	it('adds and removes a repo', async () => {
+		const dir = realpathSync(mkdtempSync(join(tmpdir(), 'vaquita-live-repo-')));
+		const a = client();
+		try {
+			a.m.start();
+			await until(() => a.state().status === 'connected', 'A to connect');
+			a.m.addRepo(dir);
+			await until(() => a.state().repos.includes(dir), 'the repo to be listed');
+			a.m.removeRepo(dir);
+			await until(() => !a.state().repos.includes(dir), 'the repo to be gone');
+		} finally {
+			a.m.removeRepo(dir);
+			a.m.stop();
+			rmSync(dir, { recursive: true });
 		}
 	});
 });

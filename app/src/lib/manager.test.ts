@@ -27,6 +27,21 @@ class FakeConnection implements ConnectionLike {
 	kill(sid: number): void {
 		this.requests.push(['kill', sid]);
 	}
+	repoAdds: string[] = [];
+	repoRemoves: string[] = [];
+	dismisses: number[] = [];
+	reposAdd(path: string): void {
+		this.repoAdds.push(path);
+	}
+	reposRemove(path: string): void {
+		this.repoRemoves.push(path);
+	}
+	reopen(sid: number, cols: number, rows: number): void {
+		this.requests.push(['reopen', sid, cols, rows]);
+	}
+	dismiss(sid: number): void {
+		this.dismisses.push(sid);
+	}
 	// Kept apart from requests: a seen is no request the daemon answers in turn.
 	seens: number[] = [];
 	seen(sid: number): void {
@@ -56,9 +71,11 @@ class FakeView {
 }
 
 const ep: Endpoint = { url: 'ws://127.0.0.1:1/ws', token: 't', pid: 1 };
-const info = (sid: number, inc = 'i', state = 'running'): SessionInfo => ({
+const info = (sid: number, inc = 'i', state = 'running', restorable?: boolean): SessionInfo => ({
 	sid, inc, cwd: '/tmp/repo', cmd: 'sh', name: '', cols: 80, rows: 24, state, pid: 2, code: 0,
+	...(restorable ? { restorable } : {}),
 });
+const record = (sid: number): SessionInfo => ({ ...info(sid, 'old', 'exited', true), cmd: 'claude', name: 'w' });
 const replay = (sid: number, gen = 1): Replay => ({ t: 'replay', sid, gen, from: 0, to: 0, cols: 80, rows: 24 });
 const live = (sid: number, ro = false): Live => ({ t: 'live', sid, gen: 1, off: 0, ro });
 const status = (sid: number, s: StatusInfo | null, unread = false): Status => ({ t: 'status', sid, status: s, unread });
@@ -807,6 +824,110 @@ describe('SessionManager status', () => {
 		await vi.advanceTimersByTimeAsync(0);
 		t.conns[0].emit.ready([info(1), info(3)]);
 		expect(t.state().selected).not.toBe(3);
+		t.m.stop();
+	});
+
+	it('keeps the repo list across a reconnect until the next one', async () => {
+		const t = await connected([]);
+		expect(t.state().repos).toEqual([]);
+		t.c.emit.repos(['/tmp/repo']);
+		expect(t.state().repos).toEqual(['/tmp/repo']);
+		const c = await reconnect(t, []);
+		expect(t.state().repos).toEqual(['/tmp/repo']);
+		c.emit.repos(['/tmp/a', '/tmp/b']);
+		expect(t.state().repos).toEqual(['/tmp/a', '/tmp/b']);
+		t.m.stop();
+	});
+
+	it('sends repo adds and removes only with a ready connection', async () => {
+		const t = setup();
+		t.m.addRepo('/tmp/x');
+		t.m.removeRepo('/tmp/x');
+		t.m.start();
+		await vi.advanceTimersByTimeAsync(0);
+		t.m.addRepo('/tmp/x');
+		t.m.removeRepo('/tmp/x');
+		t.conns[0].emit.ready([]);
+		expect(t.conns[0].repoAdds).toEqual([]);
+		expect(t.conns[0].repoRemoves).toEqual([]);
+		t.m.addRepo('/tmp/repo');
+		t.m.removeRepo('/tmp/repo');
+		expect(t.conns[0].repoAdds).toEqual(['/tmp/repo']);
+		expect(t.conns[0].repoRemoves).toEqual(['/tmp/repo']);
+		t.m.stop();
+	});
+
+	it('reopens a restorable row at the selected view\'s size and swaps the row for the new session', async () => {
+		const t = await connected([info(1), record(7)], 1);
+		answer(t.c, 1);
+		t.row(1)!.view!.size = { cols: 100, rows: 30 };
+		t.m.reopen(7);
+		expect(t.c.requests.at(-1)).toEqual(['reopen', 7, 100, 30]);
+		expect(t.state().creating).toBe(true);
+		t.c.emit.replay(replay(9));
+		expect(t.state().creating).toBe(false);
+		expect(t.state().selected).toBe(9);
+		expect(t.row(9)?.info).toMatchObject({ cwd: '/tmp/repo', cmd: 'claude', name: 'w' });
+		expect(t.row(9)?.view).toBeDefined();
+		t.c.emit.sessions([info(1), info(9)]);
+		expect(t.row(7)).toBeUndefined();
+		expect(t.row(9)).toBeDefined();
+		t.m.stop();
+	});
+
+	it('does not reopen a row that is not restorable, or without a connection', async () => {
+		const t = await connected([info(1), record(7)]);
+		const before = t.c.requests.length;
+		t.m.reopen(1);
+		t.m.reopen(99);
+		expect(t.c.requests).toHaveLength(before);
+		expect(t.state().creating).toBe(false);
+		t.c.emit.closed({ kind: 'closed', detail: 'x' });
+		t.m.reopen(7);
+		expect(t.state().creating).toBe(false);
+		t.m.stop();
+	});
+
+	it('frees the slot when the reopen fails, with a message per code', async () => {
+		const t = await connected([record(7)]);
+		const fail = (code: string, pids?: number[]) => {
+			t.m.reopen(7);
+			expect(t.state().creating).toBe(true);
+			t.c.emit.error({ t: 'error', code, sid: 7, ...(pids ? { pids } : {}) });
+			expect(t.state().creating).toBe(false);
+			return t.state().message;
+		};
+		expect(fail('orphans', [11, 12])).toBe('session 7 left processes behind: 11, 12');
+		expect(fail('bad-request')).toBe('reopen 7 failed (bad-request)');
+		expect(fail('conversation-live')).toBe('session 7: its conversation is already open in another session');
+		t.m.stop();
+	});
+
+	it('sends a dismiss', async () => {
+		const t = await connected([record(7)]);
+		t.m.dismiss(7);
+		expect(t.c.dismisses).toEqual([7]);
+		t.m.stop();
+	});
+
+	it('shows a bad-path message without touching a create in flight', async () => {
+		const t = await connected([]);
+		t.m.create('/tmp/repo', '', '');
+		t.c.emit.error({ t: 'error', code: 'bad-path' });
+		expect(t.state().message).toBe('repo path must be an absolute path to an existing folder');
+		expect(t.state().creating).toBe(true);
+		t.c.emit.replay(replay(3));
+		expect(t.state().creating).toBe(false);
+		expect(t.state().selected).toBe(3);
+		t.m.stop();
+	});
+
+	it('takes a sid-less bad-request as a failed create while no reopen is outstanding', async () => {
+		const t = await connected([record(7)]);
+		t.m.create('/tmp/repo', '', '');
+		t.c.emit.error({ t: 'error', code: 'bad-request' });
+		expect(t.state().message).toBe('create failed (bad-request)');
+		expect(t.state().creating).toBe(false);
 		t.m.stop();
 	});
 });

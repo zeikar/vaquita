@@ -3,6 +3,8 @@ import type { CloseReason, ConnectionHandlers } from './connection';
 import { NotRunningError, type Endpoint } from './endpoint';
 import { notificationFor, shouldShow, type Notifier, type Target } from './notify';
 import {
+	CODE_BAD_PATH,
+	CODE_CONVERSATION_LIVE,
 	CODE_NO_SESSION,
 	CODE_ORPHANS,
 	STATE_EXITED,
@@ -48,6 +50,8 @@ export interface ManagerState<V = ViewLike> {
 	status: Status;
 	daemonV?: number;
 	sessions: SessionRow<V>[];
+	// The registered repos; the last list the daemon sent, kept across reconnects.
+	repos: string[];
 	selected?: number;
 	message?: string;
 	// A create waits or is in flight; the form is disabled until it resolves.
@@ -64,6 +68,10 @@ export interface ConnectionLike extends CoreOut {
 	subscribe(sid: number): void;
 	kill(sid: number): void;
 	seen(sid: number): void;
+	reposAdd(path: string): void;
+	reposRemove(path: string): void;
+	reopen(sid: number, cols: number, rows: number): void;
+	dismiss(sid: number): void;
 }
 
 export interface ManagerDeps<T extends ManagedTerm, V extends ViewLike> {
@@ -104,7 +112,7 @@ function newEntry<T, V>(info: SessionInfo): Entry<T, V> {
 }
 
 export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewLike = ViewLike> {
-	private state: ManagerState<V> = { status: 'connecting', sessions: [], creating: false, focused: true };
+	private state: ManagerState<V> = { status: 'connecting', sessions: [], repos: [], creating: false, focused: true };
 	private readonly subscribers = new Set<(s: ManagerState<V>) => void>();
 	private conn: ConnectionLike | null = null;
 	// conn once its handshake is done; requests go only through it.
@@ -186,6 +194,28 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		this.readyConn?.kill(sid);
 	}
 
+	addRepo(path: string): void {
+		this.readyConn?.reposAdd(path);
+	}
+
+	removeRepo(path: string): void {
+		this.readyConn?.reposRemove(path);
+	}
+
+	// Starts a new session from a record of an earlier run, through the create
+	// slot; refused like a create, and for a row that is not restorable.
+	reopen(sid: number): void {
+		const info = this.entries.get(sid)?.info;
+		if (!this.readyConn || !info?.restorable) return;
+		if (!this.requests.requestCreate({ cwd: info.cwd, cmd: info.cmd, name: info.name, reopen: sid })) return;
+		this.pump();
+		this.publish();
+	}
+
+	dismiss(sid: number): void {
+		this.readyConn?.dismiss(sid);
+	}
+
 	// Shows a message from outside the manager in the status line.
 	report(message: string): void {
 		this.set({ message });
@@ -249,7 +279,7 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 				error: current((m) => this.onError(m)),
 				status: current((m) => this.onStatus(m)),
 				notify: current((m) => this.onNotify(m)),
-				repos: () => {},
+				repos: current((list) => this.set({ repos: list })),
 				frame: current((f) => this.entries.get(f.sid)?.core?.frame(f)),
 				closed: current((reason) => this.onClosed(reason)),
 			});
@@ -371,8 +401,18 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 
 	private onError(m: ErrorMessage): void {
 		let message: string | undefined;
-		if (m.code === CODE_ORPHANS) {
-			message = `session ${m.sid} left processes behind: ${(m.pids ?? []).join(', ')}`;
+		const orphans = `session ${m.sid} left processes behind: ${(m.pids ?? []).join(', ')}`;
+		const reopening = this.requests.outstandingReopen;
+		if (m.code === CODE_BAD_PATH) {
+			// It answers a repo add, which holds no slot, so it frees no create.
+			message = 'repo path must be an absolute path to an existing folder';
+		} else if (reopening !== undefined && m.sid === reopening) {
+			this.requests.createDone();
+			if (m.code === CODE_ORPHANS) message = orphans;
+			else if (m.code === CODE_CONVERSATION_LIVE) message = `session ${m.sid}: its conversation is already open in another session`;
+			else message = `reopen ${m.sid} failed (${m.code})`;
+		} else if (m.code === CODE_ORPHANS) {
+			message = orphans;
 		} else if (m.sid !== undefined && this.requests.subscribeDone(m.sid)) {
 			// A record kept from an earlier daemon run is listed as exited and
 			// has no screen; one of this run's exited sessions still has one.
@@ -427,7 +467,8 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		const next = this.requests.take((sid) => this.entries.get(sid)?.subscribed === false);
 		if (next?.kind === 'create') {
 			const { cols, rows } = this.createSize();
-			conn.create(next.cwd, next.cmd, next.name, cols, rows);
+			if (next.reopen !== undefined) conn.reopen(next.reopen, cols, rows);
+			else conn.create(next.cwd, next.cmd, next.name, cols, rows);
 		} else if (next?.kind === 'subscribe') {
 			const e = this.entries.get(next.sid)!;
 			e.subscribed = true;

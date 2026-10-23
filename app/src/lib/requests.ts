@@ -5,6 +5,8 @@ export interface CreateRequest {
 	cwd: string;
 	cmd: string;
 	name: string;
+	// The record's sid when the create is a reopen.
+	reopen?: number;
 }
 
 export type Request = { kind: 'subscribe'; sid: number } | ({ kind: 'create' } & CreateRequest);
@@ -18,6 +20,11 @@ export class RequestSlot {
 	// (its replay, an error, a lost connection) enables it again.
 	get creating(): boolean {
 		return this.pendingCreate !== undefined || this.outstanding?.kind === 'create';
+	}
+
+	// The record being reopened by the create in flight.
+	get outstandingReopen(): number | undefined {
+		return this.outstanding?.kind === 'create' ? this.outstanding.reopen : undefined;
 	}
 
 	// Drops the previous connection's requests; queue is the new one's.
