@@ -743,3 +743,45 @@ func TestOutputReplaceScannerKeepsStatusSink(t *testing.T) {
 		t.Fatalf("%d records", n)
 	}
 }
+
+func TestOutputAppChange(t *testing.T) {
+	const idleClaude = "\x1b]7501;state=idle:app=claude-code\x07"
+	o, _ := statusOutput()
+	if o.App() != "" || o.NeedsDrain() {
+		t.Fatalf("app %q, drain %v before any output", o.App(), o.NeedsDrain())
+	}
+	o.Feed([]byte(idleClaude))
+	if o.App() != "claude-code" || !o.NeedsDrain() {
+		t.Fatalf("app %q, drain %v after a report", o.App(), o.NeedsDrain())
+	}
+	if !o.TakeAppChange() || o.NeedsDrain() || o.TakeAppChange() {
+		t.Fatal("the change was not taken exactly once")
+	}
+	o.Feed([]byte(idleClaude))
+	if o.NeedsDrain() || o.TakeAppChange() {
+		t.Fatal("the same app counted as a change")
+	}
+	o.Feed([]byte("\x1b]7501;id=sub:state=idle:app=codex\x07"))
+	if o.App() != "claude-code" || o.NeedsDrain() {
+		t.Fatalf("a child report changed app to %q, drain %v", o.App(), o.NeedsDrain())
+	}
+	o.Feed([]byte("\x1bc"))
+	if o.App() != "claude-code" {
+		t.Fatalf("RIS changed app to %q", o.App())
+	}
+}
+
+// An app change that moves no view still asks for a drain.
+func TestOutputAppChangeWithoutViewChange(t *testing.T) {
+	o, _ := statusOutput()
+	o.Feed([]byte("\x1b]7501;state=working:app=claude-code\x07"))
+	o.TakeStatus()
+	o.TakeAppChange()
+	o.Feed([]byte("\x1b]7501;state=working:app=codex\x07"))
+	if o.App() != "codex" || !o.NeedsDrain() || !o.TakeAppChange() {
+		t.Fatalf("app %q, drain %v", o.App(), o.NeedsDrain())
+	}
+	if changed, _ := o.TakeStatus(); changed {
+		t.Fatal("the view changed")
+	}
+}

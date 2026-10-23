@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/zeikar/vaquita/daemon/internal/convid"
 )
 
 const (
@@ -85,6 +87,17 @@ func SessionPIDs(sid int) (pids []int, leaderStart time.Time, err error) {
 		}
 	}
 	return pidsOf(procs), leaderStart, err
+}
+
+// Members lists the processes in the PTY session sid for the conversation id
+// readers, nil if there are none. An error means the members are unknown.
+func Members(sid int) ([]convid.Member, error) {
+	procs, err := sessionProcs(sid)
+	var ms []convid.Member
+	for _, p := range procs {
+		ms = append(ms, convid.Member{PID: p.pid, PGID: p.pgid, Start: p.start})
+	}
+	return ms, err
 }
 
 func pidsOf(procs []proc) []int {

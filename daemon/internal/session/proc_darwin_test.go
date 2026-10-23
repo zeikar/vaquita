@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/zeikar/vaquita/daemon/internal/convid"
 )
 
 // waitGroups polls until the PTY session sid has processes in at least n
@@ -286,5 +288,36 @@ func TestKillRacesExit(t *testing.T) {
 				t.Errorf("OnExit called %d times, want 1", n)
 			}
 		})
+	}
+}
+
+func TestMembers(t *testing.T) {
+	cmd := exec.Command("/bin/sleep", "60")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+	}()
+	pid := cmd.Process.Pid
+	var ms []convid.Member
+	deadline := time.Now().Add(testTimeout)
+	for len(ms) == 0 && time.Now().Before(deadline) {
+		var err error
+		if ms, err = Members(pid); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(ms) != 1 || ms[0].PID != pid || ms[0].PGID != pid {
+		t.Fatalf("Members = %+v, want only pid %d leading its group", ms, pid)
+	}
+	if d := time.Since(ms[0].Start); d < -5*time.Second || d > 5*time.Second {
+		t.Fatalf("Start %v is %v from now", ms[0].Start, d)
+	}
+	if ms, err := Members(1); err != nil || ms != nil {
+		t.Fatalf("Members(1) = %v, %v", ms, err)
 	}
 }

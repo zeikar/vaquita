@@ -74,6 +74,12 @@ type Output struct {
 	rearm    bool
 	nextPoll time.Time
 
+	// app is the app of the last root report that named one, and appChanged
+	// says it differs from what TakeAppChange last handed over. The record of
+	// a session keeps the agent last seen, so nothing here clears them.
+	app        string
+	appChanged bool
+
 	// Now stamps the reports the projector sees; tests replace it.
 	Now func() time.Time
 	// Foreground returns the PTY's foreground process group, and GroupAlive
@@ -151,7 +157,20 @@ func (o *Output) HasStatus() bool { return o.proj.Pending() }
 // NeedsDrain reports whether a Tick should follow the last read: there is a
 // status to take, or the watch has a deadline no timer was armed for, as when
 // an agent reports only idle, which changes no view.
-func (o *Output) NeedsDrain() bool { return o.proj.Pending() || o.rearm }
+func (o *Output) NeedsDrain() bool { return o.proj.Pending() || o.rearm || o.appChanged }
+
+// App returns the app named by the last root report that had one, "" if none
+// has. Like Feed, it requires the session lock.
+func (o *Output) App() string { return o.app }
+
+// TakeAppChange reports whether App changed since the last call. A change of
+// app can leave the view as it was, so it asks for a drain of its own, and the
+// status drain takes it. Like App, it requires the session lock.
+func (o *Output) TakeAppChange() bool {
+	c := o.appChanged
+	o.appChanged = false
+	return c
+}
 
 // TakeStatus hands over the view change and notifications since the last call.
 func (o *Output) TakeStatus() (changed bool, notes []status.Notification) { return o.proj.Take() }
@@ -277,6 +296,9 @@ func (s statusSink) OSC(num int, payload []byte, oversized bool) {
 			// Child reports stay in the records: a child's done must not
 			// complete its parent.
 			if r.ID == "" {
+				if r.App != "" && r.App != o.app {
+					o.app, o.appChanged = r.App, true
+				}
 				now := o.Now()
 				o.watch(r.State, now)
 				o.proj.Report(r, now)

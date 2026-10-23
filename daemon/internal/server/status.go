@@ -78,6 +78,7 @@ func (t *table) drainStatusLocked(e *entry) {
 		}
 	}
 	changed, notes := out.TakeStatus()
+	out.TakeAppChange()
 	e.armStatusLocked(now)
 	v, unread := out.View()
 	t.sendStatusLocked(e.sid, changed, v, unread, notes)
