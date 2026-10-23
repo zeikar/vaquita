@@ -34,9 +34,12 @@ From another terminal, after the same `export`:
 
 - `vaquitad ls` lists sessions.
 - `vaquitad attach --new` starts a shell session and attaches to it; `attach --new -- <cmd>` runs a command such as an agent instead. `Ctrl-\` detaches and leaves the session running.
+- `vaquitad repos add <dir>`, `repos rm <dir>` and `repos ls` manage the repos the app groups sessions by. The list lives in the daemon's `state.json`, and an open app follows it at once.
 - `vaquitad install` writes a LaunchAgent plist into `$VAQUITA_HOME` and prints the `launchctl` commands that load and unload it. Nothing goes into `~/Library/LaunchAgents`, so nothing starts at login. `--bootstrap` also loads it into launchd; `--print` only prints the plist.
 
 A session whose command starts with `codex`, from the app or from `attach --new -- codex`, runs it with `-c` options that turn on Codex's OSC 9 notifications for that session only: the daemon tells a finished Codex turn from a cancelled one by them. Codex typed into a plain shell session runs without them, so its finished turns are not shown.
+
+Sessions survive a daemon restart as records. While a Claude Code or Codex runs in a session, the daemon notes its conversation id and keeps it in `state.json`: for Claude Code it reads the file Claude Code keeps per process under `~/.claude/sessions`, for Codex it takes the newest conversation file under `~/.codex/sessions` for that session's folder, so it can occasionally pick another conversation. After the daemon restarts (a crash or a reboot), the app lists every earlier session with Reopen and Dismiss. Reopen starts `claude --resume <id>` or `codex resume <id>` in the session's folder; when no id was noted it falls back to `claude --continue` or `codex resume --last`, and a session that was not running an agent gets a plain shell. A session that left processes behind has to be cleaned up first (Kill shows their pids). The ids are only read from `$HOME/.claude` and `$HOME/.codex`, so with `CLAUDE_CONFIG_DIR` or `CODEX_HOME` set the fallback is used. No hooks are installed and nothing is written into the agents' directories.
 
 ## App
 
@@ -56,7 +59,9 @@ PATH="/opt/homebrew/opt/rustup/bin:$PATH" npm run tauri dev
 
 What it does so far:
 
-- A flat list of sessions, one terminal shown at a time. You can create and kill sessions.
+- One terminal shown at a time. You can create and kill sessions.
+- The sidebar is grouped by repo. Add a repo with the folder picker or `vaquitad repos add`; a session belongs to the repo whose path is the longest prefix of its folder, matched by path component, and the rest sit under "other". Each repo has claude and codex buttons that start an agent in it, and a button to remove it from the list (its sessions keep running).
+- Sessions from an earlier daemon run are listed under their repo as "from an earlier run", with Reopen and Dismiss.
 - Sessions live in the daemon, so after an app restart the screen is restored.
 - A fix for Korean IME input on WebKit, clickable links, file drop, and OSC 52 copy.
 - Each session shows its agent's state: a spinner while it works, ⚠ with the permission or question it waits on, 🔑 when it needs a login, ✓ or ✗ when a turn ends, and a dot until you have looked at it.
