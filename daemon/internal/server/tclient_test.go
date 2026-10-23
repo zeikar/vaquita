@@ -227,8 +227,14 @@ func (tc *tclient) apply(ev client.Event) {
 // creator learns from its first replay.
 func (tc *tclient) create(cmd string) uint32 {
 	tc.t.Helper()
+	return tc.createIn("", cmd)
+}
+
+// createIn is create with the session's cwd.
+func (tc *tclient) createIn(cwd, cmd string) uint32 {
+	tc.t.Helper()
 	before := maps.Clone(tc.streams)
-	if err := tc.c.Create("", cmd, "test", 80, 24); err != nil {
+	if err := tc.c.Create(cwd, cmd, "test", 80, 24); err != nil {
 		tc.t.Fatal(err)
 	}
 	var sid uint32

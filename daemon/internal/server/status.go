@@ -17,6 +17,10 @@ import (
 // reader holds neither lock in OnOutput and must not wait for t.mu, so it
 // only asks for a drain, which the session's status timer runs on a
 // goroutine of its own. The timer also fires at the projector's deadlines.
+//
+// The drain is also where the agent's conversation id is read, on a goroutine
+// of its own as well, so that no file is touched under a lock or on the
+// reader (see readConversation).
 
 // statusInfo is what a row shows for v, nil for nothing. The status package's
 // view states are the protocol's.
@@ -54,10 +58,11 @@ func (t *table) statusTick(e *entry) {
 
 // drainStatusLocked raises the notifications whose deadline has passed,
 // sends e's view if it changed and its notifications to the GUI clients, and
-// re-arms e's status timer. It requires t.mu and the session lock. After the
-// exit it does nothing, so no status follows a session's exit. Output read
-// after the exit, when the reader outlives the drain timeout, leaves drainDue
-// set, so output() asks for no further drains.
+// re-arms e's status timer. When either, or the reporting app, changed, it
+// asks for a read of the agent's conversation id. It requires t.mu and the
+// session lock. After the exit it does nothing, so no status follows a
+// session's exit. Output read after the exit, when the reader outlives the
+// drain timeout, leaves drainDue set, so output() asks for no further drains.
 //
 // The Tick may append output: the sequence that undoes the terminal modes of
 // a reporter it found gone. No read of the PTY calls output() for it, and the
@@ -78,7 +83,12 @@ func (t *table) drainStatusLocked(e *entry) {
 		}
 	}
 	changed, notes := out.TakeStatus()
-	out.TakeAppChange()
+	appChanged := out.TakeAppChange()
+	// Asked before the status is queued: waitConversationRead, in the
+	// tests, relies on that order.
+	if (changed || len(notes) > 0 || appChanged) && agentOf(out.App()) != "" {
+		t.askConversationLocked(e)
+	}
 	e.armStatusLocked(now)
 	v, unread := out.View()
 	t.sendStatusLocked(e.sid, changed, v, unread, notes)

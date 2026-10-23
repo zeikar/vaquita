@@ -32,13 +32,15 @@ func startSessionServer(t *testing.T, opts Options) *Server {
 }
 
 // endSessions SIGKILLs whatever the test's sessions left alive, then waits
-// until each has finished its exit, so that nothing writes state.json while
-// the test's home is being removed.
+// until each has finished its exit and its conversation id read, so that
+// nothing writes state.json while the test's home is being removed.
 func endSessions(t *testing.T, srv *Server) {
 	srv.table.mu.Lock()
+	var entries []*entry
 	var sessions []*session.Session
 	for _, e := range srv.table.entries {
 		if e.sess != nil {
+			entries = append(entries, e)
 			sessions = append(sessions, e.sess)
 		}
 	}
@@ -80,6 +82,11 @@ func endSessions(t *testing.T, srv *Server) {
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
+	}
+	// No read is asked for once the exit is done, but one in flight may
+	// still record.
+	for _, e := range entries {
+		waitReadEnded(t, e)
 	}
 }
 

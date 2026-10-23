@@ -21,15 +21,20 @@ import (
 // Building a sessions list reads each session's state under the table lock,
 // and so does draining a session's status, so nothing that holds a session
 // lock may take table.mu: anything that needs both takes table.mu first; the
-// exit handler and the status timer are the session-side callers. The PTY
-// reader must not wait for table.mu, which is held across state.json's fsync,
-// so its OnOutput leaves the drain to the session's status timer. conn.mu is
-// innermost: conn.send and a connection's subscription list are used with
-// either of the others held, and nothing is locked under it.
+// exit handler, the status timer and the conversation id read are the
+// session-side callers. The PTY reader must not wait for table.mu, which is
+// held across state.json's fsync, so its OnOutput leaves the drain to the
+// session's status timer. conn.mu is innermost: conn.send and a connection's
+// subscription list are used with either of the others held, and nothing is
+// locked under it.
 
 // table holds the sessions and the connections that receive their list.
 type table struct {
 	home string
+	// userHome is the user's home directory, where the agents keep the files
+	// their conversation ids are read from; empty turns the reads off. Set
+	// before the server serves.
+	userHome string
 
 	mu sync.Mutex
 	// st is what state.json holds; its Sessions are rebuilt from entries on
@@ -46,6 +51,9 @@ type table struct {
 	// missed counts the notifications raised while no GUI client was
 	// connected, for the next GUI to join.
 	missed int
+	// readID reads the conversation id a snapshot describes. Tests replace
+	// it to stand in for the agents' files.
+	readID func(convSnapshot) string
 }
 
 // entry is one session in the table. A record kept from a previous daemon run
@@ -85,10 +93,13 @@ type entry struct {
 	// drainDue is set while a drain output() asked for has yet to run;
 	// output read meanwhile goes out with it.
 	drainDue bool
+	// idBusy is set while a read of the agent's conversation id is in
+	// flight, and idDue when a drain asked for another meanwhile.
+	idBusy, idDue bool
 }
 
 func newTable(home string, st state.State) *table {
-	t := &table{home: home, st: st, entries: make(map[uint32]*entry), clients: make(map[*conn]struct{})}
+	t := &table{home: home, st: st, entries: make(map[uint32]*entry), clients: make(map[*conn]struct{}), readID: convSnapshot.readFiles}
 	for _, r := range st.Sessions {
 		if r.SID < 1 || r.SID > math.MaxUint32 || t.entries[uint32(r.SID)] != nil {
 			slog.Warn("dropping session record with an invalid or duplicate sid", "sid", r.SID, "pid", r.PID, "orphans", r.Orphans)

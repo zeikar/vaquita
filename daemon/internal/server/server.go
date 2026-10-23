@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -93,6 +94,11 @@ func Listen(opts Options) (*Server, error) {
 		ln:      ln,
 		table:   newTable(opts.Home, opts.State),
 		conns:   make(map[*conn]struct{}),
+	}
+	// The agents keep their files under the user's home, which Options.Home,
+	// the instance directory, is not.
+	if s.table.userHome, err = os.UserHomeDir(); err != nil {
+		slog.Warn("no home directory, so agents' conversation ids are not recorded", "err", err)
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", s.handleWS)
