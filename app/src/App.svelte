@@ -2,6 +2,7 @@
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { onDestroy } from 'svelte';
+	import AddRepo from './lib/AddRepo.svelte';
 	import CreateForm from './lib/CreateForm.svelte';
 	import { DaemonConnection } from './lib/connection';
 	import { readEndpoint, startDaemon } from './lib/endpoint';
@@ -112,7 +113,14 @@
 			selected={$manager.selected}
 			onselect={(sid) => manager.select(sid)}
 			onkill={(sid) => manager.kill(sid)}
+			repos={$manager.repos}
+			disabled={$manager.creating || $manager.status !== 'connected'}
+			onreopen={(sid) => manager.reopen(sid)}
+			ondismiss={(sid) => manager.dismiss(sid)}
+			onstart={(repo, cmd) => manager.create(repo, cmd, '')}
+			onremoverepo={(p) => manager.removeRepo(p)}
 		/>
+		<AddRepo disabled={$manager.status !== 'connected'} onadd={(p) => manager.addRepo(p)} />
 		<CreateForm
 			disabled={$manager.creating || $manager.status !== 'connected'}
 			oncreate={(cwd, cmd, name) => manager.create(cwd, cmd, name)}

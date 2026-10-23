@@ -10,6 +10,7 @@
       "allow": [{ "url": "http://*" }, { "url": "https://*" }, { "url": "mailto:*" }]
     },
     "clipboard-manager:allow-write-text",
+    "dialog:allow-open",
     "core:window:allow-show",
     "core:window:allow-unminimize",
     "core:window:allow-set-focus"

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { groupRows, repoName } from './groups';
 	import type { SessionRow } from './manager';
 	import { sessionTitle } from './notify';
 	import { STATE_EXITED } from './protocol';
@@ -8,20 +9,35 @@
 		selected,
 		onselect,
 		onkill,
+		repos,
+		disabled,
+		onreopen,
+		ondismiss,
+		onstart,
+		onremoverepo,
 	}: {
 		sessions: SessionRow<unknown>[];
 		selected?: number;
 		onselect: (sid: number) => void;
 		onkill: (sid: number) => void;
+		repos: string[];
+		disabled: boolean;
+		onreopen: (sid: number) => void;
+		ondismiss: (sid: number) => void;
+		onstart: (repo: string, cmd: 'claude' | 'codex') => void;
+		onremoverepo: (path: string) => void;
 	} = $props();
+
+	const groups = $derived(groupRows(sessions, repos));
 
 	const CONFIRM_MS = 3000;
 	// A double-click must not count as the confirming second click.
 	const MIN_CONFIRM_MS = 400;
 
-	// Kill takes a second click: Tauri's WKWebView answers confirm() with
-	// Cancel, as wry implements no JavaScript confirm panel.
-	let armed = $state<number | undefined>();
+	// Kill, Dismiss and Remove take a second click: Tauri's WKWebView answers
+	// confirm() with Cancel, as wry implements no JavaScript confirm panel.
+	// The key says which button is armed: kill:3, dismiss:3, repo:/tmp/repo.
+	let armed = $state<string | undefined>();
 	let armedAt = 0;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -30,55 +46,82 @@
 		armed = undefined;
 	}
 
-	function kill(sid: number) {
-		if (armed === sid) {
+	function confirmed(key: string, act: () => void) {
+		if (armed === key) {
 			if (performance.now() - armedAt < MIN_CONFIRM_MS) return;
 			disarm();
-			onkill(sid);
+			act();
 			return;
 		}
 		disarm();
-		armed = sid;
+		armed = key;
 		armedAt = performance.now();
 		timer = setTimeout(disarm, CONFIRM_MS);
 	}
 </script>
 
 <ul>
-	{#each sessions as r (r.info.sid)}
-		{@const s = r.info.status}
-		<li class:selected={r.info.sid === selected} onpointerleave={() => armed === r.info.sid && disarm()}>
-			<button class="row" onclick={() => onselect(r.info.sid)}>
-				<!-- The dot and the status line keep their space when empty, so rows do not jump. -->
-				<span class="title" class:unread={r.info.unread}>
-					<span class="dot">{r.info.unread ? '•' : ''}</span>{r.info.sid} · {sessionTitle(r.info)}
-				</span>
-				<span class="cwd">{r.info.cwd || '~'}</span>
-				<span class="status {s?.state}" title={s?.msg}>
-					{#if s?.state === 'working'}<span class="spinner"></span>
-					{:else if s?.state === 'input'}⚠ {s.msg}
-					{:else if s?.state === 'auth'}🔑
-					{:else if s?.state === 'done'}✓
-					{:else if s?.state === 'error'}✗
-					{:else}&nbsp;{/if}
-				</span>
-				<span class="flags">
-					{#if r.info.state === STATE_EXITED}<span>exited ({r.info.code})</span>{/if}
-					{#if r.info.orphans?.length}<span>orphans: {r.info.orphans.join(', ')}</span>{/if}
-					{#if r.ro}<span>read-only</span>{/if}
-					<span>reports: {r.reports}</span>
-					<span>resets: {r.resets}</span>
-				</span>
-			</button>
-			<button
-				class="kill"
-				class:armed={armed === r.info.sid}
-				onclick={() => kill(r.info.sid)}
-				onblur={() => armed === r.info.sid && disarm()}
-			>
-				{armed === r.info.sid ? 'Confirm kill?' : 'Kill'}
-			</button>
+	{#each groups as g (g.repo ?? '')}
+		<li class="group" title={g.repo}>
+			<span class="repo">{g.repo === undefined ? 'other' : repoName(g.repo)}</span>
+			{#if g.repo !== undefined}
+				{@const repo = g.repo}
+				<button class="small" {disabled} title="Start claude in {repo}" onclick={() => onstart(repo, 'claude')}>claude</button>
+				<button class="small" {disabled} title="Start codex in {repo}" onclick={() => onstart(repo, 'codex')}>codex</button>
+				<button
+					class="small"
+					title="Remove {repo} from the list; its sessions keep running"
+					class:armed={armed === `repo:${repo}`}
+					onclick={() => confirmed(`repo:${repo}`, () => onremoverepo(repo))}
+					onblur={() => armed === `repo:${repo}` && disarm()}
+					onpointerleave={() => armed === `repo:${repo}` && disarm()}
+				>
+					{armed === `repo:${repo}` ? 'Confirm remove?' : 'remove'}
+				</button>
+			{/if}
 		</li>
+		{#each g.rows as r (r.info.sid)}
+			{@const s = r.info.status}
+			{@const key = `${r.info.restorable ? 'dismiss' : 'kill'}:${r.info.sid}`}
+			<li class:selected={r.info.sid === selected} onpointerleave={() => armed === key && disarm()}>
+				<button class="row" onclick={() => onselect(r.info.sid)}>
+					<!-- The dot and the status line keep their space when empty, so rows do not jump. -->
+					<span class="title" class:unread={r.info.unread}>
+						<span class="dot">{r.info.unread ? '•' : ''}</span>{r.info.sid} · {sessionTitle(r.info)}
+					</span>
+					<span class="cwd">{r.info.cwd || '~'}</span>
+					<span class="status {s?.state}" title={s?.msg}>
+						{#if s?.state === 'working'}<span class="spinner"></span>
+						{:else if s?.state === 'input'}⚠ {s.msg}
+						{:else if s?.state === 'auth'}🔑
+						{:else if s?.state === 'done'}✓
+						{:else if s?.state === 'error'}✗
+						{:else}&nbsp;{/if}
+					</span>
+					<span class="flags">
+						{#if r.info.restorable}<span>from an earlier run</span>
+						{:else if r.info.state === STATE_EXITED}<span>exited ({r.info.code})</span>{/if}
+						{#if r.info.orphans?.length}<span>orphans: {r.info.orphans.join(', ')}</span>{/if}
+						{#if r.ro}<span>read-only</span>{/if}
+						{#if !r.info.restorable}
+							<span>reports: {r.reports}</span>
+							<span>resets: {r.resets}</span>
+						{/if}
+					</span>
+				</button>
+				{#if r.info.restorable}
+					<button class="kill" {disabled} onclick={() => onreopen(r.info.sid)}>Reopen</button>
+				{/if}
+				<button
+					class="kill"
+					class:armed={armed === key}
+					onclick={() => confirmed(key, () => (r.info.restorable ? ondismiss : onkill)(r.info.sid))}
+					onblur={() => armed === key && disarm()}
+				>
+					{#if r.info.restorable}{armed === key ? 'Confirm dismiss?' : 'Dismiss'}{:else}{armed === key ? 'Confirm kill?' : 'Kill'}{/if}
+				</button>
+			</li>
+		{/each}
 	{/each}
 </ul>
 
@@ -94,6 +137,29 @@
 		display: flex;
 		align-items: flex-start;
 		border-bottom: 1px solid #333;
+	}
+	li.group {
+		align-items: center;
+		gap: 4px;
+		padding: 4px 8px;
+		font-size: 11px;
+		color: #999;
+	}
+	.repo {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.small {
+		font-size: 11px;
+		padding: 0 6px;
+	}
+	.small.armed {
+		background: #c72e2e;
+		border-color: #f14c4c;
+		color: #fff;
 	}
 	li.selected {
 		background: #2a2d2e;
@@ -171,6 +237,9 @@
 	}
 	.kill {
 		margin: 6px 8px;
+	}
+	.kill + .kill {
+		margin-left: 0;
 	}
 	.kill.armed {
 		background: #c72e2e;
