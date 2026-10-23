@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 )
 
@@ -58,6 +59,10 @@ func Load(home string) (State, error) {
 	if err := json.Unmarshal(data, &st); err != nil {
 		return defaultState(), fmt.Errorf("parse %s: %w", StatePath(home), err)
 	}
+	// A hand-edited file may break the order adding and removing a repo
+	// rely on.
+	slices.Sort(st.Repos)
+	st.Repos = slices.Compact(st.Repos)
 	return st, nil
 }
 

@@ -186,6 +186,12 @@ func (c *conn) handle(m any) {
 		c.kill(m.SID)
 	case protocol.Seen:
 		c.seen(m.SID)
+	case protocol.ReposList:
+		c.reposList()
+	case protocol.ReposAdd:
+		c.reposAdd(m)
+	case protocol.ReposRemove:
+		c.reposRemove(m)
 	default:
 		c.send(protocol.Error{T: protocol.TError, Code: protocol.CodeBadRequest})
 	}

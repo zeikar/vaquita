@@ -182,6 +182,9 @@ func (t *table) join(c *conn) {
 	defer t.mu.Unlock()
 	c.send(protocol.Hello{T: protocol.THello, V: protocol.Version})
 	c.send(protocol.Sessions{T: protocol.TSessions, List: t.listLocked()})
+	if c.client == protocol.ClientGUI {
+		t.sendReposLocked(c)
+	}
 	t.sendMissedLocked(c)
 	t.clients[c] = struct{}{}
 }

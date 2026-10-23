@@ -118,3 +118,17 @@ func TestStateRescan(t *testing.T) {
 		t.Errorf("Rescan returned %+v, want %+v", holding, wantHolding)
 	}
 }
+
+func TestStateLoadSortsRepos(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(StatePath(home), []byte(`{"repos":["/tmp/repo-feature","/tmp/repo","/tmp/repo-feature"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"/tmp/repo", "/tmp/repo-feature"}; !reflect.DeepEqual(got.Repos, want) {
+		t.Errorf("Repos = %v, want %v", got.Repos, want)
+	}
+}

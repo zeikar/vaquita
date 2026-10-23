@@ -158,6 +158,10 @@ func handshake(t *testing.T, ws *websocket.Conn) {
 	if _, ok := readMessage(t, ws).(protocol.Sessions); !ok {
 		t.Fatal("second reply is not sessions")
 	}
+	// goodHello is a GUI's, which is also sent the repo list.
+	if _, ok := readMessage(t, ws).(protocol.Repos); !ok {
+		t.Fatal("third reply is not repos")
+	}
 }
 
 func TestListenRequiresTokenAndHome(t *testing.T) {
@@ -378,6 +382,12 @@ func TestCloseSendsGoingAway(t *testing.T) {
 	ev, ok := <-c.Events()
 	if !ok {
 		t.Fatal("Events closed without an error event")
+	}
+	if _, isRepos := ev.Msg.(protocol.Repos); isRepos {
+		ev, ok = <-c.Events()
+		if !ok {
+			t.Fatal("Events closed without an error event")
+		}
 	}
 	if got := websocket.CloseStatus(ev.Err); got != websocket.StatusGoingAway {
 		t.Fatalf("event = %+v, want close %v", ev, websocket.StatusGoingAway)

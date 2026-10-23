@@ -193,6 +193,7 @@ func TestMissedSummary(t *testing.T) {
 	}
 
 	g := dialClient(t, srv)
+	g.waitRepos(func([]string) bool { return true })
 	if !g.handleNext("the missed summary", time.After(sessTimeout)) {
 		t.Fatal("nothing after the first GUI's list")
 	}

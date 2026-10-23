@@ -23,6 +23,7 @@ type tclient struct {
 	errs     []protocol.Error
 	statuses []protocol.Status
 	notifies []protocol.Notify
+	repos    [][]string // every repos message
 	streams  map[uint32]*stream
 	// noAck makes it a terminal that has stopped consuming output: it acks
 	// only when the test does.
@@ -195,6 +196,8 @@ func (tc *tclient) apply(ev client.Event) {
 		tc.statuses = append(tc.statuses, m)
 	case protocol.Notify:
 		tc.notifies = append(tc.notifies, m)
+	case protocol.Repos:
+		tc.repos = append(tc.repos, m.List)
 	case protocol.Replay:
 		st := tc.stream(m.SID)
 		if st.replaying {
@@ -296,6 +299,13 @@ func (tc *tclient) waitNotify(ok func(protocol.Notify) bool) protocol.Notify {
 	tc.t.Helper()
 	tc.waitFor("notify", func() bool { return slices.ContainsFunc(tc.notifies, ok) })
 	return tc.notifies[slices.IndexFunc(tc.notifies, ok)]
+}
+
+// waitRepos waits until the latest repos message satisfies cond and returns it.
+func (tc *tclient) waitRepos(cond func([]string) bool) []string {
+	tc.t.Helper()
+	tc.waitFor("repos", func() bool { return len(tc.repos) > 0 && cond(tc.repos[len(tc.repos)-1]) })
+	return tc.repos[len(tc.repos)-1]
 }
 
 func running(i protocol.SessionInfo) bool { return i.State == protocol.StateRunning }
