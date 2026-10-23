@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -83,6 +84,7 @@ type Config struct {
 // touches it.
 type Session struct {
 	pid      int
+	cwd      string
 	started  time.Time
 	cmd      *exec.Cmd
 	master   *os.File
@@ -133,6 +135,10 @@ func Start(cfg Config) (*Session, error) {
 		return nil, fmt.Errorf("session cwd %s: not a directory", cwd)
 	}
 
+	// Before the shell starts: Started must follow cmd.Start at once, as
+	// the record's start-time check allows only a short slack.
+	realCwd := RealDir(cwd)
+
 	args := []string{"-l", "-i"}
 	if cfg.Cmd != "" {
 		// A newline rather than ';' still runs the exec after a command that
@@ -167,6 +173,7 @@ func Start(cfg Config) (*Session, error) {
 
 	s := &Session{
 		pid:        cmd.Process.Pid,
+		cwd:        realCwd,
 		started:    time.Now(),
 		cmd:        cmd,
 		master:     master,
@@ -195,6 +202,24 @@ func (s *Session) Unlock() { s.mu.Unlock() }
 
 // PID is the shell's pid, which is also the id of its POSIX session.
 func (s *Session) PID() int { return s.pid }
+
+// RealDir names the directory p for records and lists: p cleaned when it has
+// no ".." component, else its real path. A lexical Clean would be wrong for a
+// ".." after a symlink, which the kernel resolves through the link;
+// EvalSymlinks does the same. A path that cannot be resolved stays as given.
+func RealDir(p string) string {
+	if !slices.Contains(strings.Split(p, "/"), "..") {
+		return filepath.Clean(p)
+	}
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
+}
+
+// Cwd is the directory the shell started in, as RealDir names it: the user's
+// home when the config's was empty.
+func (s *Session) Cwd() string { return s.cwd }
 
 // Started is when the shell was started.
 func (s *Session) Started() time.Time { return s.started }

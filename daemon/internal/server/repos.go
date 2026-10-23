@@ -9,14 +9,15 @@ import (
 	"slices"
 
 	"github.com/zeikar/vaquita/daemon/internal/protocol"
+	"github.com/zeikar/vaquita/daemon/internal/session"
 )
 
-// repoPath returns p cleaned if it names an existing directory.
+// repoPath returns p, as session.RealDir names it, if it names an existing directory.
 func repoPath(p string) (string, error) {
 	if !filepath.IsAbs(p) {
 		return "", errors.New("not an absolute path")
 	}
-	p = filepath.Clean(p)
+	p = session.RealDir(p)
 	fi, err := os.Stat(p)
 	if err != nil {
 		return "", err
@@ -82,7 +83,7 @@ func (c *conn) reposAdd(m protocol.ReposAdd) {
 
 func (c *conn) reposRemove(m protocol.ReposRemove) {
 	// No stat: a folder that is gone must still be removable.
-	p := filepath.Clean(m.Path)
+	p := session.RealDir(m.Path)
 	t := c.srv.table
 	t.mu.Lock()
 	defer t.mu.Unlock()

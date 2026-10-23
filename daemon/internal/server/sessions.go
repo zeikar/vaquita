@@ -113,6 +113,19 @@ func newTable(home string, st state.State) *table {
 	return t
 }
 
+// normalizeCwds gives the loaded records the directory their session started
+// in, so that the list groups them like new ones: the user's home for an empty
+// cwd, else session.RealDir. They are saved with the next change, not for this.
+func (t *table) normalizeCwds() {
+	for _, e := range t.entries {
+		if e.rec.Cwd == "" {
+			e.rec.Cwd = t.userHome
+		} else {
+			e.rec.Cwd = session.RealDir(e.rec.Cwd)
+		}
+	}
+}
+
 // newInc returns 8 random bytes in hex.
 func newInc() string {
 	b := make([]byte, 8)
@@ -351,7 +364,7 @@ func (c *conn) startSession(cwd, cmd, name string, cols, rows int, old *entry) {
 		return
 	}
 	e.sess, e.pid = s, s.PID()
-	e.rec = state.SessionRecord{SID: int(e.sid), PID: e.pid, Started: s.Started(), Cwd: cwd, Cmd: cmd, Name: name}
+	e.rec = state.SessionRecord{SID: int(e.sid), PID: e.pid, Started: s.Started(), Cwd: s.Cwd(), Cmd: cmd, Name: name}
 	c.addSub(sub)
 
 	// Listed only once started: other connections can find the entry once

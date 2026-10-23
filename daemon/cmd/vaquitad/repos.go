@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -26,7 +27,7 @@ func parseRepos(args []string) (reposCmd, error) {
 	case op == "ls" && len(args) == 1:
 		return reposCmd{op: "ls"}, nil
 	case (op == "add" || op == "rm") && len(args) == 2:
-		abs, err := filepath.Abs(args[1])
+		abs, err := absPath(args[1])
 		if err != nil {
 			return reposCmd{}, fmt.Errorf("repos %s: %w", op, err)
 		}
@@ -102,4 +103,20 @@ func repos(args []string) error {
 		}
 	}
 	return nil
+}
+
+// absPath makes p absolute without cleaning it: a ".." after a symlink must
+// reach the daemon as typed, which resolves it as the kernel does.
+func absPath(p string) (string, error) {
+	if filepath.IsAbs(p) {
+		return p, nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	if p == "." {
+		return wd, nil
+	}
+	return wd + string(filepath.Separator) + p, nil
 }

@@ -137,20 +137,35 @@ func TestReposAddRefusesBadPaths(t *testing.T) {
 	}
 }
 
-func TestReposAddStoresCleanedPath(t *testing.T) {
+// A clean path is stored as given; one with ".." is stored as its real path,
+// which is where the kernel goes through a symlink, not where a lexical clean
+// would.
+func TestReposAddStoresRealPathOfUncleanPath(t *testing.T) {
 	srv := startServer(t)
 	gui := dialClient(t, srv)
-	dir := t.TempDir()
-	sub := filepath.Join(dir, "sub")
-	if err := os.Mkdir(sub, 0o755); err != nil {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := gui.c.ReposAdd(sub + "/../sub/"); err != nil {
+	target := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(target, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	got := gui.waitRepos(func(l []string) bool { return len(l) == 1 })
-	if !slices.Equal(got, []string{sub}) {
-		t.Fatalf("stored %v, want %v", got, []string{sub})
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	for i, tc := range []struct{ add, want string }{
+		{link, link},
+		{link + "/..", filepath.Join(root, "a")},
+	} {
+		if err := gui.c.ReposAdd(tc.add); err != nil {
+			t.Fatal(err)
+		}
+		got := gui.waitRepos(func(l []string) bool { return len(l) == i+1 })
+		if !slices.Contains(got, tc.want) {
+			t.Fatalf("add %q: stored %v, want %q among them", tc.add, got, tc.want)
+		}
 	}
 }
 

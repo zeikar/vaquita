@@ -45,6 +45,14 @@ func TestReadClaude(t *testing.T) {
 			100: pidJSON(idA, claudeStart.Add(time.Second)),
 			200: pidJSON(idB, claudeStart),
 		}, []Member{member(100, 100, claudeStart), member(200, 200, claudeStart)}, 200, idB},
+		{"parent wins over a child in the foreground group", map[int]string{
+			100: pidJSON(idA, claudeStart),
+			200: pidJSON(idB, claudeStart.Add(time.Second)),
+		}, []Member{member(100, 100, claudeStart), member(200, 100, claudeStart)}, 100, idA},
+		{"parent wins whatever the member order", map[int]string{
+			100: pidJSON(idA, claudeStart),
+			200: pidJSON(idB, claudeStart.Add(time.Second)),
+		}, []Member{member(200, 100, claudeStart), member(100, 100, claudeStart)}, 100, idA},
 		{"newer without foreground", map[int]string{
 			100: pidJSON(idA, claudeStart),
 			200: pidJSON(idB, claudeStart.Add(time.Second)),

@@ -67,6 +67,12 @@ func RestoreCommand(cmd, agent, id string) string {
 			return ""
 		}
 	}
+	// A recorded id wins: it is newer than the typed one after a /new. Codex
+	// only appends to the rollout of `codex resume <id>`, so the reader never
+	// sees an older conversation and the typed id is all there is.
+	if kind == "codex" && !convid.ValidID(id) {
+		id = explicitResumeID(cmd)
+	}
 	ok := convid.ValidID(id)
 	switch {
 	case kind == "claude" && ok:
@@ -77,4 +83,32 @@ func RestoreCommand(cmd, agent, id string) string {
 		return "codex resume " + shellQuote(id)
 	}
 	return "codex resume --last"
+}
+
+// explicitResumeID returns the id in a typed `codex resume <id>`, "" if the
+// command has another shape. Each word is bare or fully single-quoted, as
+// `vaquitad attach` and RestoreCommand send them. Options before `resume` are
+// not recognized, and a quoted prompt that holds the words is one word, so
+// text elsewhere in the command is never taken for an id.
+func explicitResumeID(cmd string) string {
+	w := strings.Fields(cmd)
+	if len(w) < 3 || unquoteWord(w[0]) != "codex" || unquoteWord(w[1]) != "resume" {
+		return ""
+	}
+	if id := unquoteWord(w[2]); convid.ValidID(id) {
+		return id
+	}
+	return ""
+}
+
+// unquoteWord returns w without one pair of single quotes around it, or ""
+// if w has any other quote: a field of a longer quoted word is not a word.
+func unquoteWord(w string) string {
+	if len(w) >= 2 && w[0] == '\'' && w[len(w)-1] == '\'' {
+		w = w[1 : len(w)-1]
+	}
+	if strings.Contains(w, "'") {
+		return ""
+	}
+	return w
 }

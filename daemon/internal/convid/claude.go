@@ -48,7 +48,11 @@ func ReadClaude(home string, members []Member, foreground int) string {
 			continue
 		}
 		fg := m.PGID == foreground
-		if best.have && (best.fg && !fg || best.fg == fg && best.started >= f.StartedAt) {
+		// Inside the foreground group the earliest claude is the session's
+		// agent: one it launched inherits the group and starts later.
+		// Elsewhere the newest wins.
+		if best.have && (best.fg && !fg ||
+			best.fg == fg && (fg && best.started <= f.StartedAt || !fg && best.started >= f.StartedAt)) {
 			continue
 		}
 		best.have, best.id, best.fg, best.started = true, f.SessionID, fg, f.StartedAt

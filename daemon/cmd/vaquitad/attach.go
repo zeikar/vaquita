@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"syscall"
@@ -90,7 +89,7 @@ func parseAttach(args []string) (attachConfig, error) {
 	if cfg.cwd == "" {
 		cfg.cwd = "."
 	}
-	abs, err := filepath.Abs(cfg.cwd)
+	abs, err := absPath(cfg.cwd)
 	if err != nil {
 		return attachConfig{}, fmt.Errorf("attach: --cwd: %w", err)
 	}

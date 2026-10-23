@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
@@ -275,6 +277,60 @@ func TestSessionCwd(t *testing.T) {
 	_, err := Start(Config{SID: 1, Shell: "/bin/sh", Cwd: "/nonexistent/vaquita-test", Cols: 80, Rows: 24})
 	if err == nil || !strings.Contains(err.Error(), "cwd") {
 		t.Fatalf("Start with a missing cwd: %v, want an error about the cwd", err)
+	}
+}
+
+// Cwd is the directory the shell started in: the home for an empty one, a
+// clean path as given, and the real path for one with ".." that must be
+// resolved through a symlink, where a lexical Clean would pick another
+// directory.
+func TestSessionStartDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ cwd, want string }{
+		{"", home},
+		{link, link},
+		{link + "/", link},
+		{link + "/..", filepath.Join(root, "a")},
+	} {
+		exit := make(chan int, 1)
+		var s *Session
+		ready := make(chan struct{})
+		s, err := Start(Config{SID: 1, Shell: "/bin/sh", Cwd: tc.cwd, Cmd: "pwd -P > " + shellQuote(filepath.Join(root, "pwd")) + "; exit 0", Cols: 80, Rows: 24,
+			OnExit: func(code int) { <-ready; exit <- code }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		close(ready)
+		if got := s.Cwd(); got != tc.want {
+			t.Errorf("Cwd() for %q = %q, want %q", tc.cwd, got, tc.want)
+		}
+		select {
+		case <-exit:
+		case <-time.After(10 * time.Second):
+			t.Fatal("shell did not exit")
+		}
+		got, _ := os.ReadFile(filepath.Join(root, "pwd"))
+		dir := tc.cwd
+		if dir == "" {
+			dir = home
+		}
+		want, _ := filepath.EvalSymlinks(dir)
+		if strings.TrimSpace(string(got)) != want {
+			t.Errorf("shell for %q ran in %q, want %q", tc.cwd, got, want)
+		}
 	}
 }
 

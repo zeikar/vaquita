@@ -100,6 +100,7 @@ func Listen(opts Options) (*Server, error) {
 	if s.table.userHome, err = os.UserHomeDir(); err != nil {
 		slog.Warn("no home directory, so agents' conversation ids are not recorded", "err", err)
 	}
+	s.table.normalizeCwds()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", s.handleWS)
 	s.hs = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}

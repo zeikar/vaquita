@@ -419,3 +419,31 @@ func TestDismissDuringReopen(t *testing.T) {
 		t.Error("state.json lost the record")
 	}
 }
+
+// Loaded records are listed with the directory their shell started in: the
+// user's home for an empty cwd, the real path for one with "..".
+func TestLoadedRecordsListEffectiveCwd(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "a", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "a", "b"), filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	srv := startRecords(t, goneRecord(t, 1, "", "claude"), goneRecord(t, 2, root+"/link/..", "claude"))
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := dialClient(t, srv)
+	a.waitFor("both records", func() bool { return a.info(1) != nil && a.info(2) != nil })
+	if i := a.info(1); i.Cwd != home {
+		t.Errorf("empty cwd listed as %q, want %q", i.Cwd, home)
+	}
+	if i := a.info(2); i.Cwd != filepath.Join(root, "a") {
+		t.Errorf("cwd listed as %q, want %q", i.Cwd, filepath.Join(root, "a"))
+	}
+}
