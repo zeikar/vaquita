@@ -29,7 +29,13 @@ type Output struct {
 	// blocked report was read, 0 when unknown. While the view is working or
 	// waiting for input, Tick polls it from nextPoll on: the program runs in
 	// a group of its own under the session's shell, so its death, even by
-	// SIGKILL, ends neither the session nor anything the projector sees.
+	// SIGKILL, ends neither the session nor anything the projector sees. The
+	// poll takes the reporter for gone once its group no longer exists or is
+	// no longer the PTY's foreground group. The group alone is not enough: a
+	// helper the program started, such as the caffeinate Claude Code runs, can
+	// outlive it there for minutes. The shell takes the terminal back as soon
+	// as it reaps the dead job, so the foreground says whether the program
+	// still holds the session.
 	//
 	// leader is the process group of the session's shell, 0 in unit tests. An
 	// agent normally runs as a foreground job of its own, so a report read
@@ -40,7 +46,8 @@ type Output struct {
 	// the next poll without asking GroupAlive, which the shell's group would
 	// pass forever. Clearing waits for the poll so the report is still
 	// published first. A replaced leader is watched like any reporter: its
-	// group lasts as long as the session, whose exit clears the status.
+	// group stays in the foreground and lasts as long as the session, whose
+	// exit clears the status.
 	reporter int
 	leader   int
 	gone     bool
@@ -51,7 +58,7 @@ type Output struct {
 	// Foreground returns the PTY's foreground process group, and GroupAlive
 	// reports whether a process group still exists. Both are set or both
 	// nil, as in unit tests, which means no watch: only Foreground produces
-	// a reporter, and Tick calls GroupAlive only for one. A group Foreground
+	// a reporter, and Tick calls both only for one. A group Foreground
 	// cannot tell, or one at most 1, leaves a report without a reporter.
 	Foreground func() (int, error)
 	GroupAlive func(pgid int) bool
@@ -127,17 +134,27 @@ func (o *Output) TakeStatus() (changed bool, notes []status.Notification) { retu
 func (o *Output) Seen() { o.proj.Seen() }
 
 // Tick raises a notification whose deadline has passed and, once the poll is
-// due, checks that the reporter's process group is still there.
+// due, checks that the reporter's process group is still there and still in
+// the foreground.
 func (o *Output) Tick(now time.Time) {
 	o.proj.Tick(now)
 	if !o.polling() || now.Before(o.nextPoll) {
 		return
 	}
-	if !o.gone && o.GroupAlive(o.reporter) {
+	if !o.gone && o.GroupAlive(o.reporter) && o.inForeground() {
 		o.nextPoll = now.Add(fgPollGap)
 		return
 	}
 	o.interrupt()
+}
+
+// inForeground reports whether the reporter's group is the PTY's foreground
+// group. A failed lookup says nothing about who holds the terminal, so it
+// counts as yes and leaves the decision to GroupAlive: the one expected is
+// ErrClosed after the shell's exit, which clears the status anyway.
+func (o *Output) inForeground() bool {
+	fg, err := o.Foreground()
+	return err != nil || fg == o.reporter
 }
 
 // interrupt ends whatever was working or waiting for input, in the records

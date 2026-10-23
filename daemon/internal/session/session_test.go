@@ -5,7 +5,9 @@ import (
 	"errors"
 	"log"
 	"log/slog"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -435,6 +437,81 @@ func TestForegroundGroupDeathClearsView(t *testing.T) {
 	if exited {
 		t.Fatal("the session exited with the job")
 	}
+	ts.write(t, "x\n")
+	ts.waitOutput(t, "after:x")
+}
+
+// A helper an agent starts in its own process group can outlive it, as the
+// caffeinate Claude Code runs does, so the group outlasts a SIGKILL of the
+// agent alone. The shell takes the terminal back once it has reaped the job,
+// and that clears the view. The job's sh prints its pid, which the main process
+// keeps when the sh replaces itself with it.
+func TestHelperOutlivingReporterClearsView(t *testing.T) {
+	ts := startSession(t, `set -m; sh -c 'sleep 30 & printf "main:%s;" $$; sleep 0.2; printf "\033]7501;state=working:app=x\007"; exec sleep 60'; read l; printf "after:%s" "$l"`, nil)
+	var reporter int
+	deadline := time.After(testTimeout)
+	for {
+		ts.Lock()
+		v, _ := ts.out.View()
+		reporter = ts.out.reporter
+		fg, fgErr := ts.out.Foreground()
+		ts.Unlock()
+		if v.State == status.ViewWorking {
+			if reporter <= 1 || reporter == ts.PID() || reporter != fg || fgErr != nil {
+				t.Fatalf("reporter %d, foreground %d (%v), shell %d; want the job's own group", reporter, fg, fgErr, ts.PID())
+			}
+			break
+		}
+		select {
+		case <-ts.output:
+		case <-deadline:
+			t.Fatalf("view never turned working; output ends %q", tail(ringText(ts.Session)))
+		}
+	}
+	m := regexp.MustCompile(`main:(\d+);`).FindStringSubmatch(ringText(ts.Session))
+	if m == nil {
+		t.Fatalf("no main pid in the output %q", tail(ringText(ts.Session)))
+	}
+	mainPID, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only a process of this test's job is ever signalled.
+	pgid, pgErr := unix.Getpgid(mainPID)
+	sid, sidErr := unix.Getsid(mainPID)
+	if pgErr != nil || sidErr != nil || pgid != reporter || sid != ts.PID() {
+		t.Fatalf("main %d: group %d (%v), session %d (%v); want %d, %d", mainPID, pgid, pgErr, sid, sidErr, reporter, ts.PID())
+	}
+	if err := unix.Kill(mainPID, unix.SIGKILL); err != nil {
+		t.Fatalf("kill main %d: %v", mainPID, err)
+	}
+
+	stop := time.Now().Add(testTimeout)
+	for {
+		ts.Lock()
+		v, _ := ts.out.View()
+		d, ok := ts.out.NextDeadline()
+		if v == (status.View{}) {
+			ts.Unlock()
+			break
+		}
+		if !ok {
+			ts.Unlock()
+			t.Fatalf("no poll scheduled for view %+v", v)
+		}
+		ts.out.Tick(d)
+		fg, _ := ts.out.Foreground()
+		ts.Unlock()
+		if time.Now().After(stop) {
+			t.Fatalf("view %+v outlived the job's main process; its group %d alive %v, foreground %d", v, reporter, groupAlive(reporter), fg)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// The helper keeps the group alive, so only the terminal can have told.
+	if !groupAlive(reporter) {
+		t.Fatalf("group %d died with its main process; the helper did not outlive it", reporter)
+	}
+
 	ts.write(t, "x\n")
 	ts.waitOutput(t, "after:x")
 }

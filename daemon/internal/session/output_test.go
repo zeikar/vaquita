@@ -414,6 +414,34 @@ func TestOutputForegroundGroupPoll(t *testing.T) {
 	}
 }
 
+// A helper left in the reporter's group keeps it alive after the reporter
+// died; the shell taking the terminal back is what clears the view. A failed
+// foreground lookup leaves the decision to the group check.
+func TestOutputForegroundMovedClearsView(t *testing.T) {
+	o, now, _, polls := watchedOutput()
+	t0 := *now
+	fg, fgErr := 42, error(nil)
+	o.Foreground = func() (int, error) { return fg, fgErr }
+	o.Feed([]byte(working))
+	o.TakeStatus()
+	o.Tick(t0.Add(fgPollGap))
+	fgErr = ErrClosed
+	o.Tick(t0.Add(2 * fgPollGap))
+	if v, _ := o.View(); v.State != status.ViewWorking || *polls != 2 {
+		t.Fatalf("view %+v after %d group checks; want working and 2", v, *polls)
+	}
+
+	fg, fgErr = 7, nil
+	o.Tick(t0.Add(3 * fgPollGap))
+	changed, notes := o.TakeStatus()
+	if v, _ := o.View(); !changed || len(notes) != 0 || v != (status.View{}) {
+		t.Fatalf("changed %v, notes %v, view %+v; want an empty view and no notification", changed, notes, v)
+	}
+	if _, ok := o.NextDeadline(); ok {
+		t.Fatal("deadline left after the foreground moved")
+	}
+}
+
 // A report read while the shell's own group is in the foreground comes from a
 // program that has already exited: the next poll clears it without asking
 // whether the shell's group is alive.
