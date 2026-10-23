@@ -23,6 +23,22 @@ func TestMessageJSON(t *testing.T) {
 		{Notify{T: TNotify, SID: 3, Kind: NotifyDone, Msg: "finished"}, `{"t":"notify","sid":3,"kind":"done","msg":"finished"}`},
 		{Notify{T: TNotify, Kind: NotifyMissed, Count: 2}, `{"t":"notify","kind":"missed","count":2}`},
 		{Seen{T: TSeen, SID: 3}, `{"t":"seen","sid":3}`},
+		{Repos{T: TRepos, List: []string{}}, `{"t":"repos","list":[]}`},
+		{Repos{T: TRepos, List: []string{"/tmp/repo", "/tmp/repo-feature"}}, `{"t":"repos","list":["/tmp/repo","/tmp/repo-feature"]}`},
+		{ReposList{T: TReposList}, `{"t":"repos.list"}`},
+		{ReposAdd{T: TReposAdd, Path: "/tmp/repo"}, `{"t":"repos.add","path":"/tmp/repo"}`},
+		{ReposRemove{T: TReposRemove, Path: "/tmp/repo"}, `{"t":"repos.remove","path":"/tmp/repo"}`},
+		{Reopen{T: TReopen, SID: 7, Cols: 120, Rows: 40}, `{"t":"reopen","sid":7,"cols":120,"rows":40}`},
+		{Dismiss{T: TDismiss, SID: 7}, `{"t":"dismiss","sid":7}`},
+		{
+			Sessions{T: TSessions, List: []SessionInfo{
+				{SID: 1, Inc: "a", State: StateExited, Restorable: true},
+				{SID: 2, Inc: "a", State: StateRunning},
+			}},
+			`{"t":"sessions","list":[` +
+				`{"sid":1,"inc":"a","cwd":"","cmd":"","name":"","cols":0,"rows":0,"state":"exited","pid":0,"code":0,"restorable":true},` +
+				`{"sid":2,"inc":"a","cwd":"","cmd":"","name":"","cols":0,"rows":0,"state":"running","pid":0,"code":0}]}`,
+		},
 		{
 			Sessions{T: TSessions, List: []SessionInfo{
 				{SID: 1, Inc: "a", State: StateRunning, Status: &StatusInfo{State: ViewWorking}, Unread: true},

@@ -40,6 +40,13 @@ const (
 	TStatus      = "status"
 	TNotify      = "notify"
 	TSeen        = "seen"
+
+	TReposList   = "repos.list"
+	TReposAdd    = "repos.add"
+	TReposRemove = "repos.remove"
+	TRepos       = "repos"
+	TReopen      = "reopen"
+	TDismiss     = "dismiss"
 )
 
 // Error codes.
@@ -49,6 +56,9 @@ const (
 	CodeInputOverflow = "input-overflow"
 	CodeBadRequest    = "bad-request"
 	CodeOrphans       = "orphans"
+
+	CodeBadPath          = "bad-path"
+	CodeConversationLive = "conversation-live"
 )
 
 // Session states in SessionInfo.
@@ -127,7 +137,9 @@ type Kill struct {
 }
 
 // Error reports a failed request. V is set for CodeVersion, PIDs for
-// CodeOrphans.
+// CodeOrphans. CodeBadPath answers a repos.add whose path is not an absolute
+// directory; CodeConversationLive answers a reopen of a record whose agent
+// conversation is open in another session.
 type Error struct {
 	T    string `json:"t"`
 	Code string `json:"code"`
@@ -155,6 +167,9 @@ type SessionInfo struct {
 	// Orphans are processes left in the session's PTY session after its
 	// shell exited.
 	Orphans []int `json:"orphans,omitempty"`
+	// Restorable marks a record from an earlier daemon run: no PTY here and
+	// no orphans, so Reopen and Dismiss accept it.
+	Restorable bool `json:"restorable,omitempty"`
 	// Status and Unread are left out when the row shows nothing, which is
 	// all an older daemon ever sends.
 	Status *StatusInfo `json:"status,omitempty"`
@@ -229,6 +244,46 @@ type Seen struct {
 	SID uint32 `json:"sid"`
 }
 
+// ReposList asks for the repo list; the daemon answers the requester with
+// Repos.
+type ReposList struct {
+	T string `json:"t"`
+}
+
+// ReposAdd registers the absolute directory Path as a repo.
+type ReposAdd struct {
+	T    string `json:"t"`
+	Path string `json:"path"`
+}
+
+// ReposRemove unregisters a repo. Sessions under it are not touched.
+type ReposRemove struct {
+	T    string `json:"t"`
+	Path string `json:"path"`
+}
+
+// Repos is the registered repo list. Senders pass a non-nil List so that an
+// empty one shows as [] on the wire, never null.
+type Repos struct {
+	T    string   `json:"t"`
+	List []string `json:"list"`
+}
+
+// Reopen starts a new session from the restorable record SID, like a Create;
+// the connection that sent it is subscribed to the new session.
+type Reopen struct {
+	T    string `json:"t"`
+	SID  uint32 `json:"sid"`
+	Cols int    `json:"cols"`
+	Rows int    `json:"rows"`
+}
+
+// Dismiss removes the record SID of a session from an earlier daemon run.
+type Dismiss struct {
+	T   string `json:"t"`
+	SID uint32 `json:"sid"`
+}
+
 // ParseMessage decodes a text frame into the message struct its "t" names,
 // returned by value.
 func ParseMessage(data []byte) (any, error) {
@@ -269,6 +324,18 @@ func ParseMessage(data []byte) (any, error) {
 		return parse[Notify](data)
 	case TSeen:
 		return parse[Seen](data)
+	case TReposList:
+		return parse[ReposList](data)
+	case TReposAdd:
+		return parse[ReposAdd](data)
+	case TReposRemove:
+		return parse[ReposRemove](data)
+	case TRepos:
+		return parse[Repos](data)
+	case TReopen:
+		return parse[Reopen](data)
+	case TDismiss:
+		return parse[Dismiss](data)
 	}
 	return nil, fmt.Errorf("parse message: unknown type %q", head.T)
 }

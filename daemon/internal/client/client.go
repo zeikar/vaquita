@@ -183,6 +183,26 @@ func (c *Client) Seen(sid uint32) error {
 	return c.send(protocol.Seen{T: protocol.TSeen, SID: sid})
 }
 
+func (c *Client) ReposList() error {
+	return c.send(protocol.ReposList{T: protocol.TReposList})
+}
+
+func (c *Client) ReposAdd(path string) error {
+	return c.send(protocol.ReposAdd{T: protocol.TReposAdd, Path: path})
+}
+
+func (c *Client) ReposRemove(path string) error {
+	return c.send(protocol.ReposRemove{T: protocol.TReposRemove, Path: path})
+}
+
+func (c *Client) Reopen(sid uint32, cols, rows int) error {
+	return c.send(protocol.Reopen{T: protocol.TReopen, SID: sid, Cols: cols, Rows: rows})
+}
+
+func (c *Client) Dismiss(sid uint32) error {
+	return c.send(protocol.Dismiss{T: protocol.TDismiss, SID: sid})
+}
+
 // Input sends p to session sid as input frames of generation gen, split to
 // fit the 64KB payload limit.
 func (c *Client) Input(sid, gen uint32, p []byte) error {
