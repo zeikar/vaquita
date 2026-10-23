@@ -1,7 +1,7 @@
 import type { IDisposable } from '@xterm/xterm';
 import type { CloseReason, ConnectionHandlers } from './connection';
 import { NotRunningError, type Endpoint } from './endpoint';
-import { notificationFor, shouldShow, type Notifier, type Target } from './notify';
+import { notificationFor, sessionTitle, shouldShow, type Notifier, type Target } from './notify';
 import {
 	CODE_BAD_PATH,
 	CODE_CONVERSATION_LIVE,
@@ -401,7 +401,9 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 
 	private onError(m: ErrorMessage): void {
 		let message: string | undefined;
-		const orphans = `session ${m.sid} left processes behind: ${(m.pids ?? []).join(', ')}`;
+		// The sidebar shows no sids, so messages name a session by its title.
+		const who = `session "${sessionTitle(m.sid === undefined ? undefined : this.entries.get(m.sid)?.info)}"`;
+		const orphans = `${who} left processes behind: ${(m.pids ?? []).join(', ')}`;
 		const reopening = this.requests.outstandingReopen;
 		if (m.code === CODE_BAD_PATH) {
 			// It answers a repo add, which holds no slot, so it frees no create.
@@ -409,19 +411,19 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		} else if (reopening !== undefined && m.sid === reopening) {
 			this.requests.createDone();
 			if (m.code === CODE_ORPHANS) message = orphans;
-			else if (m.code === CODE_CONVERSATION_LIVE) message = `session ${m.sid}: its conversation is already open in another session`;
-			else message = `reopen ${m.sid} failed (${m.code})`;
+			else if (m.code === CODE_CONVERSATION_LIVE) message = `${who}: its conversation is already open in another session`;
+			else message = `reopen of ${who} failed (${m.code})`;
 		} else if (m.code === CODE_ORPHANS) {
 			message = orphans;
 		} else if (m.sid !== undefined && this.requests.subscribeDone(m.sid)) {
 			// A record kept from an earlier daemon run is listed as exited and
 			// has no screen; one of this run's exited sessions still has one.
 			const record = m.code === CODE_NO_SESSION && this.entries.get(m.sid)?.info.state === STATE_EXITED;
-			if (!record) message = `subscribe ${m.sid} failed (${m.code})`;
+			if (!record) message = `subscribe to ${who} failed (${m.code})`;
 		} else if (m.sid === undefined && this.requests.createDone()) {
 			message = `create failed (${m.code})`;
 		} else {
-			message = m.sid === undefined ? `daemon error (${m.code})` : `session ${m.sid}: daemon error (${m.code})`;
+			message = m.sid === undefined ? `daemon error (${m.code})` : `${who}: daemon error (${m.code})`;
 		}
 		this.pump();
 		this.publish(message === undefined ? {} : { message });

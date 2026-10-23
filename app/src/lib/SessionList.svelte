@@ -87,7 +87,7 @@
 				<button class="row" onclick={() => onselect(r.info.sid)}>
 					<!-- The dot and the status line keep their space when empty, so rows do not jump. -->
 					<span class="title" class:unread={r.info.unread}>
-						<span class="dot">{r.info.unread ? '•' : ''}</span>{r.info.sid} · {sessionTitle(r.info)}
+						<span class="dot">{r.info.unread ? '•' : ''}</span>{sessionTitle(r.info)}
 					</span>
 					<span class="cwd">{r.info.cwd || '~'}</span>
 					<span class="status {s?.state}" title={s?.msg}>

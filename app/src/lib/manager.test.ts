@@ -522,7 +522,7 @@ describe('SessionManager sessions', () => {
 		t.c.emit.error({ t: 'error', code: 'no-session', sid: 9 });
 		expect(t.c.subscribes).toEqual([2]);
 		t.c.emit.error({ t: 'error', code: 'bad-request', sid: 2 });
-		expect(t.state().message).toBe('subscribe 2 failed (bad-request)');
+		expect(t.state().message).toBe('subscribe to session "sh" failed (bad-request)');
 		expect(t.c.subscribes).toEqual([2, 3]);
 		t.m.stop();
 	});
@@ -643,7 +643,7 @@ describe('SessionManager sessions', () => {
 		t.m.kill(1);
 		expect(t.c.requests.at(-1)).toEqual(['kill', 1]);
 		t.c.emit.error({ t: 'error', code: 'orphans', sid: 1, pids: [9] });
-		expect(t.state().message).toBe('session 1 left processes behind: 9');
+		expect(t.state().message).toBe('session "sh" left processes behind: 9');
 		t.m.stop();
 	});
 });
@@ -897,9 +897,9 @@ describe('SessionManager status', () => {
 			expect(t.state().creating).toBe(false);
 			return t.state().message;
 		};
-		expect(fail('orphans', [11, 12])).toBe('session 7 left processes behind: 11, 12');
-		expect(fail('bad-request')).toBe('reopen 7 failed (bad-request)');
-		expect(fail('conversation-live')).toBe('session 7: its conversation is already open in another session');
+		expect(fail('orphans', [11, 12])).toBe('session "w" left processes behind: 11, 12');
+		expect(fail('bad-request')).toBe('reopen of session "w" failed (bad-request)');
+		expect(fail('conversation-live')).toBe('session "w": its conversation is already open in another session');
 		t.m.stop();
 	});
 
