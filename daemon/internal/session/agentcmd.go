@@ -1,6 +1,10 @@
 package session
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/zeikar/vaquita/daemon/internal/convid"
+)
 
 // codexOptions make Codex emit OSC 9 notifications for turn completion,
 // approval requests, plan-mode prompts and questions.
@@ -18,11 +22,7 @@ var codexOptions = []string{
 // `vaquitad attach --new -- codex` sends it. Other commands come back
 // unchanged. Callers keep the typed command for display and the record.
 func AgentCommand(cmd string) string {
-	rest := strings.TrimLeft(cmd, " \t")
-	end := strings.IndexAny(rest, " \t\n")
-	if end < 0 {
-		end = len(rest)
-	}
+	rest, end := firstWord(cmd)
 	if word := rest[:end]; word != "codex" && word != "'codex'" {
 		return cmd
 	}
@@ -32,4 +32,49 @@ func AgentCommand(cmd string) string {
 		b.WriteString(" -c " + shellQuote(o))
 	}
 	return b.String() + rest[end:]
+}
+
+// firstWord returns cmd without its leading blanks and the length of the
+// first word in that.
+func firstWord(cmd string) (rest string, end int) {
+	rest = strings.TrimLeft(cmd, " \t")
+	end = strings.IndexAny(rest, " \t\n")
+	if end < 0 {
+		end = len(rest)
+	}
+	return rest, end
+}
+
+// RestoreCommand returns the command that reopens a session whose record has
+// cmd, the agent kind ("claude" or "codex", or empty) and the conversation id
+// the daemon saw while it ran. The kind is the recorded agent, else the first
+// word of cmd, so an agent that was typed into a plain shell is resumed too.
+// Without a kind it is "": a plain shell in the session's cwd. The rest of
+// the typed command (options, a subcommand such as `resume --last`, a `cd`
+// before it) is dropped: it may already be a resume of another conversation,
+// and keeping it would make a second restore differ from the first. The
+// result is meant to go through AgentCommand, which adds Codex's options.
+func RestoreCommand(cmd, agent, id string) string {
+	kind := agent
+	if kind != "claude" && kind != "codex" {
+		rest, end := firstWord(cmd)
+		switch rest[:end] {
+		case "claude", "'claude'":
+			kind = "claude"
+		case "codex", "'codex'":
+			kind = "codex"
+		default:
+			return ""
+		}
+	}
+	ok := convid.ValidID(id)
+	switch {
+	case kind == "claude" && ok:
+		return "claude --resume " + shellQuote(id)
+	case kind == "claude":
+		return "claude --continue"
+	case ok:
+		return "codex resume " + shellQuote(id)
+	}
+	return "codex resume --last"
 }

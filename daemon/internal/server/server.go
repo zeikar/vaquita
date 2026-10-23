@@ -42,8 +42,9 @@ type Options struct {
 	// change to the sessions.
 	Home string
 	// State is state.json as loaded. Its records are of a previous run's
-	// sessions, which have no PTY here: they are listed as exited until a
-	// rescan decides what becomes of them.
+	// sessions, which have no PTY here: they are listed as exited, and as
+	// restorable when no processes remain of them, until they are reopened
+	// or dismissed.
 	State state.State
 }
 

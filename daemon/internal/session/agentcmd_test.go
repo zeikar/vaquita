@@ -49,3 +49,30 @@ func TestAgentCommandSurvivesTheShell(t *testing.T) {
 		t.Errorf("shell argv = %q, want %q", lines, want)
 	}
 }
+
+func TestRestoreCommand(t *testing.T) {
+	const id = "0b6c8a5e-1f2d-4c3b-9a8e-7d6c5b4a3f21"
+	tests := []struct{ cmd, agent, id, want string }{
+		{"claude", "", "", "claude --continue"},
+		{"claude --model haiku", "", "", "claude --continue"},
+		{"", "claude", id, "claude --resume '" + id + "'"},
+		{"claude --continue", "claude", id, "claude --resume '" + id + "'"},
+		{"codex", "", id, "codex resume '" + id + "'"},
+		{"codex", "", "", "codex resume --last"},
+		{"codex resume --last", "codex", "not-a-uuid", "codex resume --last"},
+		{"  codex --model x", "", "", "codex resume --last"},
+		{"sleep 60", "", id, ""},
+		{"cd /tmp/repo && claude", "", "", ""},
+		{"claudex", "", "", ""},
+		{"", "other", id, ""},
+	}
+	for _, tt := range tests {
+		if got := RestoreCommand(tt.cmd, tt.agent, tt.id); got != tt.want {
+			t.Errorf("RestoreCommand(%q, %q, %q) = %q, want %q", tt.cmd, tt.agent, tt.id, got, tt.want)
+		}
+	}
+	want := "codex" + codexOpts + " resume '" + id + "'"
+	if got := AgentCommand(RestoreCommand("codex", "codex", id)); got != want {
+		t.Errorf("AgentCommand(RestoreCommand) = %q, want %q", got, want)
+	}
+}

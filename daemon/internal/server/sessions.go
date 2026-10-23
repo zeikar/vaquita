@@ -49,7 +49,8 @@ type table struct {
 }
 
 // entry is one session in the table. A record kept from a previous daemon run
-// has no session: it is listed as exited and can only be killed.
+// has no session: it is listed as exited. It is restorable, or holds orphans
+// until a kill's rescan finds them gone; either way it can be dismissed.
 type entry struct {
 	sid  uint32
 	inc  string // tells this session apart from another shown in the same place
@@ -67,6 +68,9 @@ type entry struct {
 
 	// Guarded by table.mu.
 	rec state.SessionRecord
+	// reopening is set while a reopen of this record is starting its
+	// session; it refuses a second reopen and a dismiss.
+	reopening bool
 
 	// Guarded by the session lock.
 	subs   []*subscriber
@@ -141,7 +145,8 @@ func (t *table) listLocked() []protocol.SessionInfo {
 			State: protocol.StateExited, PID: e.pid, Orphans: e.rec.Orphans,
 			// Unknown for a record from a previous run, as for a shell
 			// whose wait failed.
-			Code: -1,
+			Code:       -1,
+			Restorable: e.sess == nil && len(e.rec.Orphans) == 0,
 		}
 		if s := e.sess; s != nil {
 			s.Lock()
@@ -475,8 +480,10 @@ func (c *conn) resize(m protocol.Resize) {
 
 // kill ends a running session and removes its record once it has exited. An
 // exited session is never signalled, as its pids may belong to anything by
-// now; its record goes only if a fresh scan finds its PTY session empty, by
-// the rule SessionRecord.Rescan applies.
+// now; it is rescanned by the rule SessionRecord.Rescan applies. If its PTY
+// session is empty, the record of this run's session goes, while the record
+// of an earlier run's session loses its orphans and stays, restorable. If
+// processes remain they are listed and answered as orphans.
 func (c *conn) kill(sid uint32) {
 	t := c.srv.table
 	e := t.lookup(sid)
@@ -500,11 +507,7 @@ func (c *conn) kill(sid uint32) {
 		}
 	}
 
-	// The scan reads every process on the system, so it runs without t.mu.
-	t.mu.Lock()
-	rec := e.rec
-	t.mu.Unlock()
-	err := rec.Rescan(session.SessionPIDs)
+	rec, err := t.rescanRecord(e)
 	if err != nil {
 		slog.Warn("kill of an exited session: scan failed, so the record is kept", "sid", sid, "pid", e.pid, "err", err)
 	}
@@ -516,8 +519,13 @@ func (c *conn) kill(sid uint32) {
 		return
 	}
 	if err == nil && len(rec.Orphans) == 0 {
-		delete(t.entries, sid)
-		slog.Info("session removed", "sid", sid, "pid", e.pid)
+		if e.sess == nil {
+			e.rec.Orphans = nil
+			slog.Info("record cleaned; it can be reopened", "sid", sid, "pid", e.pid)
+		} else {
+			delete(t.entries, sid)
+			slog.Info("session removed", "sid", sid, "pid", e.pid)
+		}
 		t.saveLocked()
 		t.broadcastLocked()
 		return

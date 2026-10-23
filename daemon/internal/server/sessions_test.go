@@ -415,9 +415,9 @@ func TestOrphanKeepsRecord(t *testing.T) {
 	}
 }
 
-// A record from a previous daemon run has no PTY: it is listed as exited,
-// cannot be subscribed to, keeps its sid out of use and goes on a kill once
-// its PTY session is empty.
+// A record from a previous daemon run has no PTY: it is listed as exited and
+// restorable, cannot be subscribed to, keeps its sid out of use, stays after
+// a kill and goes on a dismiss.
 func TestPreviousRunRecord(t *testing.T) {
 	gone := exec.Command("/usr/bin/true")
 	if err := gone.Run(); err != nil {
@@ -426,7 +426,7 @@ func TestPreviousRunRecord(t *testing.T) {
 	rec := state.SessionRecord{SID: 7, PID: gone.ProcessState.Pid(), Started: time.Now(), Cwd: "/tmp", Cmd: "old"}
 	srv := startSessionServer(t, Options{State: state.State{Shell: "/bin/sh", Sessions: []state.SessionRecord{rec}}})
 	a := dialClient(t, srv)
-	if i := a.info(7); i == nil || i.State != protocol.StateExited || i.PID != rec.PID || i.Cmd != "old" {
+	if i := a.info(7); i == nil || i.State != protocol.StateExited || i.PID != rec.PID || i.Cmd != "old" || !i.Restorable {
 		t.Errorf("hello list has %+v for the old record", i)
 	}
 
@@ -448,12 +448,41 @@ func TestPreviousRunRecord(t *testing.T) {
 	if sid := a.create("exit 0"); sid != 8 {
 		t.Errorf("new session got sid %d, want 8", sid)
 	}
+	n := len(a.lists)
 	if err := a.c.Kill(7); err != nil {
 		t.Fatal(err)
 	}
-	a.waitFor("old record removed", func() bool { return a.info(7) == nil })
+	a.waitFor("list after the kill", func() bool { return len(a.lists) > n })
+	if i := a.info(7); i == nil || !i.Restorable || len(i.Orphans) != 0 {
+		t.Errorf("after the kill the record is %+v, want it restorable", i)
+	}
+	if r := savedRecord(t, srv, 7); r == nil {
+		t.Error("kill removed the record from state.json")
+	}
+	if len(a.lists) != n+1 || len(a.errs) != 3 {
+		t.Errorf("kill sent %d lists and %d errors in all, want 1 list and none", len(a.lists)-n, len(a.errs)-3)
+	}
+
+	if err := a.c.Dismiss(7); err != nil {
+		t.Fatal(err)
+	}
+	a.waitFor("record dismissed", func() bool { return a.info(7) == nil })
 	if r := savedRecord(t, srv, 7); r != nil {
 		t.Errorf("state.json still holds %+v", r)
+	}
+
+	a.waitExit(8)
+	for _, sid := range []uint32{99, 8} {
+		if err := a.c.Dismiss(sid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a.waitFor("errors", func() bool { return len(a.errs) == 5 })
+	if e := a.errs[3]; e.Code != protocol.CodeNoSession || e.SID != 99 {
+		t.Errorf("dismiss of 99 answered %+v, want %q", e, protocol.CodeNoSession)
+	}
+	if e := a.errs[4]; e.Code != protocol.CodeBadRequest || e.SID != 8 {
+		t.Errorf("dismiss of this run's session answered %+v, want %q for 8", e, protocol.CodeBadRequest)
 	}
 }
 
