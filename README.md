@@ -1,11 +1,11 @@
 # vaquita
 
-A lightweight alternative to [Orca](https://www.onorca.dev/), the agent IDE, for macOS. It starts from the core: coding agents such as Claude Code and Codex running side by side, each in its own git worktree.
+A lightweight alternative to [Orca](https://www.onorca.dev/), the agent IDE, for macOS. It starts from the core: coding agents such as Claude Code and Codex running side by side in the repos they work on.
 
 It's at the very start. The daemon works from the terminal, and the app exists in an early form: a session list that shows each agent's state, and one terminal. Alongside it is the tooling used to check the risky parts before building. The plan:
 
 - Sessions live in a small daemon (`vaquitad`), so shells and agents keep running when the app restarts.
-- One sidebar shows your repos, their worktrees and the sessions in each, with every agent's state: working, needs input, done.
+- One sidebar shows your repos and the sessions in each, with every agent's state: working, needs input, done.
 - Agent state comes from what the agents already write to the terminal (OSC 7501 status reports and their notification sequences), so no hooks or global settings are needed.
 
 ## Install
