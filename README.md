@@ -2,7 +2,7 @@
 
 A lightweight alternative to [Orca](https://www.onorca.dev/), the agent IDE, for macOS. It starts from the core: coding agents such as Claude Code and Codex running side by side in the repos they work on.
 
-It's at the very start. The daemon works from the terminal, and the app exists in an early form: a session list that shows each agent's state, and one terminal. Alongside it is the tooling used to check the risky parts before building. The plan:
+It's at the very start. The daemon works from the terminal, and the app exists in an early form: a session list grouped by repo that shows each agent's state, and one terminal. Alongside it is the tooling used to check the risky parts before building. The plan:
 
 - Sessions live in a small daemon (`vaquitad`), so shells and agents keep running when the app restarts.
 - One sidebar shows your repos and the sessions in each, with every agent's state: working, needs input, done.
@@ -18,67 +18,24 @@ xattr -dr com.apple.quarantine /Applications/vaquita.app
 
 The app installs and starts its daemon by itself. To update, quit vaquita and replace the app in Finder; don't `cp -R` over it while the daemon runs.
 
-## Daemon
+## Develop
 
-Build it and run a dev instance, which keeps its own home so a stable instance is untouched:
+A dev instance keeps its own home, so a stable install is untouched:
 
 ```sh
 export VAQUITA_HOME=~/.vaquita-dev PATH=~/.vaquita-dev/bin:$PATH
-make -C daemon            # builds $VAQUITA_HOME/bin/vaquitad
-vaquitad serve
-```
-
-A daemon run by launchd should be signed with a stable identity, or macOS asks again for access to folders such as `~/Downloads` after every rebuild. A self-signed certificate is enough (Keychain Access → Certificate Assistant → Create a Certificate, type Code Signing): `make -C daemon SIGN="<certificate name>"`.
-
-From another terminal, after the same `export`:
-
-- `vaquitad ls` lists sessions.
-- `vaquitad attach --new` starts a shell session and attaches to it; `attach --new -- <cmd>` runs a command such as an agent instead. `Ctrl-\` detaches and leaves the session running.
-- `vaquitad repos add <dir>`, `repos rm <dir>` and `repos ls` manage the repos the app groups sessions by. The list lives in the daemon's `state.json`, and an open app follows it at once.
-- `vaquitad install` writes a LaunchAgent plist into `$VAQUITA_HOME` and prints the `launchctl` commands that load and unload it. Nothing goes into `~/Library/LaunchAgents`, so nothing starts at login. `--bootstrap` also loads it into launchd; `--print` only prints the plist.
-
-A session whose command starts with `codex`, from the app or from `attach --new -- codex`, runs it with `-c` options that turn on Codex's OSC 9 notifications for that session only: the daemon tells a finished Codex turn from a cancelled one by them. Codex typed into a plain shell session runs without them, so its finished turns are not shown.
-
-Sessions survive a daemon restart as records. While a Claude Code or Codex runs in a session, the daemon notes its conversation id (the agent's own session id, which `--resume` takes) and keeps it in `state.json`: for Claude Code it reads the file Claude Code keeps per process under `~/.claude/sessions`, for Codex it takes the newest conversation file under `~/.codex/sessions` for that session's folder, so it can occasionally pick another conversation. After the daemon restarts (a crash or a reboot), the app lists every earlier session with Reopen and Dismiss. Reopen starts `claude --resume <id>` or `codex resume <id>` in the session's folder; when no id was noted it falls back to `claude --continue` or `codex resume --last`, and a session that was not running an agent gets a plain shell. A session that left processes behind has to be cleaned up first (Kill shows their pids). The ids are only read from `$HOME/.claude` and `$HOME/.codex`, so with `CLAUDE_CONFIG_DIR` or `CODEX_HOME` set the fallback is used. No hooks are installed and nothing is written into the agents' directories.
-
-## App
-
-A Tauri app in `app/` (Svelte, xterm.js). It needs Node and Rust. Homebrew's `rustup` is keg-only, so put it on the path for cargo and tauri commands: `PATH="/opt/homebrew/opt/rustup/bin:$PATH"`.
-
-Dev loop, with the dev daemon from above allowing the dev server's origin:
-
-```sh
-export VAQUITA_HOME=~/.vaquita-dev
+make -C daemon
 vaquitad serve --allow-origin http://localhost:1420
 # in another terminal, after the same export, in app/
 npm ci
 PATH="/opt/homebrew/opt/rustup/bin:$PATH" npm run tauri dev
 ```
 
-`npm test` and `npm run check` need no daemon. `npm run test:live` talks to the running dev daemon.
+## Docs
 
-What it does so far:
-
-- One terminal shown at a time. You can create and kill sessions.
-- The sidebar is grouped by repo. Add a repo with the folder picker or `vaquitad repos add`; a session belongs to the repo whose path is the longest prefix of its folder, matched by path component, and the rest sit under "other". Each repo has claude and codex buttons that start an agent in it, and a button to remove it from the list (its sessions keep running).
-- Sessions from an earlier daemon run are listed under their repo as "from an earlier run", with Reopen and Dismiss.
-- Sessions live in the daemon, so after an app restart the screen is restored.
-- A fix for Korean IME input on WebKit, clickable links, file drop, and OSC 52 copy.
-- Each session shows its agent's state: a spinner while it works, ⚠ with the permission or question it waits on, 🔑 when it needs a login, ✓ or ✗ when a turn ends, and a dot until you have looked at it.
-- A desktop notification when an agent finishes, fails or needs input, unless that session is in front of you. Clicking it opens the session. Notifications missed while the app was closed are summed up in one when it reconnects. A `tauri dev` run, which is not an app bundle, shows none.
-
-A release build looks for the daemon and, if none is running, starts its LaunchAgent through launchd. When the agent is not loaded, it first installs it with the vaquitad inside the app, so no separate `vaquitad install` is needed. `tauri dev` never does; it shows a hint instead.
-
-`npm run tauri build` produces `app/src-tauri/target/release/bundle/macos/vaquita.app`, with vaquitad built into it; set `VAQUITA_SIGN_IDENTITY` to sign that vaquitad with a stable identity, as `SIGN` does above. To pass `VAQUITA_HOME`, run `vaquita.app/Contents/MacOS/vaquita` directly. Without it the app uses the default home, `~/Library/Application Support/vaquita`.
-
-## tools/probe
-
-- `probe.py` runs Claude Code or Codex in a PTY, answers terminal queries, and records queries, mode changes, OSC 7501 reports and OSC 9/777 notifications.
-  `python3 -I tools/probe/probe.py <claude|claude-noanswer|claude-perm|claude-perm-ghostty|claude-perm-ghostty-blur|codex|codex-notify|codex-plan|codex-question> <out-dir>`
-- `accept.py` checks the daemon end to end through `vaquitad attach`, with a PTY standing in for the terminal: re-attaching to a running `claude`, bracketed paste after more than 1MB of output, and a session under launchd (agent socket, `~/Downloads` access, `go test` time against the calling shell). It uses the dev instance and needs its daemon running; see the script's docstring.
-  `python3 -I tools/probe/accept.py <claude|paste|launchd> <out-dir>`
-- `test.html` and `main.swift` are a WKWebView test bed for xterm.js: a fix for macOS Korean IME input on WebKit, and background-throttling measurements. Run `npm ci` in `tools/probe` first.
-- `serve.py` and `serve2.py` are loopback helpers for the page.
+- [Daemon](docs/daemon.md): `vaquitad` commands, Codex notifications, reopening sessions after a restart.
+- [App](docs/app.md): the dev loop, what the app does so far, release builds.
+- [tools/probe](docs/probe.md): the recorders and test beds used to check the risky parts.
 
 ## License
 
