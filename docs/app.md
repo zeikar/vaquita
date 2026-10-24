@@ -40,11 +40,12 @@ A release build also replaces a running daemon that is not the vaquitad inside i
 
 ## Screenshot
 
-The README's screenshot is of a demo that `tools/screenshot/demo.sh` sets up: a daemon and a HOME of its own in a folder you name, three repos, and sessions (seeded by `sessions.mjs`) in which `fake-agent.sh` reports states the way Claude Code and Codex do. To take it again, with port 1420 free:
+The README's screenshot is of a demo that `tools/screenshot/demo.sh` sets up in a new folder: a daemon and a HOME of its own, three repos, sessions (seeded by `sessions.mjs`) in which `fake-agent.sh` reports states the way Claude Code and Codex do, and one real Claude Code session that answers a short question with your login. To take it again, with port 1420 free and claude logged in:
 
 ```sh
 PATH="/opt/homebrew/opt/rustup/bin:$PATH" tools/screenshot/demo.sh up /tmp/vaquita-demo
-# in the app, select the shell under vaquita and let its tests finish
+# once claude has answered, select its row under vaquita
 screencapture -iw docs/screenshot.png   # then click the app's window
 tools/screenshot/demo.sh down /tmp/vaquita-demo
+rm -rf /tmp/vaquita-demo
 ```
