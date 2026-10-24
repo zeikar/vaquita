@@ -4,7 +4,7 @@ const MIN_CONFIRM_MS = 400;
 
 // Buttons that act only on a second click: Tauri's WKWebView answers
 // confirm() with Cancel, as wry implements no JavaScript confirm panel. The
-// key says which button is armed, such as kill:3, dismiss:3 or repo:/tmp/repo.
+// key says which button is armed, such as kill:3 or dismiss:3.
 export class Confirm {
 	armed = $state<string | undefined>();
 	private armedAt = 0;

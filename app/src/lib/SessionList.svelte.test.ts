@@ -17,10 +17,10 @@ const row = (sid: number, extra: Partial<SessionInfo> = {}): SessionRow<unknown>
 let target: HTMLElement;
 let app: ReturnType<typeof mount> | undefined;
 
-function show(sessions: SessionRow<unknown>[]) {
+function show(sessions: SessionRow<unknown>[], repos: string[] = []) {
 	const props = $state({
 		sessions,
-		repos: [] as string[],
+		repos,
 		home: undefined as string | undefined,
 		disabled: false,
 		onselect: vi.fn(),
@@ -34,7 +34,15 @@ function show(sessions: SessionRow<unknown>[]) {
 	target = document.createElement('div');
 	document.body.append(target);
 	app = mount(SessionList, { target, props });
+	flushSync();
 	return props;
+}
+
+// As a restart of the app would: the same props, a new list.
+function remount(props: ReturnType<typeof show>) {
+	unmount(app!);
+	app = mount(SessionList, { target, props });
+	flushSync();
 }
 
 const titles = () => [...target.querySelectorAll<HTMLElement>('span.title')];
@@ -63,6 +71,7 @@ afterEach(() => {
 	if (app) unmount(app);
 	app = undefined;
 	target?.remove();
+	localStorage.clear();
 	vi.restoreAllMocks();
 });
 
@@ -279,5 +288,175 @@ describe('SessionList rows', () => {
 		click(button('Reopen'));
 		expect(p.onreopen).not.toHaveBeenCalled();
 		expect(button('Dismiss').disabled).toBe(false);
+	});
+});
+
+describe('SessionList repo groups', () => {
+	const header = (name: string) => [...target.querySelectorAll<HTMLButtonElement>('button[aria-expanded]:not([aria-haspopup])')].find((b) => b.textContent?.trim() === name)!;
+	const button = (label: string) => target.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+	const menu = () => target.querySelector<HTMLElement>('[role="menu"]');
+	const items = () => [...target.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+	const item = (label: string) => items().find((b) => b.textContent?.trim() === label)!;
+	const rowCount = () => target.querySelectorAll('button.row').length;
+	function click(el: HTMLElement) {
+		el.click();
+		flushSync();
+	}
+	// A pointer's click on ⋯, its pointerdown first, which an open menu takes as a press outside it.
+	function press(el: HTMLElement) {
+		el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+		flushSync();
+		el.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+		flushSync();
+	}
+
+	it('heads a repo group with the folder name, titled with the full path', () => {
+		show([row(1)], ['/tmp/repo']);
+		expect(header('repo').title).toBe('/tmp/repo');
+		expect(header('repo').getAttribute('aria-expanded')).toBe('true');
+		expect(target.textContent).not.toContain('remove');
+	});
+
+	it('collapses a group on its toggle, and keeps it collapsed through a remount', () => {
+		const p = show([row(1), row(2)], ['/tmp/repo']);
+		expect(rowCount()).toBe(2);
+		click(header('repo'));
+		expect(rowCount()).toBe(0);
+		expect(header('repo').getAttribute('aria-expanded')).toBe('false');
+		expect(header('repo').querySelector('[data-icon="chevron-right"]')).not.toBeNull();
+		remount(p);
+		expect(rowCount()).toBe(0);
+		expect(header('repo').getAttribute('aria-expanded')).toBe('false');
+		click(header('repo'));
+		expect(rowCount()).toBe(2);
+		expect(header('repo').querySelector('[data-icon="chevron-down"]')).not.toBeNull();
+		remount(p);
+		expect(rowCount()).toBe(2);
+	});
+
+	it('opens every group when the stored collapsed groups are unreadable', () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		localStorage.setItem('vaquita.collapsed', '["/tmp/repo"');
+		show([row(1)], ['/tmp/repo']);
+		expect(rowCount()).toBe(1);
+		expect(warn).toHaveBeenCalled();
+	});
+
+	it('collapses the group of sessions outside every repo too', () => {
+		show([row(1), row(2, { cwd: '/tmp/elsewhere' })], ['/tmp/repo']);
+		expect(header('other').title).toBe('other');
+		expect(target.querySelector('button[aria-label="Repo menu"]')).not.toBeNull();
+		expect(target.querySelectorAll('button[aria-label="Repo menu"]')).toHaveLength(1);
+		click(header('other'));
+		expect(rowCount()).toBe(1);
+		expect(header('repo').getAttribute('aria-expanded')).toBe('true');
+	});
+
+	it('starts claude or codex in the repo from its header', () => {
+		const p = show([], ['/tmp/repo']);
+		click(button('Start claude in /tmp/repo'));
+		expect(p.onstart).toHaveBeenCalledWith('/tmp/repo', 'claude');
+		click(button('Start codex in /tmp/repo'));
+		expect(p.onstart).toHaveBeenCalledWith('/tmp/repo', 'codex');
+		p.disabled = true;
+		flushSync();
+		expect(button('Start claude in /tmp/repo').disabled).toBe(true);
+		expect(button('Start codex in /tmp/repo').disabled).toBe(true);
+	});
+
+	it('opens the repo menu from ⋯, below it', () => {
+		show([], ['/tmp/repo']);
+		const more = button('Repo menu');
+		expect(more.getAttribute('aria-haspopup')).toBe('menu');
+		expect(more.getAttribute('aria-expanded')).toBe('false');
+		click(more);
+		expect(menu()).not.toBeNull();
+		expect(items().map((b) => b.textContent?.trim())).toEqual(['New Claude session', 'New Codex session', 'New shell', 'Remove repo']);
+		expect(item('Remove repo').classList.contains('danger')).toBe(true);
+		expect(more.getAttribute('aria-expanded')).toBe('true');
+	});
+
+	it('opens the repo menu at the pointer on a right-click on the header, and never the webview menu', () => {
+		show([row(2, { cwd: '/tmp/elsewhere' })], ['/tmp/repo']);
+		const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 40 });
+		header('repo').dispatchEvent(e);
+		flushSync();
+		expect(e.defaultPrevented).toBe(true);
+		expect(menu()!.style.left).toBe('30px');
+		expect(menu()!.style.top).toBe('40px');
+		expect(button('Repo menu').getAttribute('aria-expanded')).toBe('true');
+		document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+		flushSync();
+		expect(menu()).toBeNull();
+		// The group without a repo has no menu.
+		const o = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+		header('other').dispatchEvent(o);
+		flushSync();
+		expect(o.defaultPrevented).toBe(true);
+		expect(menu()).toBeNull();
+	});
+
+	it('closes the open repo menu on a click on its ⋯, and opens it on the next', () => {
+		show([], ['/tmp/repo']);
+		const more = button('Repo menu');
+		press(more);
+		expect(menu()).not.toBeNull();
+		press(more);
+		expect(menu()).toBeNull();
+		expect(more.getAttribute('aria-expanded')).toBe('false');
+		press(more);
+		expect(menu()).not.toBeNull();
+		// A press elsewhere closes it; a click on ⋯ from the keyboard then opens it.
+		document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+		flushSync();
+		expect(menu()).toBeNull();
+		click(more);
+		expect(menu()).not.toBeNull();
+	});
+
+	it('starts a shell from the menu, and closes it', () => {
+		const p = show([], ['/tmp/repo']);
+		click(button('Repo menu'));
+		click(item('New shell'));
+		expect(p.onstart).toHaveBeenCalledWith('/tmp/repo', '');
+		expect(menu()).toBeNull();
+		click(button('Repo menu'));
+		click(item('New Claude session'));
+		expect(p.onstart).toHaveBeenLastCalledWith('/tmp/repo', 'claude');
+		click(button('Repo menu'));
+		click(item('New Codex session'));
+		expect(p.onstart).toHaveBeenLastCalledWith('/tmp/repo', 'codex');
+	});
+
+	it('removes the repo on a second click on Remove repo only', () => {
+		let now = 0;
+		vi.spyOn(performance, 'now').mockImplementation(() => now);
+		const p = show([], ['/tmp/repo']);
+		click(button('Repo menu'));
+		click(item('Remove repo'));
+		expect(p.onremoverepo).not.toHaveBeenCalled();
+		expect(item('Confirm remove repo?')).not.toBeUndefined();
+		now = 500;
+		click(item('Confirm remove repo?'));
+		expect(p.onremoverepo).toHaveBeenCalledTimes(1);
+		expect(p.onremoverepo).toHaveBeenCalledWith('/tmp/repo');
+		expect(menu()).toBeNull();
+	});
+
+	it('disables the start items while disabled, but not Remove repo', () => {
+		let now = 0;
+		vi.spyOn(performance, 'now').mockImplementation(() => now);
+		const p = show([], ['/tmp/repo']);
+		p.disabled = true;
+		flushSync();
+		click(button('Repo menu'));
+		expect(items().map((b) => b.getAttribute('aria-disabled'))).toEqual(['true', 'true', 'true', null]);
+		for (const label of ['New Claude session', 'New Codex session', 'New shell']) click(item(label));
+		expect(p.onstart).not.toHaveBeenCalled();
+		expect(menu()).not.toBeNull();
+		click(item('Remove repo'));
+		now = 500;
+		click(item('Confirm remove repo?'));
+		expect(p.onremoverepo).toHaveBeenCalledWith('/tmp/repo');
 	});
 });

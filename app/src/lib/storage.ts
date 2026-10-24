@@ -1,6 +1,6 @@
-// The app's remembered choices (selected session, last cwd). localStorage is
-// missing under Node and can refuse access in a browser; the choice is then
-// just not remembered.
+// The app's remembered choices (selected session, last cwd, collapsed
+// groups). localStorage is missing under Node and can refuse access in a
+// browser; the choice is then just not remembered.
 
 export function load(key: string): string | null {
 	try {
