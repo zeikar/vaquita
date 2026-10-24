@@ -145,6 +145,10 @@ export interface SessionInfo {
 	// is all an older daemon sends. A row is titled by its name, else this,
 	// else its cmd.
 	title?: string;
+	// The agent kind the record keeps, claude or codex; left out when there
+	// is none, which is all an older daemon sends. A row's icon follows it,
+	// else the first word of cmd.
+	agent?: string;
 }
 // What a session's row shows. kind (permission or question) refines input
 // and auth; msg is the text to show.

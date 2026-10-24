@@ -199,6 +199,7 @@ func TestCodexConversationRecorded(t *testing.T) {
 // as it was, so only the change of app asks for the drain and the read.
 func TestAgentChangeDropsTheOldConversation(t *testing.T) {
 	srv, a, sid := claudeSteps(t)
+	a.waitListed(sid, func(i protocol.SessionInfo) bool { return i.Agent == "claude" })
 	// A working the shell prints itself is cleared at the next poll, so a
 	// job of its own holds the view; after a line it reports again, the same
 	// view from codex.
@@ -209,6 +210,7 @@ func TestAgentChangeDropsTheOldConversation(t *testing.T) {
 
 	a.typeLine(sid, "")
 	r := waitRecord(t, srv, sid, "codex as the agent", func(r state.SessionRecord) bool { return r.Agent == "codex" })
+	a.waitListed(sid, func(i protocol.SessionInfo) bool { return i.Agent == "codex" })
 	if r.Conversation != "" {
 		t.Errorf("state.json holds %+v, want no id: claude's does not belong to codex", r)
 	}

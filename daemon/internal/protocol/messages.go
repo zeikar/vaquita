@@ -181,6 +181,11 @@ type SessionInfo struct {
 	// all an older daemon ever sends. A row is titled by its Name, else this,
 	// else its Cmd.
 	Title string `json:"title,omitempty"`
+	// Agent is the agent kind the record keeps, claude or codex (see
+	// state.SessionRecord.Agent); left out when there is none, which is all
+	// an older daemon ever sends. The app picks a row's icon by it, else by
+	// the first word of Cmd.
+	Agent string `json:"agent,omitempty"`
 	// Status and Unread are left out when the row shows nothing, which is
 	// all an older daemon ever sends.
 	Status *StatusInfo `json:"status,omitempty"`

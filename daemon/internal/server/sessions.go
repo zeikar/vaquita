@@ -176,7 +176,7 @@ func (t *table) listLocked() []protocol.SessionInfo {
 	for _, sid := range slices.Sorted(maps.Keys(t.entries)) {
 		e := t.entries[sid]
 		info := protocol.SessionInfo{
-			SID: sid, Inc: e.inc, Cwd: e.rec.Cwd, Cmd: e.rec.Cmd, Name: e.rec.Name, Title: e.rec.Title,
+			SID: sid, Inc: e.inc, Cwd: e.rec.Cwd, Cmd: e.rec.Cmd, Name: e.rec.Name, Title: e.rec.Title, Agent: e.rec.Agent,
 			State: protocol.StateExited, PID: e.pid, Orphans: e.rec.Orphans,
 			// Unknown for a record from a previous run, as for a shell
 			// whose wait failed.

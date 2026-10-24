@@ -232,11 +232,18 @@ func TestReopenMapsAgentCommands(t *testing.T) {
 	stubAgents(t)
 	a := dialClient(t, srv)
 
+	// The agent kind comes from the record, not from the command.
+	if i := a.info(3); i == nil || i.Agent != "claude" {
+		t.Errorf("record 3 listed as %+v, want agent claude", i)
+	}
+	if i := a.info(1); i == nil || i.Agent != "" {
+		t.Errorf("record 1 listed as %+v, want no agent: a typed command is not inferred", i)
+	}
 	for _, c := range cases {
 		sid := a.reopen(uint32(c.rec.SID), 80, 24)
 		a.waitLive(sid, c.out)
-		if i := a.waitListed(sid, running); i.Cmd != c.cmd || i.Name != c.name || i.Title != c.title {
-			t.Errorf("record %d reopened listed as cmd %q, name %q, title %q, want %q, %q, %q", c.rec.SID, i.Cmd, i.Name, i.Title, c.cmd, c.name, c.title)
+		if i := a.waitListed(sid, running); i.Cmd != c.cmd || i.Name != c.name || i.Title != c.title || i.Agent != c.rec.Agent {
+			t.Errorf("record %d reopened listed as cmd %q, name %q, title %q, agent %q, want %q, %q, %q, %q", c.rec.SID, i.Cmd, i.Name, i.Title, i.Agent, c.cmd, c.name, c.title, c.rec.Agent)
 		}
 		r := savedRecord(t, srv, sid)
 		if r == nil || r.Cmd != c.cmd || r.Name != c.name || r.Title != c.title || r.Agent != c.rec.Agent || r.Conversation != c.rec.Conversation {

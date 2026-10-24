@@ -166,9 +166,11 @@ func (t *table) recordConversation(e *entry, agent, id string) {
 		id = ""
 	}
 	r := &e.rec
+	kindChanged := false
 	switch {
 	case r.Agent != agent:
 		r.Agent, r.Conversation = agent, id
+		kindChanged = true
 	case id != "" && id != r.Conversation:
 		r.Conversation = id
 	default:
@@ -176,4 +178,8 @@ func (t *table) recordConversation(e *entry, agent, id string) {
 	}
 	slog.Info("conversation recorded", "sid", e.sid, "agent", agent, "id", id)
 	t.saveLocked()
+	// The list is what shows the kind, and an id change alone shows nowhere.
+	if kindChanged {
+		t.broadcastLocked()
+	}
 }
