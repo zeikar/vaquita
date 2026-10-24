@@ -1,6 +1,7 @@
 mod home;
 mod launchd;
 mod notify;
+mod open_path;
 mod stop;
 mod wait;
 
@@ -118,7 +119,8 @@ pub fn run() {
             restart_daemon,
             notify::notification_permission,
             notify::notify,
-            notify::take_notification_click
+            notify::take_notification_click,
+            open_path::open_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

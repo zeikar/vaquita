@@ -25,12 +25,16 @@ tauri-plugin-clipboard-manager = "2.5.0"
 tauri-plugin-dialog = "2.8.3"
 sha2 = "0.11.1"
 libc = "0.2.191"
-# UNUserNotificationCenter, for notifications whose clicks reach the app; the
+# UNUserNotificationCenter, for notifications whose clicks reach the app, and
+# NSWorkspace and NSURL, for the app macOS would open a clicked path with; the
 # versions tauri already depends on.
 objc2 = "0.6.5"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSBundle", "NSDictionary", "NSError", "NSObject", "NSString", "NSUUID", "NSValue"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSBundle", "NSDictionary", "NSError", "NSObject", "NSString", "NSURL", "NSUUID", "NSValue"] }
 objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSettings", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 block2 = "0.6.2"
+# tauri-plugin-opener already builds objc2-app-kit and objc2-foundation with
+# these features, so nothing new is compiled.
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSWorkspace"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
