@@ -26,7 +26,8 @@
 		defaultCwd: string;
 		disabled: boolean;
 		// An empty cmd starts a shell.
-		oncreate: (cwd: string, cmd: string, name: string) => void;
+		// Resolves true once the session exists, false if it could not be created.
+		oncreate: (cwd: string, cmd: string, name: string) => Promise<boolean>;
 		onclose: () => void;
 		// Takes the focus on close when what had it at the open cannot: it is
 		// gone, as a menu item is by then, or it was the page itself, as after
@@ -48,6 +49,10 @@
 	let cmd = $state('');
 	let name = $state('');
 	let error = $state('');
+	// Set from the submit until the create ends. The attempt number lets a
+	// create that ends after the dialog was closed and opened again be ignored.
+	let waiting = $state(false);
+	let attempt = 0;
 
 	// The select shows a repo only while the path is that repo.
 	const repo = $derived(repos.includes(cwd.trim()) ? cwd.trim() : '');
@@ -68,6 +73,8 @@
 			cmd = '';
 			name = '';
 			error = '';
+			waiting = false;
+			attempt++;
 		});
 		dialog.showModal();
 		folder.focus();
@@ -120,8 +127,18 @@
 		}
 		error = '';
 		save(LAST_CWD, dir);
-		oncreate(dir, cmd, name.trim());
-		onclose();
+		// The dialog stays, with what was typed, until the create succeeds, so
+		// that a failure such as a folder that does not exist can be corrected
+		// and retried.
+		waiting = true;
+		const mine = ++attempt;
+		void oncreate(dir, cmd, name.trim()).then((ok) => {
+			if (mine !== attempt) return;
+			waiting = false;
+			if (ok) return onclose();
+			error = 'the session could not be created';
+			folder.focus();
+		});
 	}
 </script>
 
@@ -169,7 +186,7 @@
 		</div>
 		<div class="buttons">
 			<button type="button" onclick={() => onclose()}>Cancel</button>
-			<button type="submit" class="primary" {disabled}>Create</button>
+			<button type="submit" class="primary" disabled={disabled || waiting}>{waiting ? 'Creating…' : 'Create'}</button>
 		</div>
 	</form>
 </dialog>

@@ -98,6 +98,44 @@ describe('SessionManager sessions', () => {
 		t.m.stop();
 	});
 
+	it('resolves create with whether the session came to be', async () => {
+		const t = await connected([]);
+		const ok = t.m.create('/tmp/repo', '', '');
+		t.c.emit.replay(replay(4));
+		expect(await ok).toBe(true);
+
+		const failed = t.m.create('/nope', '', '');
+		t.c.emit.error({ t: 'error', code: 'bad-request' });
+		expect(await failed).toBe(false);
+
+		const lost = t.m.create('/tmp/repo', '', '');
+		t.c.emit.closed({ kind: 'closed', detail: 'code 1006' });
+		expect(await lost).toBe(false);
+		t.m.stop();
+	});
+
+	it('resolves create false for a failure even when another session was selected meanwhile', async () => {
+		const t = await connected([info(1), info(2)]);
+		answer(t.c, 1);
+		answer(t.c, 2);
+		const failed = t.m.create('/nope', '', '');
+		t.m.select(1);
+		t.c.emit.error({ t: 'error', code: 'bad-request' });
+		expect(await failed).toBe(false);
+		t.m.stop();
+	});
+
+	it('resolves create false when it is refused, and when it waits behind a subscribe and the connection is lost', async () => {
+		const t = await connected([info(1)]);
+		const first = t.m.create('/tmp/repo', '', '');
+		expect(await t.m.create('/tmp/other', '', '')).toBe(false);
+		t.c.emit.closed({ kind: 'closed', detail: 'code 1006' });
+		expect(await first).toBe(false);
+		// Not connected now.
+		expect(await t.m.create('/tmp/repo', '', '')).toBe(false);
+		t.m.stop();
+	});
+
 	it('frees the slot on an error for the outstanding subscribe only', async () => {
 		const t = await connected([info(2), info(3)]);
 		t.c.emit.error({ t: 'error', code: 'no-session', sid: 9 });

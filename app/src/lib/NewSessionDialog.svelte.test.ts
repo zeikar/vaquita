@@ -9,6 +9,14 @@ import NewSessionDialog from './NewSessionDialog.svelte';
 
 let target: HTMLElement;
 let app: ReturnType<typeof mount> | undefined;
+// Ends the latest create.
+let settle: (ok: boolean) => void;
+
+async function end(ok: boolean) {
+	settle(ok);
+	await Promise.resolve();
+	flushSync();
+}
 
 function show(init: { defaultCwd?: string; repos?: string[]; disabled?: boolean } = {}) {
 	const props = $state({
@@ -16,7 +24,7 @@ function show(init: { defaultCwd?: string; repos?: string[]; disabled?: boolean 
 		repos: init.repos ?? ['/tmp/repo', '/tmp/repo-feature'],
 		defaultCwd: init.defaultCwd ?? '',
 		disabled: init.disabled ?? false,
-		oncreate: vi.fn(),
+		oncreate: vi.fn((_cwd: string, _cmd: string, _name: string) => new Promise<boolean>((resolve) => (settle = resolve))),
 		onclose: vi.fn(),
 		fallbackFocus: vi.fn(),
 	});
@@ -33,7 +41,7 @@ const repo = () => target.querySelector<HTMLSelectElement>('select[aria-label="R
 const nameInput = () => target.querySelector<HTMLInputElement>('input[aria-label="Name"]')!;
 const radio = (label: string) =>
 	[...target.querySelectorAll<HTMLInputElement>('input[type="radio"]')].find((r) => r.parentElement!.textContent?.trim() === label)!;
-const create = () => [...target.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === 'Create')!;
+const create = () => [...target.querySelectorAll<HTMLButtonElement>('button')].find((b) => /^Creat(e|ing…)$/.test(b.textContent?.trim() ?? ''))!;
 const cancelButton = () => [...target.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === 'Cancel')!;
 const alert = () => target.querySelector('[role="alert"]');
 
@@ -117,7 +125,7 @@ describe('NewSessionDialog', () => {
 		expect(localStorage.getItem('vaquita.cwd')).toBeNull();
 	});
 
-	it('creates with the chosen kind and the trimmed name, remembers the folder, then closes', () => {
+	it('creates with the chosen kind and the trimmed name, remembers the folder, and closes once the create succeeds', async () => {
 		const p = show({ defaultCwd: '/tmp/repo' });
 		click(radio('Claude'));
 		type(nameInput(), '  fix login ');
@@ -125,16 +133,40 @@ describe('NewSessionDialog', () => {
 		expect(alert()).toBeNull();
 		expect(p.oncreate).toHaveBeenCalledTimes(1);
 		expect(p.oncreate).toHaveBeenCalledWith('/tmp/repo', 'claude', 'fix login');
-		expect(p.onclose).toHaveBeenCalledTimes(1);
-		expect(p.oncreate.mock.invocationCallOrder[0]).toBeLessThan(p.onclose.mock.invocationCallOrder[0]);
 		expect(localStorage.getItem('vaquita.cwd')).toBe('/tmp/repo');
+		expect(create().textContent?.trim()).toBe('Creating…');
+		expect(create().disabled).toBe(true);
+		expect(p.onclose).not.toHaveBeenCalled();
+		await end(true);
+		expect(p.onclose).toHaveBeenCalledTimes(1);
+		expect(alert()).toBeNull();
 	});
 
-	it('creates a shell by default, and a codex session, in the home folder for an empty path', () => {
+	it('keeps the dialog and what was typed when the create fails, so that it can be retried', async () => {
+		const p = show({ defaultCwd: '/tmp/missing' });
+		click(radio('Codex'));
+		type(nameInput(), 'x');
+		click(create());
+		await end(false);
+		expect(p.onclose).not.toHaveBeenCalled();
+		expect(alert()?.textContent).toBe('the session could not be created');
+		expect(folder().value).toBe('/tmp/missing');
+		expect(nameInput().value).toBe('x');
+		expect(radio('Codex').checked).toBe(true);
+		expect(document.activeElement).toBe(folder());
+		type(folder(), '/tmp/repo');
+		expect(create().textContent?.trim()).toBe('Create');
+		click(create());
+		expect(alert()).toBeNull();
+		expect(p.oncreate).toHaveBeenLastCalledWith('/tmp/repo', 'codex', 'x');
+	});
+
+	it('creates a shell by default, and a codex session, in the home folder for an empty path', async () => {
 		const p = show();
 		type(folder(), '  ');
 		click(create());
 		expect(p.oncreate).toHaveBeenLastCalledWith('', '', '');
+		await end(false);
 		click(radio('Codex'));
 		click(create());
 		expect(p.oncreate).toHaveBeenLastCalledWith('', 'codex', '');

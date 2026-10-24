@@ -164,10 +164,15 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 	}
 
 	// Refused without a connection and while another create waits or is in flight.
-	create(cwd: string, cmd: string, name: string): void {
-		if (!this.link.ready || !this.requests.requestCreate({ cwd, cmd, name })) return;
-		this.pump();
-		this.publish();
+	// Resolves true once the session exists, false if it was refused or failed.
+	create(cwd: string, cmd: string, name: string): Promise<boolean> {
+		if (!this.link.ready) return Promise.resolve(false);
+		const { requests } = this;
+		return new Promise((resolve) => {
+			if (!requests.requestCreate({ cwd, cmd, name, done: resolve })) return resolve(false);
+			this.pump();
+			this.publish();
+		});
 	}
 
 	kill(sid: number): void {
@@ -297,7 +302,7 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		}
 		// A core is made when its subscribe is sent, so a replay for a sid
 		// without one is the creator's subscription to the new session.
-		const req = this.requests.createDone();
+		const req = this.requests.createDone(true);
 		if (!req) return;
 		// The daemon's writer can pump the new subscription before it sends
 		// the list that shows the session.
@@ -338,7 +343,7 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 			// It answers a repo add, which holds no slot, so it frees no create.
 			message = 'repo path must be an absolute path to an existing folder';
 		} else if (reopening !== undefined && m.sid === reopening) {
-			this.requests.createDone();
+			this.requests.createDone(false);
 			if (m.code === CODE_ORPHANS) message = orphans;
 			else if (m.code === CODE_CONVERSATION_LIVE) message = `${who}: its conversation is already open in another session`;
 			else message = `reopen of ${who} failed (${m.code})`;
@@ -349,7 +354,7 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 			// has no screen; one of this run's exited sessions still has one.
 			const record = m.code === CODE_NO_SESSION && this.entries.get(m.sid)?.info.state === STATE_EXITED;
 			if (!record) message = `subscribe to ${who} failed (${m.code})`;
-		} else if (m.sid === undefined && this.requests.createDone()) {
+		} else if (m.sid === undefined && this.requests.createDone(false)) {
 			message = `create failed (${m.code})`;
 		} else {
 			message = m.sid === undefined ? `daemon error (${m.code})` : `${who}: daemon error (${m.code})`;

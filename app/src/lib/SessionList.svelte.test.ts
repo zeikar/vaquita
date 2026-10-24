@@ -538,6 +538,43 @@ describe('SessionList session menu', () => {
 		expect(document.activeElement).toBe(target.querySelectorAll('button.row')[1]);
 	});
 
+	it('closes when its row goes, its incarnation or restorable state changes, or availability changes', () => {
+		const p = show([row(1), row(2)]);
+		const open = (i = 0) => {
+			rightClick(i);
+			expect(menu()).not.toBeNull();
+		};
+		open();
+		p.sessions = [row(1), row(2, { cwd: '/tmp/other' })];
+		flushSync();
+		expect(menu()).not.toBeNull();
+		p.sessions = [row(1, { inc: 'j' }), row(2)];
+		flushSync();
+		expect(menu()).toBeNull();
+		open();
+		p.sessions = [row(1, { inc: 'j', restorable: true, state: 'exited' }), row(2)];
+		flushSync();
+		expect(menu()).toBeNull();
+		open();
+		expect(labels()).toEqual(['Rename', 'Copy path', 'Reopen', 'Dismiss']);
+		p.disabled = true;
+		flushSync();
+		expect(menu()).toBeNull();
+		open();
+		p.sessions = [row(2)];
+		flushSync();
+		expect(menu()).toBeNull();
+	});
+
+	it('closes the repo menu when its repo is removed', () => {
+		const p = show([], ['/tmp/repo']);
+		click(target.querySelector<HTMLElement>('button[aria-label="Repo menu"]')!);
+		expect(menu()).not.toBeNull();
+		p.repos = [];
+		flushSync();
+		expect(menu()).toBeNull();
+	});
+
 	it('opens no menu on a row whose name is being edited, leaving the input its own', () => {
 		show([row(1)]);
 		const el = edit();

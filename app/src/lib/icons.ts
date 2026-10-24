@@ -46,7 +46,7 @@ export type IconName =
 
 export interface IconData {
 	viewBox: string;
-	d: string | string[];
+	d: string;
 	evenodd?: boolean;
 }
 

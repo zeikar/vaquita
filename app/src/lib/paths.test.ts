@@ -21,4 +21,8 @@ describe('shortPath', () => {
 		expect(shortPath('', home)).toBe('~');
 		expect(shortPath('')).toBe('~');
 	});
+	it('shows the filesystem root as /', () => {
+		expect(shortPath('/', home)).toBe('/');
+		expect(shortPath('/')).toBe('/');
+	});
 });

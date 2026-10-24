@@ -7,6 +7,8 @@ export interface CreateRequest {
 	name: string;
 	// The record's sid when the create is a reopen.
 	reopen?: number;
+	// Told once whether the create ended in its new session.
+	done?: (ok: boolean) => void;
 }
 
 export type Request = { kind: 'subscribe'; sid: number } | ({ kind: 'create' } & CreateRequest);
@@ -29,8 +31,10 @@ export class RequestSlot {
 
 	// Drops the previous connection's requests; queue is the new one's.
 	reset(queue: number[] = []): void {
+		const lost = [this.outstanding?.kind === 'create' ? this.outstanding : undefined, this.pendingCreate];
 		this.outstanding = null;
 		this.pendingCreate = undefined;
+		for (const req of lost) req?.done?.(false);
 		this.queue = queue;
 	}
 
@@ -68,11 +72,13 @@ export class RequestSlot {
 		return true;
 	}
 
-	// Frees the slot if it holds a create, and returns that create.
-	createDone(): CreateRequest | undefined {
+	// Frees the slot if it holds a create, and returns that create. ok says
+	// whether the create got its session.
+	createDone(ok: boolean): CreateRequest | undefined {
 		const o = this.outstanding;
 		if (o?.kind !== 'create') return undefined;
 		this.outstanding = null;
+		o.done?.(ok);
 		return o;
 	}
 }

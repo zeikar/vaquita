@@ -84,11 +84,25 @@
 
 	// The one context menu. owner says whose it is; key changes on every open,
 	// as the menu takes its opener and the focus when it mounts.
-	let menu = $state<{ at: MenuAt; items: MenuItem[]; owner: string; key: number }>();
+	let menu = $state<{ at: MenuAt; items: MenuItem[]; owner: string; stamp: string | undefined; key: number }>();
 	let opens = 0;
 	function openMenu(owner: string, at: MenuAt, items: MenuItem[]) {
-		menu = { at, items, owner, key: ++opens };
+		menu = { at, items, owner, stamp: stamp(owner), key: ++opens };
 	}
+
+	// What the open menu's items were built from; undefined once its owner is gone.
+	function stamp(owner: string): string | undefined {
+		if (owner === 'list') return `${addDisabled}`;
+		if (owner.startsWith('repo:')) return groups.some((g) => `repo:${g.repo}` === owner) ? `${disabled}` : undefined;
+		const info = sessions.find((r) => `session:${r.info.sid}` === owner)?.info;
+		return info && `${info.inc}|${info.restorable}|${disabled}`;
+	}
+
+	// The items are a snapshot, so a menu whose basis changed is closed rather than
+	// left offering a stale action.
+	$effect(() => {
+		if (menu && stamp(menu.owner) !== menu.stamp) menu = undefined;
+	});
 
 	const failed = (what: string) => (e: unknown) => onreport(`${what} failed: ${e instanceof Error ? e.message : String(e)}`);
 	const reveal = (path: string): MenuItem[] =>

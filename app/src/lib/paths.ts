@@ -9,7 +9,8 @@ export function shortPath(cwd: string, home?: string): string {
 	let parts = components(cwd);
 	let prefix = '';
 	const h = home === undefined ? [] : components(home);
-	if (parts.length === 0) return '~';
+	if (cwd === '') return '~';
+	if (parts.length === 0) return '/';
 	if (home !== undefined && h.length > 0 && h.every((p, i) => p === parts[i])) {
 		parts = parts.slice(h.length);
 		prefix = '~';

@@ -1,22 +1,11 @@
 <script lang="ts">
 	import { icons, type IconName } from './icons';
 
-	let { name, size = 14 }: { name: IconName; size?: number } = $props();
+	let { name }: { name: IconName } = $props();
 
 	const icon = $derived(icons[name]);
-	const paths = $derived(Array.isArray(icon.d) ? icon.d : [icon.d]);
 </script>
 
-<svg
-	aria-hidden="true"
-	focusable="false"
-	data-icon={name}
-	width={size}
-	height={size}
-	viewBox={icon.viewBox}
-	fill="currentColor"
->
-	{#each paths as d}
-		<path {d} fill-rule={icon.evenodd ? 'evenodd' : undefined} />
-	{/each}
+<svg aria-hidden="true" focusable="false" data-icon={name} width="14" height="14" viewBox={icon.viewBox} fill="currentColor">
+	<path d={icon.d} fill-rule={icon.evenodd ? 'evenodd' : undefined} />
 </svg>
