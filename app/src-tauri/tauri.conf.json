@@ -37,7 +37,8 @@
     ],
     "macOS": {
       "files": {
-        "MacOS/vaquitad": "bin/vaquitad"
+        "MacOS/vaquitad": "bin/vaquitad",
+        "Resources/THIRD_PARTY_NOTICES.md": "../THIRD_PARTY_NOTICES.md"
       },
       "signingIdentity": "-"
     }
