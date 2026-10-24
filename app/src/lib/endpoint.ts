@@ -51,3 +51,33 @@ export async function startDaemon(): Promise<void> {
 		throw new Error(String(e));
 	}
 }
+
+// A release build's version, which the release also stamps into the vaquitad
+// it ships; null in a dev run and in a plain browser.
+export async function appBuild(): Promise<string | null> {
+	if (!isTauri()) return null;
+	return invoke<string | null>('app_build');
+}
+
+// Rejects when the app could not start a daemon of its own, so that none is
+// stopped.
+export async function checkRestart(): Promise<void> {
+	if (!isTauri()) throw new Error(DEV_HINT);
+	try {
+		await invoke('check_restart');
+	} catch (e) {
+		throw new Error(String(e));
+	}
+}
+
+// Stops the daemon at endpoint, with SIGTERM when signal is set, else waiting
+// for it to exit after it agreed to a shutdown request, and starts the app's
+// own; resolves once the new one has written its endpoint file.
+export async function restartDaemon(endpoint: Endpoint, signal: boolean): Promise<void> {
+	if (!isTauri()) throw new Error(DEV_HINT);
+	try {
+		await invoke('restart_daemon', { pid: endpoint.pid, token: endpoint.token, signal });
+	} catch (e) {
+		throw new Error(String(e));
+	}
+}

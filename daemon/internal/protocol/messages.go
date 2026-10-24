@@ -47,6 +47,7 @@ const (
 	TRepos       = "repos"
 	TReopen      = "reopen"
 	TDismiss     = "dismiss"
+	TShutdown    = "shutdown"
 )
 
 // Error codes.
@@ -59,6 +60,7 @@ const (
 
 	CodeBadPath          = "bad-path"
 	CodeConversationLive = "conversation-live"
+	CodeBusy             = "busy"
 )
 
 // Session states in SessionInfo.
@@ -87,12 +89,14 @@ const (
 )
 
 // Hello is the first message of a connection in both directions. The client
-// sends V, Token and Client; the daemon answers with V alone.
+// sends V, Token and Client; the daemon answers with V and its Build, which
+// an older daemon leaves out.
 type Hello struct {
 	T      string `json:"t"`
 	V      int    `json:"v"`
 	Token  string `json:"token,omitempty"`
 	Client string `json:"client,omitempty"`
+	Build  string `json:"build,omitempty"`
 }
 
 // Create starts a session; the connection that sent it is subscribed to it.
@@ -290,6 +294,16 @@ type Dismiss struct {
 	SID uint32 `json:"sid"`
 }
 
+// Shutdown asks the daemon to stop as it does on SIGTERM; the app sends it to
+// replace an outdated daemon with its own. With Idle it stops only when no
+// session is running or starting, and answers CodeBusy otherwise. Once it has
+// agreed it starts no more sessions, and its closing every connection is the
+// answer.
+type Shutdown struct {
+	T    string `json:"t"`
+	Idle bool   `json:"idle"`
+}
+
 // ParseMessage decodes a text frame into the message struct its "t" names,
 // returned by value.
 func ParseMessage(data []byte) (any, error) {
@@ -342,6 +356,8 @@ func ParseMessage(data []byte) (any, error) {
 		return parse[Reopen](data)
 	case TDismiss:
 		return parse[Dismiss](data)
+	case TShutdown:
+		return parse[Shutdown](data)
 	}
 	return nil, fmt.Errorf("parse message: unknown type %q", head.T)
 }

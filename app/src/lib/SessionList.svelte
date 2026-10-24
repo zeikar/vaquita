@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Confirm } from './confirm.svelte';
 	import { groupRows, repoName } from './groups';
 	import type { SessionRow } from './manager';
 	import { sessionTitle } from './notify';
@@ -30,34 +31,8 @@
 
 	const groups = $derived(groupRows(sessions, repos));
 
-	const CONFIRM_MS = 3000;
-	// A double-click must not count as the confirming second click.
-	const MIN_CONFIRM_MS = 400;
-
-	// Kill, Dismiss and Remove take a second click: Tauri's WKWebView answers
-	// confirm() with Cancel, as wry implements no JavaScript confirm panel.
-	// The key says which button is armed: kill:3, dismiss:3, repo:/tmp/repo.
-	let armed = $state<string | undefined>();
-	let armedAt = 0;
-	let timer: ReturnType<typeof setTimeout> | undefined;
-
-	function disarm() {
-		clearTimeout(timer);
-		armed = undefined;
-	}
-
-	function confirmed(key: string, act: () => void) {
-		if (armed === key) {
-			if (performance.now() - armedAt < MIN_CONFIRM_MS) return;
-			disarm();
-			act();
-			return;
-		}
-		disarm();
-		armed = key;
-		armedAt = performance.now();
-		timer = setTimeout(disarm, CONFIRM_MS);
-	}
+	// Kill, Dismiss and Remove take a second click.
+	const twoClick = new Confirm();
 </script>
 
 <ul>
@@ -71,19 +46,19 @@
 				<button
 					class="small"
 					title="Remove {repo} from the list; its sessions keep running"
-					class:armed={armed === `repo:${repo}`}
-					onclick={() => confirmed(`repo:${repo}`, () => onremoverepo(repo))}
-					onblur={() => armed === `repo:${repo}` && disarm()}
-					onpointerleave={() => armed === `repo:${repo}` && disarm()}
+					class:armed={twoClick.armed === `repo:${repo}`}
+					onclick={() => twoClick.click(`repo:${repo}`, () => onremoverepo(repo))}
+					onblur={() => twoClick.armed === `repo:${repo}` && twoClick.disarm()}
+					onpointerleave={() => twoClick.armed === `repo:${repo}` && twoClick.disarm()}
 				>
-					{armed === `repo:${repo}` ? 'Confirm remove?' : 'remove'}
+					{twoClick.armed === `repo:${repo}` ? 'Confirm remove?' : 'remove'}
 				</button>
 			{/if}
 		</li>
 		{#each g.rows as r (r.info.sid)}
 			{@const s = r.info.status}
 			{@const key = `${r.info.restorable ? 'dismiss' : 'kill'}:${r.info.sid}`}
-			<li class:selected={r.info.sid === selected} onpointerleave={() => armed === key && disarm()}>
+			<li class:selected={r.info.sid === selected} onpointerleave={() => twoClick.armed === key && twoClick.disarm()}>
 				<button class="row" onclick={() => onselect(r.info.sid)}>
 					<!-- The dot and the status line keep their space when empty, so rows do not jump. -->
 					<span class="title" class:unread={r.info.unread} title={sessionTitle(r.info)}>
@@ -114,11 +89,11 @@
 				{/if}
 				<button
 					class="kill"
-					class:armed={armed === key}
-					onclick={() => confirmed(key, () => (r.info.restorable ? ondismiss : onkill)(r.info.sid))}
-					onblur={() => armed === key && disarm()}
+					class:armed={twoClick.armed === key}
+					onclick={() => twoClick.click(key, () => (r.info.restorable ? ondismiss : onkill)(r.info.sid))}
+					onblur={() => twoClick.armed === key && twoClick.disarm()}
 				>
-					{#if r.info.restorable}{armed === key ? 'Confirm dismiss?' : 'Dismiss'}{:else}{armed === key ? 'Confirm kill?' : 'Kill'}{/if}
+					{#if r.info.restorable}{twoClick.armed === key ? 'Confirm dismiss?' : 'Dismiss'}{:else}{twoClick.armed === key ? 'Confirm kill?' : 'Kill'}{/if}
 				</button>
 			</li>
 		{/each}

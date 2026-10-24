@@ -1,9 +1,11 @@
 import type { IDisposable } from '@xterm/xterm';
 import type { CloseReason, ConnectionHandlers } from './connection';
+import { runningCount, updateAction, type DaemonUpdate } from './daemon-update';
 import { NotRunningError, type Endpoint } from './endpoint';
 import { notificationFor, sessionTitle, shouldShow, type Notifier, type Target } from './notify';
 import {
 	CODE_BAD_PATH,
+	CODE_BUSY,
 	CODE_CONVERSATION_LIVE,
 	CODE_NO_SESSION,
 	CODE_ORPHANS,
@@ -20,7 +22,14 @@ import { RequestSlot, type CreateRequest } from './requests';
 import { SessionCore, type CoreOut, type Size, type TermLike } from './session-core';
 import { load, save } from './storage';
 
-export type Status = 'connecting' | 'starting' | 'connected' | 'not-running' | 'version-mismatch' | 'disconnected';
+export type Status =
+	| 'connecting'
+	| 'starting'
+	| 'restarting'
+	| 'connected'
+	| 'not-running'
+	| 'version-mismatch'
+	| 'disconnected';
 
 // A terminal the manager disposes with its session.
 export interface ManagedTerm extends TermLike {
@@ -59,6 +68,9 @@ export interface ManagerState<V = ViewLike> {
 	// Whether the window has focus: the selected session is only looked at
 	// while it has.
 	focused: boolean;
+	// Set while the daemon is not the vaquitad this app ships and replacing
+	// it, which ends its running sessions, is left to the user.
+	update?: DaemonUpdate;
 }
 
 // The part of DaemonConnection the manager uses; it is also its cores' out.
@@ -72,12 +84,23 @@ export interface ConnectionLike extends CoreOut {
 	reposRemove(path: string): void;
 	reopen(sid: number, cols: number, rows: number): void;
 	dismiss(sid: number): void;
+	shutdown(idle: boolean): void;
 }
 
 export interface ManagerDeps<T extends ManagedTerm, V extends ViewLike> {
 	readEndpoint: () => Promise<Endpoint>;
 	// Starts the daemon; the rejection message is shown in the status line.
 	startDaemon: () => Promise<void>;
+	// The build of the vaquitad this app ships; null when the app does not
+	// manage the daemon, as in a dev run.
+	appBuild: () => Promise<string | null>;
+	// Rejects when the app could not start a daemon of its own; asked before
+	// one is stopped.
+	checkRestart: () => Promise<void>;
+	// Stops the daemon at endpoint, by a signal or, without one, by waiting
+	// for it to exit after it agreed to a shutdown request, and starts the
+	// app's own, resolving once it has written its endpoint file.
+	restartDaemon: (endpoint: Endpoint, signal: boolean) => Promise<void>;
 	connect: (endpoint: Endpoint, handlers: ConnectionHandlers) => ConnectionLike;
 	createTerminal: (cols: number, rows: number) => T;
 	createView: (term: T, core: SessionCore) => V;
@@ -104,6 +127,8 @@ const RETRY_MS = [1000, 2000, 4000];
 const RETRY_STEADY_MS = 5000;
 // DaemonConnection does not time out a daemon that accepts the socket but never answers hello.
 const READY_TIMEOUT_MS = 5000;
+// A daemon that agrees to a shutdown closes the connection at once.
+const SHUTDOWN_TIMEOUT_MS = 5000;
 const SELECTED_KEY = 'vaquita.selected';
 const DEFAULT_SIZE: Size = { cols: 120, rows: 40 };
 
@@ -119,6 +144,7 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 	private readyConn: ConnectionLike | null = null;
 	private retryTimer: ReturnType<typeof setTimeout> | null = null;
 	private readyTimer: ReturnType<typeof setTimeout> | null = null;
+	private shutdownTimer: ReturnType<typeof setTimeout> | null = null;
 	// Bumped per attempt and on stop(), so callbacks of an abandoned attempt are ignored.
 	private attempt = 0;
 	private failures = 0;
@@ -130,6 +156,19 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 	// Whether a session list has been applied yet, and the click that came before.
 	private listed = false;
 	private pendingClick?: Target;
+	// Asked once, before the first connection; undefined until then.
+	private appBuild?: string | null;
+	// There is one automatic restart per app run at most, so a restart that
+	// brings back the same build never loops.
+	private autoRestarted = false;
+	// How the last restart ended, its error if it failed, for the next ready
+	// to tell the user when the daemon is still not the app's.
+	private restarted?: { error?: string };
+	// The ready connection's daemon, as its endpoint and hello described it.
+	private daemon?: { endpoint: Endpoint; build?: string };
+	// The daemon a shutdown request went to: its closing the connection is
+	// its agreement.
+	private shuttingDown?: Endpoint;
 
 	constructor(private readonly deps: ManagerDeps<T, V>) {}
 
@@ -202,6 +241,12 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		this.readyConn?.reposRemove(path);
 	}
 
+	// Replaces the daemon with the vaquitad this app ships, for the offer's
+	// button. Its running sessions end; they stay listed and can be reopened.
+	restartDaemon(): void {
+		if (this.state.update) void this.restart(false);
+	}
+
 	// Starts a new session from a record of an earlier run, through the create
 	// slot; refused like a create, and for a row that is not restorable.
 	reopen(sid: number): void {
@@ -242,7 +287,8 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 	private clearTimers(): void {
 		if (this.retryTimer) clearTimeout(this.retryTimer);
 		if (this.readyTimer) clearTimeout(this.readyTimer);
-		this.retryTimer = this.readyTimer = null;
+		if (this.shutdownTimer) clearTimeout(this.shutdownTimer);
+		this.retryTimer = this.readyTimer = this.shutdownTimer = null;
 	}
 
 	private async connect(): Promise<void> {
@@ -250,6 +296,14 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		// Keep the retry status visible between attempts rather than flickering to "connecting".
 		if (this.state.status !== 'disconnected' && this.state.status !== 'not-running') {
 			this.set({ status: 'connecting', message: undefined });
+		}
+		if (this.appBuild === undefined) {
+			this.appBuild = await this.deps.appBuild().catch((e) => {
+				// The app's command cannot fail; without its answer the daemon is left as it is.
+				console.warn(`app build unknown: ${e instanceof Error ? e.message : String(e)}`);
+				return null;
+			});
+			if (id !== this.attempt) return;
 		}
 		let endpoint: Endpoint;
 		try {
@@ -271,7 +325,7 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		let conn: ConnectionLike;
 		try {
 			conn = this.deps.connect(endpoint, {
-				ready: current((list) => this.onReady(conn, list)),
+				ready: current((list, build) => this.onReady(conn, endpoint, list, build)),
 				sessions: current((list) => this.onSessions(list)),
 				replay: current((m) => this.onReplay(conn, m)),
 				live: current((m) => this.onLive(m)),
@@ -297,11 +351,12 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		}, READY_TIMEOUT_MS);
 	}
 
-	private onReady(conn: ConnectionLike, list: SessionInfo[]): void {
+	private onReady(conn: ConnectionLike, endpoint: Endpoint, list: SessionInfo[], build: string | undefined): void {
 		this.clearTimers();
 		this.failures = 0;
 		this.startTried = false;
 		this.readyConn = conn;
+		this.daemon = { endpoint, build };
 		// A sid with another inc is another session, from a restarted daemon.
 		const entries = new Map<number, Entry<T, V>>();
 		for (const info of list) {
@@ -334,6 +389,90 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		const click = this.pendingClick;
 		this.pendingClick = undefined;
 		this.openNotified(click);
+		this.checkDaemon(build);
+	}
+
+	// Acts on whether the daemon that answered, of the given build, is the
+	// vaquitad this app ships.
+	private checkDaemon(build: string | undefined): void {
+		const app = this.appBuild ?? null;
+		const running = runningCount(Array.from(this.entries.values(), (e) => e.info));
+		switch (updateAction(app, build, running, this.autoRestarted)) {
+			case 'none':
+				this.restarted = undefined;
+				if (this.state.update) this.set({ update: undefined });
+				return;
+			case 'restart-now':
+				this.autoRestarted = true;
+				void this.restart(true);
+				return;
+			case 'offer':
+				this.offer();
+		}
+	}
+
+	// Shows the restart offer for the ready connection's daemon, which is not
+	// the app's, with what the last restart left to say.
+	private offer(): void {
+		const r = this.restarted;
+		const note = r && (r.error === undefined ? 'still running after a restart' : `restart failed: ${r.error}`);
+		this.set({ status: 'connected', update: { daemon: this.daemon?.build, app: this.appBuild!, ...(note && { note }) } });
+	}
+
+	// Nothing is stopped before the app is known to be able to start its own
+	// daemon. A daemon with a build is asked to stop over the connection,
+	// which with idle it refuses while a session runs or starts; one older
+	// than builds knows no such request and is signalled by its pid.
+	private async restart(idle: boolean): Promise<void> {
+		const conn = this.readyConn;
+		const daemon = this.daemon;
+		if (!conn || !daemon) return;
+		this.restarted = undefined;
+		this.set({ status: 'restarting', message: undefined, update: undefined });
+		try {
+			await this.deps.checkRestart();
+		} catch (e) {
+			if (conn !== this.readyConn) return;
+			this.restarted = { error: e instanceof Error ? e.message : String(e) };
+			this.offer();
+			return;
+		}
+		if (conn !== this.readyConn) return;
+		if (daemon.build === undefined) {
+			this.stop();
+			void this.startOwn(daemon.endpoint, true);
+			return;
+		}
+		this.shuttingDown = daemon.endpoint;
+		conn.shutdown(idle);
+		// A daemon that neither answers nor closes is left running as it is,
+		// and the user can try again.
+		this.shutdownTimer = setTimeout(() => {
+			this.shutdownTimer = null;
+			this.shuttingDown = undefined;
+			this.restarted = { error: 'no answer to the shutdown request' };
+			this.offer();
+		}, SHUTDOWN_TIMEOUT_MS);
+	}
+
+	// Waits for the daemon at endpoint to be gone, signalling it first with
+	// signal, and starts the app's own. Nothing reconnects meanwhile, so that
+	// no other start races this one; connecting resumes once it is done.
+	private async startOwn(endpoint: Endpoint, signal: boolean): Promise<void> {
+		const id = this.attempt;
+		this.set({ status: 'restarting' });
+		try {
+			await this.deps.restartDaemon(endpoint, signal);
+		} catch (e) {
+			if (id !== this.attempt) return;
+			const error = e instanceof Error ? e.message : String(e);
+			this.restarted = { error };
+			this.retry('disconnected', `daemon restart failed: ${error}`);
+			return;
+		}
+		if (id !== this.attempt) return;
+		this.restarted = {};
+		void this.connect();
 	}
 
 	private onSessions(list: SessionInfo[]): void {
@@ -400,6 +539,13 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 	}
 
 	private onError(m: ErrorMessage): void {
+		if (m.code === CODE_BUSY && this.shuttingDown) {
+			// A session runs or is starting, so the idle shutdown was refused.
+			this.shuttingDown = undefined;
+			this.clearTimers();
+			this.offer();
+			return;
+		}
 		let message: string | undefined;
 		// The sidebar shows no sids, so messages name a session by its title.
 		const who = `session "${sessionTitle(m.sid === undefined ? undefined : this.entries.get(m.sid)?.info)}"`;
@@ -515,6 +661,8 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 	// sent on the next one.
 	private teardown(): void {
 		this.readyConn = null;
+		this.daemon = undefined;
+		this.shuttingDown = undefined;
 		this.requests.reset();
 		for (const e of this.entries.values()) {
 			e.core?.detach();
@@ -523,8 +671,14 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 	}
 
 	private onClosed(reason: CloseReason): void {
+		const stopped = this.shuttingDown;
 		this.clearTimers();
 		this.teardown();
+		if (stopped) {
+			this.conn = null;
+			void this.startOwn(stopped, false);
+			return;
+		}
 		if (reason.kind === 'version') {
 			this.conn = null;
 			this.set({ status: 'version-mismatch', daemonV: reason.daemonV, message: undefined });

@@ -55,6 +55,12 @@ type table struct {
 	// readID reads the conversation id a snapshot describes. Tests replace
 	// it to stand in for the agents' files.
 	readID func(convSnapshot) string
+	// starting counts the sessions between beginStart and their listing or
+	// failure; an idle shutdown counts them as running.
+	starting int
+	// stopping is set once a shutdown request is agreed to: no session
+	// starts after it.
+	stopping bool
 }
 
 // entry is one session in the table. A record kept from a previous daemon run
@@ -133,11 +139,17 @@ func newInc() string {
 	return hex.EncodeToString(b)
 }
 
-func (t *table) allocSID() uint32 {
+// beginStart hands out the sid of a session about to start and counts it as
+// starting; false, with no sid, once a shutdown has been agreed to.
+func (t *table) beginStart() (uint32, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.stopping {
+		return 0, false
+	}
+	t.starting++
 	t.lastSID++
-	return t.lastSID
+	return t.lastSID, true
 }
 
 func (t *table) lookup(sid uint32) *entry {
@@ -210,7 +222,7 @@ func (t *table) broadcast() {
 func (t *table) join(c *conn) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	c.send(protocol.Hello{T: protocol.THello, V: protocol.Version})
+	c.send(protocol.Hello{T: protocol.THello, V: protocol.Version, Build: c.srv.opts.Build})
 	c.send(protocol.Sessions{T: protocol.TSessions, List: t.listLocked()})
 	if c.client == protocol.ClientGUI {
 		t.sendReposLocked(c)
@@ -336,7 +348,12 @@ func (c *conn) create(m protocol.Create) {
 // title is the new record's until the agent gives another.
 func (c *conn) startSession(cwd, cmd, name, title string, cols, rows int, old *entry) {
 	t := c.srv.table
-	e := &entry{sid: t.allocSID(), inc: newInc(), listed: make(chan struct{})}
+	sid, ok := t.beginStart()
+	if !ok {
+		c.failStart(old, errors.New("the daemon is stopping"))
+		return
+	}
+	e := &entry{sid: sid, inc: newInc(), listed: make(chan struct{})}
 	// Before the shell starts, so that output() always finds it.
 	e.statusTimer = t.newStatusTimer(e)
 	sub := newSubscriber(c, e)
@@ -355,16 +372,10 @@ func (c *conn) startSession(cwd, cmd, name, title string, cols, rows int, old *e
 		OnExit:   func(code int) { t.exit(e, code) },
 	})
 	if err != nil {
-		if old == nil {
-			slog.Warn("create session", "remote", c.remote, "sid", e.sid, "err", err)
-			c.send(protocol.Error{T: protocol.TError, Code: protocol.CodeBadRequest})
-			return
-		}
-		slog.Warn("reopen session", "remote", c.remote, "record", old.sid, "err", err)
 		t.mu.Lock()
-		old.reopening = false
+		t.starting--
 		t.mu.Unlock()
-		c.send(badRequest(old.sid))
+		c.failStart(old, err)
 		return
 	}
 	e.sess, e.pid = s, s.PID()
@@ -378,6 +389,7 @@ func (c *conn) startSession(cwd, cmd, name, title string, cols, rows int, old *e
 	// wakes whoever subscribes. exit waits for it holding no lock, so closing
 	// it under t.mu cannot deadlock.
 	t.mu.Lock()
+	t.starting--
 	t.entries[e.sid] = e
 	close(e.listed)
 	byID := false
@@ -400,6 +412,21 @@ func (c *conn) startSession(cwd, cmd, name, title string, cols, rows int, old *e
 		slog.Info("session created", "sid", e.sid, "pid", e.pid, "cwd", cwd, "remote", c.remote)
 	}
 	c.wakeWriter()
+}
+
+// failStart answers a create, or a reopen of old, whose session did not start.
+func (c *conn) failStart(old *entry, err error) {
+	if old == nil {
+		slog.Warn("create session", "remote", c.remote, "err", err)
+		c.send(protocol.Error{T: protocol.TError, Code: protocol.CodeBadRequest})
+		return
+	}
+	slog.Warn("reopen session", "remote", c.remote, "record", old.sid, "err", err)
+	t := c.srv.table
+	t.mu.Lock()
+	old.reopening = false
+	t.mu.Unlock()
+	c.send(badRequest(old.sid))
 }
 
 func (c *conn) subscribe(sid uint32) {

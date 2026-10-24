@@ -180,12 +180,25 @@ func TestHelloRepliesHelloThenSessions(t *testing.T) {
 	}
 	ws := mustDial(t, srv, "")
 	writeJSON(t, ws, goodHello())
-	m := readMessage(t, ws)
-	if h, ok := m.(protocol.Hello); !ok || h.V != protocol.Version || h.Token != "" {
-		t.Fatalf("first reply = %+v, want hello v%d without a token", m, protocol.Version)
+	// No token, and no build when the daemon has none.
+	if got, want := string(readText(t, ws)), `{"t":"hello","v":1}`; strings.TrimSpace(got) != want {
+		t.Fatalf("first reply = %s, want %s", got, want)
 	}
 	if got, want := string(readText(t, ws)), `{"t":"sessions","list":[]}`; strings.TrimSpace(got) != want {
 		t.Fatalf("second reply = %s, want %s", got, want)
+	}
+}
+
+func TestHelloCarriesTheBuild(t *testing.T) {
+	srv := listen(t, Options{Build: "0.1.0-rc.4"})
+	for _, kind := range []string{protocol.ClientGUI, protocol.ClientAttach} {
+		ws := mustDial(t, srv, "")
+		h := goodHello()
+		h.Client = kind
+		writeJSON(t, ws, h)
+		if m, ok := readMessage(t, ws).(protocol.Hello); !ok || m.Build != "0.1.0-rc.4" || m.V != protocol.Version {
+			t.Fatalf("%s: first reply = %+v, want hello v%d with build 0.1.0-rc.4", kind, m, protocol.Version)
+		}
 	}
 }
 

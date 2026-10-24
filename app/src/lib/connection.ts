@@ -41,7 +41,8 @@ export type CloseReason =
 	| { kind: 'closed' | 'failed'; detail: string };
 
 export interface ConnectionHandlers {
-	ready(list: SessionInfo[]): void;
+	// build is the hello's, undefined from an older daemon.
+	ready(list: SessionInfo[], build?: string): void;
 	sessions(list: SessionInfo[]): void;
 	replay(m: Replay): void;
 	live(m: Live): void;
@@ -61,6 +62,7 @@ const CLOSE_PROTOCOL_ERROR = 1002;
 export class DaemonConnection {
 	private readonly socket: SocketLike;
 	private state: State = 'hello';
+	private build: string | undefined;
 
 	constructor(
 		endpoint: { url: string; token: string },
@@ -135,6 +137,10 @@ export class DaemonConnection {
 		this.sendReady({ t: 'dismiss', sid });
 	}
 
+	shutdown(idle: boolean): void {
+		this.sendReady({ t: 'shutdown', idle });
+	}
+
 	input(sid: number, gen: number, bytes: Uint8Array): void {
 		if (this.state !== 'ready') return;
 		for (const payload of splitInput(bytes)) {
@@ -197,6 +203,7 @@ export class DaemonConnection {
 					this.finish({ kind: 'version', daemonV: m.v ?? 0 });
 				} else if (m.t === 'hello' && m.v === VERSION) {
 					this.state = 'sessions';
+					this.build = m.build;
 				} else if (m.t === 'hello') {
 					this.fail(`handshake: unexpected hello version ${m.v}`);
 				} else {
@@ -206,7 +213,7 @@ export class DaemonConnection {
 			case 'sessions':
 				if (m.t !== 'sessions') return this.fail('handshake: expected sessions');
 				this.state = 'ready';
-				this.handlers.ready(m.list);
+				this.handlers.ready(m.list, this.build);
 				return;
 			case 'ready':
 				this.dispatch(m);

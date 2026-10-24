@@ -47,6 +47,9 @@ type Options struct {
 	// restorable when no processes remain of them, until they are reopened
 	// or dismissed.
 	State state.State
+	// Build is the daemon's build, as `vaquitad version` prints it. The hello
+	// carries it, so the app can tell a daemon other than the one it ships.
+	Build string
 }
 
 // Server accepts WebSocket connections on 127.0.0.1.
@@ -61,6 +64,9 @@ type Server struct {
 	conns   map[*conn]struct{}
 	closing bool
 	wg      sync.WaitGroup // one per tracked conn
+
+	stopping chan struct{} // closed once a shutdown request is agreed to
+	stopOnce sync.Once
 }
 
 // NewToken returns 32 random bytes in hex.
@@ -89,11 +95,12 @@ func Listen(opts Options) (*Server, error) {
 		return nil, fmt.Errorf("listen: %w", err)
 	}
 	s := &Server{
-		opts:    opts,
-		origins: append([]string{tauriOrigin}, opts.AllowOrigins...),
-		ln:      ln,
-		table:   newTable(opts.Home, opts.State),
-		conns:   make(map[*conn]struct{}),
+		opts:     opts,
+		origins:  append([]string{tauriOrigin}, opts.AllowOrigins...),
+		ln:       ln,
+		table:    newTable(opts.Home, opts.State),
+		conns:    make(map[*conn]struct{}),
+		stopping: make(chan struct{}),
 	}
 	// The agents keep their files under the user's home, which Options.Home,
 	// the instance directory, is not.
@@ -111,6 +118,10 @@ func Listen(opts Options) (*Server, error) {
 	})
 	return s, nil
 }
+
+// Stopping is closed once a client's shutdown request has been agreed to; the
+// daemon is then to stop as it does on SIGTERM.
+func (s *Server) Stopping() <-chan struct{} { return s.stopping }
 
 // URL is the WebSocket URL clients dial.
 func (s *Server) URL() string { return "ws://" + s.ln.Addr().String() + "/ws" }

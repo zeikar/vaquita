@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 const RUN_TIMEOUT: Duration = Duration::from_secs(10);
 const UNLOAD_TIMEOUT: Duration = Duration::from_secs(2);
 
-const TRANSLOCATED: &str =
+pub const TRANSLOCATED: &str =
     "vaquita is running from a temporary location: move vaquita.app to Applications and open it again";
 const NOT_INSTALLED: &str = "LaunchAgent not installed: run `vaquitad install --bootstrap`";
 
@@ -55,16 +55,10 @@ impl Runner for RealRunner {
 
 /// Starts the daemon's LaunchAgent: kickstart when the job is loaded, else
 /// bootstrap from the plist, first writing it with the `vaquitad` beside `exe`.
-/// A loaded job whose program is gone, with no daemon running, is replaced.
+/// A loaded job that runs another `vaquitad`, or one that is gone, is replaced
+/// when no daemon runs, so the daemon started is always this app's.
 pub fn start(r: &dyn Runner, label: &str, plist: &Path, lock: &Path, exe: &Path) -> Result<(), String> {
-    // Gatekeeper runs a quarantined app from a randomized copy that goes away
-    // when it quits; a LaunchAgent pointing into it would break.
-    if exe.to_string_lossy().contains("/AppTranslocation/") {
-        return Err(TRANSLOCATED.to_string());
-    }
-    // The app may have been launched through a symlink to its executable.
-    let exe = std::fs::canonicalize(exe).map_err(|e| format!("resolve {}: {e}", exe.display()))?;
-    let embedded = exe.parent().map(|d| d.join("vaquitad")).filter(|p| p.exists());
+    let embedded = embedded(exe)?;
     // SAFETY: getuid has no preconditions and cannot fail.
     let target = format!("gui/{}", unsafe { libc::getuid() });
     let service = format!("{target}/{label}");
@@ -76,7 +70,7 @@ pub fn start(r: &dyn Runner, label: &str, plist: &Path, lock: &Path, exe: &Path)
         // fails), and a running daemon outlives its binary being moved. The
         // daemon's instance lock does, so only an unheld one allows a bootout.
         return match &embedded {
-            Some(emb) if program(r, plist)?.is_some_and(|p| !p.exists()) && !lock_held(lock) => {
+            Some(emb) if program(r, plist)?.is_some_and(|p| !same_file(&p, emb)) && !lock_held(lock) => {
                 launchctl(r, &["bootout", &service])?;
                 wait_unloaded(r, &service)?;
                 install(r, emb)?;
@@ -92,6 +86,19 @@ pub fn start(r: &dyn Runner, label: &str, plist: &Path, lock: &Path, exe: &Path)
         None => {}
     }
     bootstrap()
+}
+
+/// The `vaquitad` beside the app's resolved executable `exe`, if there is one;
+/// an error for an app that `start` refuses to run a daemon from.
+pub fn embedded(exe: &Path) -> Result<Option<PathBuf>, String> {
+    // Gatekeeper runs a quarantined app from a randomized copy that goes away
+    // when it quits; a LaunchAgent pointing into it would break.
+    if exe.to_string_lossy().contains("/AppTranslocation/") {
+        return Err(TRANSLOCATED.to_string());
+    }
+    // The app may have been launched through a symlink to its executable.
+    let exe = std::fs::canonicalize(exe).map_err(|e| format!("resolve {}: {e}", exe.display()))?;
+    Ok(exe.parent().map(|d| d.join("vaquitad")).filter(|p| p.exists()))
 }
 
 fn launchctl(r: &dyn Runner, args: &[&str]) -> Result<(), String> {
@@ -121,6 +128,11 @@ fn lock_held(lock: &Path) -> bool {
         Ok(f) => f.try_lock().is_err(),
         Err(e) => e.kind() != std::io::ErrorKind::NotFound,
     }
+}
+
+/// Whether both paths name one existing file; false when either is gone.
+fn same_file(a: &Path, b: &Path) -> bool {
+    matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
 }
 
 /// The program the plist runs; None when the plist is missing or names none.
@@ -260,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn a_loaded_job_whose_program_exists_is_kickstarted() {
+    fn a_loaded_job_running_this_apps_vaquitad_is_kickstarted() {
         let b = bundle("kick", true, true);
         let f = Fake { program: Some(b.embedded.clone()), ..Fake::loaded() };
         b.start(&f).unwrap();
@@ -309,6 +321,45 @@ mod tests {
                 strs(&["launchctl", "bootstrap", &t, &plist]),
             ]
         );
+    }
+
+    // Another copy of the app, an older one say, wrote the plist.
+    fn other_vaquitad(b: &Bundle) -> PathBuf {
+        let other = b.dir.join("other/vaquita.app/Contents/MacOS/vaquitad");
+        std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+        std::fs::write(&other, "").unwrap();
+        other
+    }
+
+    #[test]
+    fn a_job_running_another_vaquitad_is_kept_while_the_lock_is_held() {
+        let b = bundle("otherheld", true, true);
+        let f = Fake { program: Some(other_vaquitad(&b)), ..Fake::loaded() };
+        let held = std::fs::File::create(&b.lock).unwrap();
+        assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+        b.start(&f).unwrap();
+        assert_eq!(f.steps(), ["print", "plutil", "kickstart"]);
+    }
+
+    #[test]
+    fn a_job_running_another_vaquitad_is_moved_to_this_one_when_the_lock_is_free() {
+        let b = bundle("otherfree", true, true);
+        std::fs::write(&b.lock, "").unwrap();
+        let f = Fake { program: Some(other_vaquitad(&b)), ..Fake::loaded() };
+        b.start(&f).unwrap();
+        assert_eq!(f.steps(), ["print", "plutil", "bootout", "print", "install", "bootstrap"]);
+        assert_eq!(f.calls.borrow()[4], strs(&[&b.embedded.to_string_lossy(), "install"]));
+    }
+
+    #[test]
+    fn a_job_running_this_apps_vaquitad_through_a_symlink_is_kickstarted() {
+        let b = bundle("samelink", true, true);
+        let link = b.dir.join("vaquitad-link");
+        std::os::unix::fs::symlink(&b.embedded, &link).unwrap();
+        std::fs::write(&b.lock, "").unwrap();
+        let f = Fake { program: Some(link), ..Fake::loaded() };
+        b.start(&f).unwrap();
+        assert_eq!(f.steps(), ["print", "plutil", "kickstart"]);
     }
 
     #[test]

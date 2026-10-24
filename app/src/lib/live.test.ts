@@ -47,6 +47,10 @@ function client() {
 	const m = new SessionManager({
 		readEndpoint: async () => JSON.parse(readFileSync(ENDPOINT, 'utf8')) as Endpoint,
 		startDaemon: async () => {},
+		// As a dev run, which leaves the dev daemon alone.
+		appBuild: async () => null,
+		checkRestart: async () => {},
+		restartDaemon: async () => {},
 		connect: (endpoint, h) => {
 			const conn = new DaemonConnection(endpoint, {
 				...h,
@@ -80,6 +84,7 @@ function client() {
 				reposRemove: (path) => conn.reposRemove(path),
 				reopen: (sid, cols, rows) => conn.reopen(sid, cols, rows),
 				dismiss: (sid) => conn.dismiss(sid),
+				shutdown: (idle) => conn.shutdown(idle),
 				ack: (sid, gen, off) => conn.ack(sid, gen, off),
 				resize: (sid, cols, rows) => conn.resize(sid, cols, rows),
 				input: (sid, gen, bytes) => {

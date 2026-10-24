@@ -17,6 +17,7 @@ export const CODE_BAD_REQUEST = 'bad-request';
 export const CODE_ORPHANS = 'orphans';
 export const CODE_BAD_PATH = 'bad-path';
 export const CODE_CONVERSATION_LIVE = 'conversation-live';
+export const CODE_BUSY = 'busy';
 
 export const STATE_RUNNING = 'running';
 export const STATE_EXITED = 'exited';
@@ -84,6 +85,12 @@ export interface Dismiss {
 	t: 'dismiss';
 	sid: number;
 }
+// Asks the daemon to stop; with idle it refuses with busy while a session
+// runs or starts. Once it agrees it closes every connection.
+export interface Shutdown {
+	t: 'shutdown';
+	idle: boolean;
+}
 export type ClientMessage =
 	| ClientHello
 	| Create
@@ -96,12 +103,16 @@ export type ClientMessage =
 	| ReposAdd
 	| ReposRemove
 	| Reopen
-	| Dismiss;
+	| Dismiss
+	| Shutdown;
 
 // Daemon to client.
 export interface DaemonHello {
 	t: 'hello';
 	v: number;
+	// The daemon's build, as `vaquitad version` prints it; left out by an
+	// older daemon.
+	build?: string;
 }
 export interface SessionInfo {
 	sid: number;

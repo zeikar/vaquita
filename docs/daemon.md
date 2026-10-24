@@ -21,6 +21,7 @@ From another terminal, after the same `export`:
 - `vaquitad ls` lists sessions.
 - `vaquitad attach --new` starts a shell session and attaches to it; `attach --new -- <cmd>` runs a command such as an agent instead. `Ctrl-\` detaches and leaves the session running.
 - `vaquitad repos add <dir>`, `repos rm <dir>` and `repos ls` manage the repos the app groups sessions by. The list lives in the daemon's `state.json`, and an open app follows it at once.
+- `vaquitad version` (or `--version`) prints its build: a release's version, else `dev`. `make -C daemon VERSION=<version>` sets it.
 - `vaquitad install` writes a LaunchAgent plist into `$VAQUITA_HOME` and prints the `launchctl` commands that load and unload it. Nothing goes into `~/Library/LaunchAgents`, so nothing starts at login. `--bootstrap` also loads it into launchd; `--print` only prints the plist.
 
 ## Codex notifications

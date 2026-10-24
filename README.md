@@ -16,7 +16,7 @@ Download `vaquita-<version>-macos-arm64.zip` from [Releases](https://github.com/
 xattr -dr com.apple.quarantine /Applications/vaquita.app
 ```
 
-The app installs and starts its daemon by itself. To update, quit vaquita and replace the app in Finder; don't `cp -R` over it while the daemon runs.
+The app installs and starts its daemon by itself. To update, quit vaquita, replace the app in Finder and open it; the app takes care of the daemon. Don't `cp -R` over the app while the daemon runs.
 
 ## Develop
 

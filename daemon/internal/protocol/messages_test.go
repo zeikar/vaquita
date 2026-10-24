@@ -23,6 +23,8 @@ func TestMessageJSON(t *testing.T) {
 		{Notify{T: TNotify, SID: 3, Kind: NotifyDone, Msg: "finished"}, `{"t":"notify","sid":3,"kind":"done","msg":"finished"}`},
 		{Notify{T: TNotify, Kind: NotifyMissed, Count: 2}, `{"t":"notify","kind":"missed","count":2}`},
 		{Seen{T: TSeen, SID: 3}, `{"t":"seen","sid":3}`},
+		{Hello{T: THello, V: Version}, `{"t":"hello","v":1}`},
+		{Hello{T: THello, V: Version, Build: "0.1.0"}, `{"t":"hello","v":1,"build":"0.1.0"}`},
 		{Repos{T: TRepos, List: []string{}}, `{"t":"repos","list":[]}`},
 		{Repos{T: TRepos, List: []string{"/tmp/repo", "/tmp/repo-feature"}}, `{"t":"repos","list":["/tmp/repo","/tmp/repo-feature"]}`},
 		{ReposList{T: TReposList}, `{"t":"repos.list"}`},
@@ -30,6 +32,8 @@ func TestMessageJSON(t *testing.T) {
 		{ReposRemove{T: TReposRemove, Path: "/tmp/repo"}, `{"t":"repos.remove","path":"/tmp/repo"}`},
 		{Reopen{T: TReopen, SID: 7, Cols: 120, Rows: 40}, `{"t":"reopen","sid":7,"cols":120,"rows":40}`},
 		{Dismiss{T: TDismiss, SID: 7}, `{"t":"dismiss","sid":7}`},
+		{Shutdown{T: TShutdown, Idle: true}, `{"t":"shutdown","idle":true}`},
+		{Shutdown{T: TShutdown}, `{"t":"shutdown","idle":false}`},
 		{
 			Sessions{T: TSessions, List: []SessionInfo{
 				{SID: 1, Inc: "a", State: StateExited, Restorable: true},

@@ -71,7 +71,15 @@ describe('DaemonConnection', () => {
 		socket.receiveText('{"t":"hello","v":1}');
 		expect(h.ready).not.toHaveBeenCalled();
 		socket.receiveText(JSON.stringify({ t: 'sessions', list: [info] }));
-		expect(h.ready).toHaveBeenCalledWith([info]);
+		expect(h.ready).toHaveBeenCalledWith([info], undefined);
+	});
+
+	it("passes the hello's build to ready", () => {
+		const { socket, h } = setup();
+		socket.open();
+		socket.receiveText('{"t":"hello","v":1,"build":"0.1.0"}');
+		socket.receiveText(JSON.stringify({ t: 'sessions', list: [] }));
+		expect(h.ready).toHaveBeenCalledWith([], '0.1.0');
 	});
 
 	it('reports a version error', () => {
@@ -131,24 +139,29 @@ describe('DaemonConnection', () => {
 		expect(h.repos).toHaveBeenCalledWith(['/tmp/repo']);
 	});
 
-	it('sends the repo, reopen and dismiss messages only when ready', () => {
+	it('sends the repo, reopen, dismiss and shutdown messages only when ready', () => {
 		const a = setup();
 		a.socket.open();
 		a.conn.reposAdd('/tmp/repo');
 		a.conn.reposRemove('/tmp/repo');
 		a.conn.reopen(7, 120, 40);
 		a.conn.dismiss(7);
+		a.conn.shutdown(true);
 		expect(a.socket.sent).toHaveLength(1);
 		const b = ready();
 		b.conn.reposAdd('/tmp/repo');
 		b.conn.reposRemove('/tmp/repo');
 		b.conn.reopen(7, 120, 40);
 		b.conn.dismiss(7);
+		b.conn.shutdown(true);
+		b.conn.shutdown(false);
 		expect(b.socket.sent).toEqual([
 			'{"t":"repos.add","path":"/tmp/repo"}',
 			'{"t":"repos.remove","path":"/tmp/repo"}',
 			'{"t":"reopen","sid":7,"cols":120,"rows":40}',
 			'{"t":"dismiss","sid":7}',
+			'{"t":"shutdown","idle":true}',
+			'{"t":"shutdown","idle":false}',
 		]);
 	});
 

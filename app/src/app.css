@@ -6,11 +6,12 @@ body {
 	font: 13px system-ui, sans-serif;
 }
 
-/* Sidebar left, terminal pane right, status bar along the bottom. */
+/* Sidebar left, terminal pane right, along the bottom a daemon update banner
+   when there is one and the status bar. */
 main {
 	display: grid;
 	grid-template-columns: 280px minmax(0, 1fr);
-	grid-template-rows: minmax(0, 1fr) auto;
+	grid-template-rows: minmax(0, 1fr) auto auto;
 	height: 100%;
 }
 

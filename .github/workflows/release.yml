@@ -105,6 +105,8 @@ jobs:
           # shellcheck disable=SC2086
           security list-keychains -d user -s "$KEYCHAIN" $existing
 
+      # VERSION, from the tag, also reaches the Makefile, which stamps it into
+      # vaquitad as its build.
       - name: Build
         working-directory: app
         env:
@@ -135,6 +137,15 @@ jobs:
           check "$APP" ""
           codesign --verify --deep --strict --verbose=2 "$APP"
 
+      # The app replaces a running daemon whose build is not its version.
+      - name: Verify daemon build
+        run: |
+          got="$(app/src-tauri/target/release/bundle/macos/vaquita.app/Contents/MacOS/vaquitad version)"
+          if [ "$got" != "$VERSION" ]; then
+            echo "::error::The embedded vaquitad reports build $got, not $VERSION."
+            exit 1
+          fi
+
       - name: Package
         run: |
           ZIP="vaquita-$VERSION-macos-arm64.zip"
@@ -155,7 +166,7 @@ jobs:
           xattr -dr com.apple.quarantine /Applications/vaquita.app
           ```
 
-          Update: quit vaquita and replace the app in Finder. Do not `cp -R` over it while the daemon runs.
+          Update: quit vaquita, replace the app in Finder and open it; the app replaces the older daemon with its own, by itself when no session is running, else (and always for a daemon from 0.1.0-rc.3 or earlier) once you confirm. Do not `cp -R` over it while the daemon runs.
 
           The app installs and starts its daemon (a LaunchAgent; nothing starts at login) by itself.
 

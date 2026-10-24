@@ -1,9 +1,12 @@
 mod home;
 mod launchd;
 mod notify;
+mod stop;
 mod wait;
 
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 #[derive(Serialize, Deserialize)]
 struct Endpoint {
@@ -25,24 +28,77 @@ fn endpoint() -> Result<Endpoint, String> {
         .map_err(|_| format!("parse {}: invalid endpoint.json", path.display()))
 }
 
+// Keep this hint identical to DEV_HINT in src/lib/endpoint.ts.
+// `tauri dev` (any profile) never touches launchctl: the dev daemon runs from a terminal.
+const DEV_HINT: &str =
+    "dev run: start the daemon from a terminal: VAQUITA_HOME=~/.vaquita-dev vaquitad serve --allow-origin http://localhost:1420";
+
+const STEP: Duration = Duration::from_millis(200);
+
 // Async, with the blocking work on its own thread, so the polling does not stall IPC.
 #[tauri::command]
 async fn start_daemon() -> Result<(), String> {
-    // Keep this hint identical to DEV_HINT in src/lib/endpoint.ts.
-    // `tauri dev` (any profile) never touches launchctl: the dev daemon runs from a terminal.
     if tauri::is_dev() {
-        return Err("dev run: start the daemon from a terminal: VAQUITA_HOME=~/.vaquita-dev vaquitad serve --allow-origin http://localhost:1420".to_string());
+        return Err(DEV_HINT.to_string());
     }
-    tauri::async_runtime::spawn_blocking(|| {
-        let exe = std::env::current_exe().map_err(|e| format!("find the app's executable: {e}"))?;
-        let endpoint = home::endpoint_path();
-        let before = wait::snapshot(&endpoint);
-        launchd::start(&launchd::RealRunner, &home::label(), &home::plist_path(), &home::lock_path(), &exe)?;
-        let step = std::time::Duration::from_millis(200);
-        wait::wait_for_endpoint(&endpoint, &before, step, 25 * step)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(start_and_wait).await.map_err(|e| e.to_string())?
+}
+
+/// The version of a release build, which the release also stamps into the
+/// vaquitad it ships; None in a `tauri dev` run, which never manages the daemon.
+#[tauri::command]
+fn app_build(app: tauri::AppHandle) -> Option<String> {
+    (!tauri::is_dev()).then(|| app.package_info().version.to_string())
+}
+
+const NO_EMBEDDED: &str = "the app has no vaquitad inside it to start in place of the running one";
+
+/// Whether the app can start a daemon of its own, which a restart needs
+/// before it stops the running one: `start` would accept the app's location,
+/// and the app has a vaquitad inside it.
+fn check_restart_at(exe: &Path) -> Result<(), String> {
+    launchd::embedded(exe)?.map(drop).ok_or_else(|| NO_EMBEDDED.to_string())
+}
+
+/// Asked before the app requests a shutdown over its connection, so that a
+/// daemon is never stopped by an app that cannot start its own.
+#[tauri::command]
+fn check_restart() -> Result<(), String> {
+    if tauri::is_dev() {
+        return Err(DEV_HINT.to_string());
+    }
+    check_restart_at(&app_exe()?)
+}
+
+/// Stops the daemon the app connected to, the one with `pid` and `token`, then
+/// starts this app's as start_daemon does. With `signal` the daemon is sent
+/// SIGTERM; without, it has agreed to a shutdown request and is waited for.
+#[tauri::command]
+async fn restart_daemon(pid: u32, token: String, signal: bool) -> Result<(), String> {
+    if tauri::is_dev() {
+        return Err(DEV_HINT.to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || restart(&app_exe()?, &home::endpoint_path(), pid, &token, signal, start_and_wait))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn restart(exe: &Path, endpoint: &Path, pid: u32, token: &str, signal: bool, start: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    check_restart_at(exe)?;
+    // Closing its connections can take a client's close handshake, 5s at most.
+    stop::stop(endpoint, pid, token, signal, STEP, 50 * STEP)?;
+    start()
+}
+
+fn app_exe() -> Result<PathBuf, String> {
+    std::env::current_exe().map_err(|e| format!("find the app's executable: {e}"))
+}
+
+fn start_and_wait() -> Result<(), String> {
+    let endpoint = home::endpoint_path();
+    let before = wait::snapshot(&endpoint);
+    launchd::start(&launchd::RealRunner, &home::label(), &home::plist_path(), &home::lock_path(), &app_exe()?)?;
+    wait::wait_for_endpoint(&endpoint, &before, STEP, 25 * STEP)
 }
 
 pub fn run() {
@@ -57,10 +113,49 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             endpoint,
             start_daemon,
+            app_build,
+            check_restart,
+            restart_daemon,
             notify::notification_permission,
             notify::notify,
             notify::take_notification_click
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stop::tests::{dir, is_running_vaquitad, stand_in, write_endpoint};
+
+    #[test]
+    fn a_restart_the_app_cannot_finish_leaves_the_daemon_running() {
+        let d = dir("restart");
+        let mut child = stand_in(&d);
+        let ep = d.join("endpoint.json");
+        write_endpoint(&ep, child.id(), "t");
+        let never = || -> Result<(), String> { panic!("started a daemon") };
+        let translocated = Path::new("/private/var/folders/xy/abc/T/AppTranslocation/1234/d/vaquita.app/Contents/MacOS/vaquita");
+        let r1 = restart(translocated, &ep, child.id(), "t", true, never);
+        // An app without a vaquitad inside it; d holds the stand-in's.
+        std::fs::create_dir_all(d.join("app")).unwrap();
+        let exe = d.join("app/vaquita");
+        std::fs::write(&exe, "").unwrap();
+        let r2 = restart(&exe, &ep, child.id(), "t", true, never);
+        let alive = is_running_vaquitad(&child);
+        let _ = child.kill();
+        child.wait().unwrap();
+        assert_eq!(r1.unwrap_err(), launchd::TRANSLOCATED);
+        assert_eq!(r2.unwrap_err(), NO_EMBEDDED);
+        assert!(alive);
+    }
+
+    #[test]
+    fn an_app_with_its_own_vaquitad_can_restart() {
+        let d = dir("canrestart");
+        std::fs::write(d.join("vaquita"), "").unwrap();
+        std::fs::write(d.join("vaquitad"), "").unwrap();
+        check_restart_at(&d.join("vaquita")).unwrap();
+    }
 }

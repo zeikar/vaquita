@@ -196,6 +196,8 @@ func (c *conn) handle(m any) {
 		c.reposAdd(m)
 	case protocol.ReposRemove:
 		c.reposRemove(m)
+	case protocol.Shutdown:
+		c.shutdown(m)
 	default:
 		c.send(protocol.Error{T: protocol.TError, Code: protocol.CodeBadRequest})
 	}

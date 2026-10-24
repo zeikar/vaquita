@@ -5,7 +5,8 @@
 	import AddRepo from './lib/AddRepo.svelte';
 	import CreateForm from './lib/CreateForm.svelte';
 	import { DaemonConnection } from './lib/connection';
-	import { readEndpoint, startDaemon } from './lib/endpoint';
+	import { runningCount } from './lib/daemon-update';
+	import { appBuild, checkRestart, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
 	import { watchFocus } from './lib/focus';
 	import { SessionManager } from './lib/manager';
 	import type { Notifier, Target } from './lib/notify';
@@ -15,6 +16,7 @@
 	import { isTauri } from './lib/tauri';
 	import { createTauriNotifier } from './lib/tauri-notify';
 	import { createTerminal, TermView } from './lib/term-view';
+	import UpdateBanner from './lib/UpdateBanner.svelte';
 
 	// Replaced by the Tauri notifier once it is ready; the console one stays in
 	// a plain browser and when the Tauri one cannot be set up.
@@ -22,6 +24,9 @@
 	const manager = new SessionManager({
 		readEndpoint,
 		startDaemon,
+		appBuild,
+		checkRestart,
+		restartDaemon,
 		connect: (endpoint, handlers) => new DaemonConnection(endpoint, handlers),
 		createTerminal: (cols, rows) => createTerminal(cols, rows),
 		createView: (term, core) => new TermView(term, core, (m) => manager.report(m)),
@@ -96,6 +101,8 @@
 				return 'connecting…';
 			case 'starting':
 				return 'starting daemon…';
+			case 'restarting':
+				return 'restarting daemon…';
 			case 'not-running':
 				return 'daemon not running';
 			case 'version-mismatch':
@@ -127,6 +134,13 @@
 		/>
 	</aside>
 	<TerminalPane sessions={$manager.sessions} selected={$manager.selected} />
+	{#if $manager.update && $manager.status === 'connected'}
+		<UpdateBanner
+			update={$manager.update}
+			running={runningCount($manager.sessions.map((r) => r.info))}
+			onrestart={() => manager.restartDaemon()}
+		/>
+	{/if}
 	<footer>
 		<span>{statusText}</span>
 		<span>{$manager.sessions.length} sessions</span>

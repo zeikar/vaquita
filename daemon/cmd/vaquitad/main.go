@@ -22,7 +22,13 @@ commands:
   install [--print | --bootstrap]
            write the LaunchAgent plist (--print: show it only;
            --bootstrap: also load it with launchctl)
+  version  print this vaquitad's build
 `
+
+// version is the build: a release's version, set with
+// -ldflags "-X main.version=...", else dev. The daemon sends it in its hello
+// so the app can tell a daemon other than the one it ships.
+var version = "dev"
 
 // errShown is returned by a command whose failure has already been shown
 // to the user, so that main only sets the exit status.
@@ -45,6 +51,9 @@ func main() {
 		err = repos(os.Args[2:])
 	case "install":
 		err = install(os.Args[2:])
+	case "version", "--version":
+		fmt.Println(version)
+		return
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return

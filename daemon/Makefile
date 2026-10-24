@@ -7,6 +7,11 @@ BIN = $(VAQUITA_HOME)/bin/vaquitad
 # granted a launchd-run daemon each time the binary is replaced.
 SIGN ?=
 
+# VERSION is the build vaquitad reports (`vaquitad version`, the hello). The
+# release workflow sets it from the tag; the app replaces a running daemon
+# whose build differs from the one it ships, and leaves a dev one alone.
+VERSION ?= dev
+
 # Built and signed beside the target, then renamed into place, so a running
 # daemon keeps its old file until it is restarted. Paths are quoted, and the
 # directory comes from dirname rather than $(dir), which splits on spaces: the
@@ -14,7 +19,7 @@ SIGN ?=
 .PHONY: build
 build:
 	mkdir -p "$$(dirname "$(BIN)")"
-	go build -o "$(BIN).tmp" ./cmd/vaquitad
+	go build -ldflags "-X main.version=$(VERSION)" -o "$(BIN).tmp" ./cmd/vaquitad
 ifneq ($(SIGN),)
 	codesign --force --sign "$(SIGN)" --identifier io.github.zeikar.vaquitad "$(BIN).tmp"
 endif

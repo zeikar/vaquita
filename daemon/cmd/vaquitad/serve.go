@@ -80,7 +80,7 @@ func serve(args []string) error {
 			log.Warn("release lock", "err", err)
 		}
 	}()
-	log.Info("vaquitad started", "home", home, "pid", os.Getpid())
+	log.Info("vaquitad started", "home", home, "pid", os.Getpid(), "build", version)
 
 	st, err := loadState(log, home)
 	if err != nil {
@@ -88,7 +88,7 @@ func serve(args []string) error {
 	}
 
 	token := server.NewToken()
-	srv, err := server.Listen(server.Options{Token: token, AllowOrigins: allow, Shell: st.Shell, Home: home, State: st})
+	srv, err := server.Listen(server.Options{Token: token, AllowOrigins: allow, Shell: st.Shell, Home: home, State: st, Build: version})
 	if err != nil {
 		return err
 	}
@@ -105,8 +105,12 @@ func serve(args []string) error {
 	}
 	log.Info("vaquitad listening", "url", srv.URL(), "allow_origins", allow)
 
-	s := <-sig
-	log.Info("vaquitad stopping", "signal", s.String())
+	select {
+	case s := <-sig:
+		log.Info("vaquitad stopping", "signal", s.String())
+	case <-srv.Stopping():
+		log.Info("vaquitad stopping", "reason", "shutdown request")
+	}
 	return nil
 }
 
