@@ -21,6 +21,7 @@ function show(sessions: SessionRow<unknown>[]) {
 	const props = $state({
 		sessions,
 		repos: [] as string[],
+		home: undefined as string | undefined,
 		disabled: false,
 		onselect: vi.fn(),
 		onkill: vi.fn(),
@@ -62,6 +63,7 @@ afterEach(() => {
 	if (app) unmount(app);
 	app = undefined;
 	target?.remove();
+	vi.restoreAllMocks();
 });
 
 describe('SessionList renaming', () => {
@@ -75,7 +77,7 @@ describe('SessionList renaming', () => {
 
 	it('opens no input on a double-click elsewhere on the row', () => {
 		show([row(1, { name: 'w' })]);
-		target.querySelector('.cwd')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+		target.querySelector('.detail')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
 		flushSync();
 		expect(input()).toBeNull();
 	});
@@ -185,6 +187,97 @@ describe('SessionList renaming', () => {
 		expect(input()).toBe(el);
 		expect(p.onselect).not.toHaveBeenCalled();
 		expect(p.onkill).not.toHaveBeenCalled();
-		expect(target.querySelector('button.kill')?.textContent?.trim()).toBe('Kill');
+		expect(target.querySelector('button[aria-label="Kill"] [data-icon="x-mark"]')).not.toBeNull();
+	});
+});
+
+describe('SessionList rows', () => {
+	const all = (sel: string) => [...target.querySelectorAll<HTMLElement>(sel)];
+	const button = (label: string) => target.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+	function click(el: HTMLElement) {
+		el.click();
+		flushSync();
+	}
+
+	it('takes the agent icon from agent, else from the first word of cmd', () => {
+		show([row(1, { agent: 'codex', cmd: 'claude' }), row(2), row(3, { cmd: "'codex' resume" }), row(4, { cmd: '' })]);
+		expect(all('.agent svg[data-icon]').map((e) => e.dataset.icon)).toEqual(['openai', 'claude', 'openai', 'command-line']);
+		expect(all('.agent').map((e) => e.title)).toEqual(['codex', 'claude', 'codex', 'shell']);
+	});
+
+	it('shows the status message, else the state of an old or exited session, else the short path', () => {
+		const p = show([
+			row(1, { cwd: '/Users/me/Developer/Projects/iki', status: { state: 'input', msg: 'Allow Bash(git status)?' } }),
+			row(2, { cwd: '/Users/me/Developer/Projects/iki' }),
+			row(3, { restorable: true, state: 'exited' }),
+			row(4, { state: 'exited', code: 1 }),
+			row(5, { state: 'exited', code: 0, orphans: [7, 8] }),
+		]);
+		const details = () => all('.detail').map((e) => e.textContent);
+		expect(details()).toEqual(['Allow Bash(git status)?', '/U/m/D/P/iki', 'from an earlier run', 'exited (1)', 'exited (0) · orphans: 7, 8']);
+		p.home = '/Users/me';
+		flushSync();
+		expect(details()[1]).toBe('~/D/P/iki');
+	});
+
+	it('keeps the full path and the counters in the row tooltip', () => {
+		const r = row(1, { cwd: '/tmp/repo/a/b' });
+		show([{ ...r, ro: true, reports: 2 }, row(2, { cwd: '' })]);
+		expect(all('button.row').map((e) => e.title)).toEqual(['/tmp/repo/a/b\nread-only\nreports: 2', '~']);
+	});
+
+	it('titles and labels the status icon with the message, else the state', () => {
+		show([row(1, { status: { state: 'input', msg: 'Allow?' } }), row(2, { status: { state: 'error' } }), row(3)]);
+		const s = all('.status');
+		expect(s.map((e) => e.getAttribute('title'))).toEqual(['Allow?', 'failed', null]);
+		expect(s.map((e) => e.getAttribute('aria-label'))).toEqual(['Allow?', 'failed', null]);
+		expect(s.map((e) => e.getAttribute('role'))).toEqual(['img', 'img', null]);
+		expect(s[0].querySelector('[data-icon="exclamation-triangle"]')).not.toBeNull();
+		expect(s[1].querySelector('[data-icon="x-circle"]')).not.toBeNull();
+	});
+
+	it('kills on a second click at least 400 ms after the first, asking in between', () => {
+		let now = 0;
+		vi.spyOn(performance, 'now').mockImplementation(() => now);
+		const p = show([row(1), row(2)]);
+		const kill = all('button[aria-label="Kill"]')[1];
+		click(kill);
+		expect(kill.textContent?.trim()).toBe('Confirm kill?');
+		expect(kill.getAttribute('aria-label')).toBe('Confirm kill?');
+		now = 200;
+		click(kill);
+		expect(p.onkill).not.toHaveBeenCalled();
+		now = 500;
+		click(kill);
+		expect(p.onkill).toHaveBeenCalledTimes(1);
+		expect(p.onkill).toHaveBeenCalledWith(2);
+		expect(kill.querySelector('[data-icon="x-mark"]')).not.toBeNull();
+		expect(kill.getAttribute('aria-label')).toBe('Kill');
+	});
+
+	it('reopens and dismisses an old session, the dismiss on a second click', () => {
+		let now = 0;
+		vi.spyOn(performance, 'now').mockImplementation(() => now);
+		const p = show([row(3, { restorable: true, state: 'exited' })]);
+		expect(target.querySelector('button[aria-label="Kill"]')).toBeNull();
+		click(button('Reopen'));
+		expect(p.onreopen).toHaveBeenCalledWith(3);
+		click(button('Dismiss'));
+		expect(button('Confirm dismiss?').textContent?.trim()).toBe('Confirm dismiss?');
+		expect(p.ondismiss).not.toHaveBeenCalled();
+		now = 1000;
+		click(button('Confirm dismiss?'));
+		expect(p.ondismiss).toHaveBeenCalledWith(3);
+		expect(button('Dismiss')).not.toBeNull();
+	});
+
+	it('disables Reopen while disabled', () => {
+		const p = show([row(3, { restorable: true, state: 'exited' })]);
+		p.disabled = true;
+		flushSync();
+		expect(button('Reopen').disabled).toBe(true);
+		click(button('Reopen'));
+		expect(p.onreopen).not.toHaveBeenCalled();
+		expect(button('Dismiss').disabled).toBe(false);
 	});
 });

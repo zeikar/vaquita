@@ -19,7 +19,7 @@ export interface Notifier {
 // name for it, else the title its agent gave it, else its command.
 export const sessionTitle = (info: SessionInfo | undefined) => info?.name || info?.title || info?.cmd || 'shell';
 
-const SUFFIX = { done: 'done', error: 'failed', input: 'needs input', auth: 'needs login' };
+export const SUFFIX = { done: 'done', error: 'failed', input: 'needs input', auth: 'needs login' };
 
 // The notification m asks for. info is the row of m's session, which the
 // daemon lists before it notifies about it; the missed summary has none.

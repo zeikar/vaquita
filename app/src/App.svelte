@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { homeDir } from '@tauri-apps/api/path';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { onDestroy } from 'svelte';
@@ -93,6 +94,16 @@
 		onDestroy(() => void unlisten.then((f) => f(), () => {}));
 	}
 
+	// Rows show paths under it with ~; in a plain browser it stays unknown and
+	// paths absolute, as a guess could show another user's folder as home.
+	let home = $state<string>();
+	if (isTauri()) {
+		homeDir().then(
+			(h) => (home = h),
+			(e) => manager.report(`home folder unavailable: ${e instanceof Error ? e.message : String(e)}`),
+		);
+	}
+
 	const statusText = $derived.by(() => {
 		switch ($manager.status) {
 			case 'connected':
@@ -121,6 +132,7 @@
 			onselect={(sid) => manager.select(sid)}
 			onkill={(sid) => manager.kill(sid)}
 			repos={$manager.repos}
+			{home}
 			disabled={$manager.creating || $manager.status !== 'connected'}
 			onreopen={(sid) => manager.reopen(sid)}
 			ondismiss={(sid) => manager.dismiss(sid)}
