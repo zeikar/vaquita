@@ -109,12 +109,15 @@
 		/* Measured for the clamp wherever it was put, so as wide as its longest item. */
 		width: max-content;
 		min-width: 160px;
-		padding: 4px;
-		border: 1px solid #333;
-		border-radius: 6px;
-		background: #252526;
-		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
-		font-size: 12px;
+		padding: 5px;
+		/* Lighter than the sidebar it opens over, so it floats above it. */
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		border-radius: 8px;
+		background: #2c2c2d;
+		box-shadow:
+			0 0 0 0.5px rgba(0, 0, 0, 0.8),
+			0 10px 28px rgba(0, 0, 0, 0.45);
+		font-size: 13px;
 		outline: none;
 	}
 	button {
@@ -123,7 +126,7 @@
 		height: 24px;
 		padding: 0 8px;
 		border: none;
-		border-radius: 4px;
+		border-radius: 5px;
 		background: none;
 		color: inherit;
 		font: inherit;
@@ -136,10 +139,28 @@
 	   sidebar's #2a2d2e is too close to the panel to show a keyboard user where
 	   they are. */
 	button:focus {
-		background: #04395e;
+		background: #0e639c;
+		color: #fff;
 	}
 	button.danger {
-		color: #f14c4c;
+		color: #f48771;
+	}
+	button.danger:focus {
+		color: #fff;
+	}
+	/* A separator sets a destructive item apart from the ones above it. */
+	button.danger:not(:first-child) {
+		position: relative;
+		margin-top: 9px;
+	}
+	button.danger:not(:first-child)::before {
+		content: '';
+		position: absolute;
+		top: -5px;
+		right: 8px;
+		left: 8px;
+		height: 1px;
+		background: rgba(255, 255, 255, 0.1);
 	}
 	button.armed {
 		background: #c72e2e;

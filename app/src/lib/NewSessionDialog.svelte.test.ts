@@ -18,6 +18,7 @@ function show(init: { defaultCwd?: string; repos?: string[]; disabled?: boolean 
 		disabled: init.disabled ?? false,
 		oncreate: vi.fn(),
 		onclose: vi.fn(),
+		fallbackFocus: vi.fn(),
 	});
 	target = document.createElement('div');
 	document.body.append(target);
@@ -196,6 +197,67 @@ describe('NewSessionDialog', () => {
 		expect(nameInput().value).toBe('');
 		expect(radio('Shell').checked).toBe(true);
 		expect(alert()).toBeNull();
+		expect(document.activeElement).toBe(folder());
+	});
+
+	it('gives the focus back on close to what had it at the open', () => {
+		const before = document.createElement('button');
+		document.body.append(before);
+		before.focus();
+		const p = show();
+		expect(document.activeElement).toBe(folder());
+		p.open = false;
+		flushSync();
+		expect(document.activeElement).toBe(before);
+		expect(p.fallbackFocus).not.toHaveBeenCalled();
+		before.remove();
+	});
+
+	it('falls back when what had the focus is gone or was the page, never leaving it in the dialog', () => {
+		const item = document.createElement('button');
+		document.body.append(item);
+		item.focus();
+		const p = show();
+		// As a menu item is by the time the dialog closes.
+		item.remove();
+		p.open = false;
+		flushSync();
+		expect(p.fallbackFocus).toHaveBeenCalledTimes(1);
+		expect(dialog().contains(document.activeElement)).toBe(false);
+		(document.activeElement as HTMLElement | null)?.blur();
+		p.open = true;
+		flushSync();
+		p.open = false;
+		flushSync();
+		expect(p.fallbackFocus).toHaveBeenCalledTimes(2);
+		expect(dialog().contains(document.activeElement)).toBe(false);
+	});
+
+	it('moves Tab and Shift+Tab round every control, the kinds as one stop, skipping a disabled Create', () => {
+		const p = show();
+		const tab = (shiftKey = false) => {
+			const e = new KeyboardEvent('keydown', { key: 'Tab', shiftKey, bubbles: true, cancelable: true });
+			(document.activeElement ?? dialog()).dispatchEvent(e);
+			flushSync();
+			expect(e.defaultPrevented).toBe(true);
+			return document.activeElement;
+		};
+		click(radio('Claude'));
+		folder().focus();
+		expect([tab(), tab(), tab(), tab(), tab(), tab()]).toEqual([radio('Claude'), nameInput(), cancelButton(), create(), repo(), folder()]);
+		expect([tab(true), tab(true)]).toEqual([repo(), create()]);
+		p.disabled = true;
+		flushSync();
+		expect(tab()).toBe(repo());
+		expect(tab(true)).toBe(cancelButton());
+		expect(p.onclose).not.toHaveBeenCalled();
+	});
+
+	it('leaves a Tab that belongs to an IME alone', () => {
+		show();
+		const e = new KeyboardEvent('keydown', { key: 'Tab', isComposing: true, bubbles: true, cancelable: true });
+		folder().dispatchEvent(e);
+		expect(e.defaultPrevented).toBe(false);
 		expect(document.activeElement).toBe(folder());
 	});
 

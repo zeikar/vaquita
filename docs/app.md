@@ -18,13 +18,16 @@ PATH="/opt/homebrew/opt/rustup/bin:$PATH" npm run tauri dev
 
 ## What it does so far
 
-- One terminal shown at a time. You can create and kill sessions.
-- The sidebar is grouped by repo. Add a repo with the folder picker or `vaquitad repos add`; a session belongs to the repo whose path is the longest prefix of its folder, matched by path component, and the rest sit under "other". Each repo has claude and codex buttons that start an agent in it, and a button to remove it from the list (its sessions keep running).
-- Sessions from an earlier daemon run are listed under their repo as "from an earlier run", with Reopen and Dismiss.
-- A session is titled by the name you gave it, else by the topic Claude Code or Codex gives its conversation (kept across restarts), else by its command. Double-click a title to rename the session; clear it to go back to the agent's title.
+- One terminal shown at a time.
+- The sidebar is grouped by repo: a session belongs to the repo whose path is the longest prefix of its folder, matched by path component, and the rest sit under "other". A click on a group's header collapses it, and it stays collapsed across restarts. Add a repo with the `+` button (a folder picker), by dropping a folder on the sidebar, or with `vaquitad repos add`.
+- Hovering a repo's header shows buttons that start claude or codex in it. Its `⋯` button or a right-click opens a menu to start claude, codex or a shell there, reveal the folder in Finder, or remove the repo from the list (its sessions keep running).
+- Each session is a row of two lines. The first has the Claude or OpenAI mark for an agent (a terminal icon for a shell, a box for any other command), the title, the state and the unread dot; the second has the state's message, else "from an earlier run", else the folder, shortened as in `~/D/P/example`. Hovering a row shows its Kill button; a right-click opens a menu to rename it, copy its path, reveal it in Finder or kill it.
+- Sessions from an earlier daemon run are listed under their repo as "from an earlier run", with Reopen and Dismiss on hover and in the row's menu.
+- New session, the button at the bottom of the sidebar, ⌘T or a right-click on the sidebar's empty space, opens a dialog for the folder (a repo, or any absolute path; it starts in the selected session's repo, else in the folder of the last session it made), the kind (shell, Claude or Codex) and an optional name.
+- A session is titled by the name you gave it, else by the topic Claude Code or Codex gives its conversation (kept across restarts), else by its command. Double-click a title, or choose Rename in its menu, to rename the session; clear it to go back to the agent's title.
 - Sessions live in the daemon, so after an app restart the screen is restored.
 - A fix for Korean IME input on WebKit, clickable links, file drop, and OSC 52 copy.
-- Each session shows its agent's state: a spinner while it works, ⚠ with the permission or question it waits on, 🔑 when it needs a login, ✓ or ✗ when a turn ends, and a dot until you have looked at it.
+- Each session shows its agent's state: a spinner while it works, ⚠ with the permission or question it waits on, 🔑 when it needs a login, ✓ or ✗ when a turn ends, and a dot until you have looked at it. A collapsed repo shows ⚠ or 🔑 and the dot for the sessions it hides.
 - A desktop notification when an agent finishes, fails or needs input, unless that session is in front of you. Clicking it opens the session. Notifications missed while the app was closed are summed up in one when it reconnects. A `tauri dev` run, which is not an app bundle, shows none.
 
 ## Release build

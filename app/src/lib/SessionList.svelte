@@ -25,6 +25,7 @@
 		onremoverepo,
 		onrename,
 		onreport,
+		addDisabled,
 		onaddrepo,
 		onnewsession,
 	}: {
@@ -45,11 +46,17 @@
 		onrename: (sid: number, name: string) => void;
 		// For a failure the list has nowhere to show.
 		onreport: (message: string) => void;
+		// As the + button is.
+		addDisabled: boolean;
 		onaddrepo: () => void;
 		onnewsession: () => void;
 	} = $props();
 
 	const groups = $derived(groupRows(sessions, repos));
+
+	// What a collapsed group's header shows for its hidden rows.
+	const needs = (rows: SessionRow<unknown>[]) =>
+		rows.some((r) => r.info.status?.state === 'input') ? 'input' : rows.some((r) => r.info.status?.state === 'auth') ? 'auth' : undefined;
 
 	// Kill and Dismiss take a second click.
 	const twoClick = new Confirm();
@@ -121,7 +128,7 @@
 		if (e.target !== e.currentTarget) return;
 		e.preventDefault();
 		openMenu('list', { x: e.clientX, y: e.clientY }, [
-			{ label: 'Add repo…', run: onaddrepo },
+			{ label: 'Add repo…', disabled: addDisabled, run: onaddrepo },
 			{ label: 'New session…', run: onnewsession },
 		]);
 	}
@@ -131,16 +138,19 @@
 	{#each groups as g (g.repo ?? '')}
 		{@const key = g.repo ?? 'other'}
 		{@const owner = `repo:${g.repo}`}
+		{@const shut = collapsed.has(key)}
 		<RepoHeader
 			repo={g.repo}
-			collapsed={collapsed.has(key)}
+			collapsed={shut}
+			needs={shut ? needs(g.rows) : undefined}
+			unread={shut && g.rows.some((r) => r.info.unread)}
 			{disabled}
 			menuOpen={menu?.owner === owner}
 			ontoggle={() => toggle(key)}
 			onstart={(cmd) => g.repo !== undefined && onstart(g.repo, cmd)}
 			onmenu={(at) => g.repo !== undefined && openMenu(owner, at, repoMenu(g.repo))}
 		/>
-		{#if !collapsed.has(key)}
+		{#if !shut}
 			{#each g.rows as r (r.info.sid)}
 				{@const sid = r.info.sid}
 				{@const rowOwner = `session:${sid}`}
@@ -175,7 +185,7 @@
 	ul {
 		list-style: none;
 		margin: 0;
-		padding: 0;
+		padding: 4px 0 0;
 		overflow-y: auto;
 		flex: 1;
 	}

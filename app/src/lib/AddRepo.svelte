@@ -71,12 +71,31 @@
 {/if}
 
 <style>
-	/* The header wraps, so the field lands on its own line under the label. */
+	/* The header wraps, so the field lands on its own line under the label.
+	   Only a plain browser shows it; inside Tauri the + opens the picker. */
 	.field {
 		flex: 0 0 100%;
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
 		padding: 4px 0 2px;
+	}
+	input {
+		box-sizing: border-box;
+		height: 24px;
+		padding: 0 6px;
+		border: 1px solid #3c3c3c;
+		border-radius: 4px;
+		outline: none;
+		background: #1e1e1e;
+		color: #d4d4d4;
+		font: inherit;
+		font-size: 13px;
+	}
+	input:focus {
+		border-color: #4fc1ff;
+	}
+	small {
+		color: #f48771;
 	}
 </style>

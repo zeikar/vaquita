@@ -18,6 +18,7 @@
 		disabled,
 		oncreate,
 		onclose,
+		fallbackFocus,
 	}: {
 		open: boolean;
 		repos: string[];
@@ -27,6 +28,10 @@
 		// An empty cmd starts a shell.
 		oncreate: (cwd: string, cmd: string, name: string) => void;
 		onclose: () => void;
+		// Takes the focus on close when what had it at the open cannot: it is
+		// gone, as a menu item is by then, or it was the page itself, as after
+		// a click on a button, which WebKit does not focus.
+		fallbackFocus: () => void;
 	} = $props();
 
 	const kinds: { kind: AgentKind; cmd: string; label: string }[] = [
@@ -37,6 +42,8 @@
 
 	let dialog: HTMLDialogElement;
 	let folder: HTMLInputElement;
+	// What had the focus when the dialog opened.
+	let opener: Element | null = null;
 	let cwd = $state('');
 	let cmd = $state('');
 	let name = $state('');
@@ -49,9 +56,13 @@
 	// whose own choice of focus differs between engines.
 	$effect(() => {
 		if (!open) {
-			dialog.close();
+			if (dialog.open) {
+				dialog.close();
+				untrack(giveFocusBack);
+			}
 			return;
 		}
+		opener = document.activeElement;
 		untrack(() => {
 			cwd = defaultCwd;
 			cmd = '';
@@ -62,10 +73,32 @@
 		folder.focus();
 	});
 
+	// The platform's own return of the focus differs between engines too, and
+	// may leave it on the closed dialog.
+	function giveFocusBack() {
+		if (opener instanceof HTMLElement && opener !== document.body && opener.isConnected) opener.focus();
+		opener = null;
+		const now = document.activeElement;
+		if (!now || now === document.body || dialog.contains(now)) fallbackFocus();
+		if (document.activeElement instanceof HTMLElement && dialog.contains(document.activeElement)) document.activeElement.blur();
+	}
+
+	// Tab goes round the controls here: the platform's order leaves the
+	// dialog after its last one and, in WebKit without Full Keyboard Access,
+	// skips all but the text fields. The kinds are one stop, as radios are.
+	function tab(e: KeyboardEvent) {
+		const stops = [...dialog.querySelectorAll<HTMLElement>('select, input:not([type="radio"]), input:checked, button:not(:disabled)')];
+		const i = stops.indexOf(document.activeElement as HTMLElement);
+		const n = stops.length;
+		e.preventDefault();
+		stops[i < 0 ? (e.shiftKey ? n - 1 : 0) : (i + (e.shiftKey ? n - 1 : 1)) % n]?.focus();
+	}
+
 	// Prevented, as the platform would follow it with a cancel: one Escape
 	// closes once, and one that belongs to an IME, ending its composition,
 	// not at all.
 	function key(e: KeyboardEvent) {
+		if (e.key === 'Tab' && !belongsToIME(e)) return tab(e);
 		if (e.key !== 'Escape') return;
 		e.preventDefault();
 		if (!belongsToIME(e)) onclose();
@@ -154,6 +187,12 @@
 		color: #d4d4d4;
 		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
 		color-scheme: dark;
+		-webkit-user-select: none;
+		user-select: none;
+	}
+	input {
+		-webkit-user-select: text;
+		user-select: text;
 	}
 	dialog::backdrop {
 		background: rgba(0, 0, 0, 0.5);
@@ -165,7 +204,7 @@
 		margin: 0;
 	}
 	h2 {
-		margin: 0;
+		margin: 0 0 4px;
 		font-size: 13px;
 		font-weight: 600;
 	}
@@ -208,7 +247,7 @@
 		border-color: #4fc1ff;
 	}
 	small {
-		color: #f14c4c;
+		color: #f48771;
 		font-size: 11px;
 	}
 	fieldset {
@@ -220,10 +259,14 @@
 	legend {
 		margin-bottom: 4px;
 	}
+	/* As a macOS segmented control: the choice is a raised neutral segment,
+	   leaving blue to Create and the focus. */
 	.segments {
 		display: flex;
+		gap: 2px;
+		padding: 2px;
 		border: 1px solid #3c3c3c;
-		border-radius: 4px;
+		border-radius: 6px;
 		background: #1e1e1e;
 		overflow: hidden;
 	}
@@ -235,18 +278,17 @@
 		align-items: center;
 		justify-content: center;
 		gap: 6px;
-		height: 26px;
+		height: 22px;
+		border-radius: 4px;
 		color: #999;
 		cursor: pointer;
-	}
-	.segments label + label {
-		border-left: 1px solid #3c3c3c;
 	}
 	.segments label:hover {
 		color: #d4d4d4;
 	}
 	.segments label:has(input:checked) {
-		background: #04395e;
+		background: #3c3c3f;
+		box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 		color: #fff;
 	}
 	.segments label:has(input:focus-visible) {

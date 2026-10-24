@@ -15,12 +15,21 @@ main {
 	height: 100%;
 }
 
+/* No text selection, as in a native sidebar: WebKit selects the word under a
+   right-click or a double-click, which would light up in the rows. */
 aside {
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
 	border-right: 1px solid #333;
 	background: #252526;
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+aside input {
+	-webkit-user-select: text;
+	user-select: text;
 }
 
 footer {
@@ -46,17 +55,32 @@ aside > header {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
-	padding: 4px 8px 4px 14px;
+	/* The + ends where the repo headers' ⋯ does, the title starts where the
+	   rows' marks do. */
+	padding: 4px 6px 4px 16px;
 	border-bottom: 1px solid #333;
 	font-size: 11px;
 	color: #999;
 }
 
+/* Above the repo names in weight, as it heads them. */
 aside > header .title {
 	flex: 1;
+	color: #ccc;
+	font-weight: 600;
 }
 
-/* Translucent so hover shows on the selected row's #2a2d2e as well. */
+/* The brand marks keep a colour of their own wherever they show. OpenAI's is
+   black or white, so a light grey beside the muted shell and command icons. */
+svg[data-icon='claude'] {
+	color: #d97757;
+}
+
+svg[data-icon='openai'] {
+	color: #ccc;
+}
+
+/* Translucent so hover shows on a selected or hovered row as well. */
 .icon-btn {
 	display: flex;
 	align-items: center;
@@ -87,9 +111,10 @@ aside > header .title {
 	cursor: default;
 }
 
-/* Sidebar footer: the new-session button, its shortcut at the right. */
+/* Sidebar footer: the new-session button, its shortcut at the right. As wide
+   as the rows, its icon and label in line with theirs. */
 .sidebar-footer {
-	padding: 6px 8px;
+	padding: 6px;
 	border-top: 1px solid #333;
 }
 
@@ -99,18 +124,18 @@ aside > header .title {
 	gap: 6px;
 	box-sizing: border-box;
 	width: 100%;
-	height: 26px;
+	height: 28px;
 	padding: 0 8px;
-	border: 1px solid #3c3c3c;
-	border-radius: 4px;
-	background: none;
+	border: none;
+	border-radius: 6px;
+	background: rgba(255, 255, 255, 0.05);
 	color: #d4d4d4;
 	font: inherit;
 	cursor: pointer;
 }
 
 .new-session:hover {
-	background: rgba(255, 255, 255, 0.06);
+	background: rgba(255, 255, 255, 0.09);
 }
 
 .new-session:focus-visible {

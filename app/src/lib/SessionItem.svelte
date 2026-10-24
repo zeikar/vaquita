@@ -110,10 +110,10 @@
 		</span>
 		<span class="dot" class:unread={info.unread}></span>
 	</span>
-	<span class="detail">{detail}</span>
+	<span class="detail {s?.msg && s.state}">{detail}</span>
 {/snippet}
 
-<li class:selected class:editing onpointerleave={disarm} oncontextmenu={context}>
+<li class:selected class:editing class:menu={menuOpen} class:restorable={info.restorable} onpointerleave={disarm} oncontextmenu={context}>
 	<!-- While its name is edited a row is no button: a button may not hold
 	     an input, and the input's clicks would select the row. -->
 	{#if editing}
@@ -157,10 +157,25 @@
 		border-radius: 6px;
 		/* What the actions paint over the end of line 1. */
 		--bg: #252526;
+		background: var(--bg);
+	}
+	li:hover {
+		--bg: #2c2c2d;
 	}
 	li.selected {
-		--bg: #2a2d2e;
-		background: var(--bg);
+		--bg: #37373a;
+	}
+	/* The row a menu was opened on, as the menu covers the pointer. */
+	li.menu {
+		outline: 2px solid rgba(79, 193, 255, 0.5);
+		outline-offset: -2px;
+	}
+	/* A session from an earlier run steps back behind the live ones. */
+	li.restorable:not(.selected) .title {
+		color: #a6a6a6;
+	}
+	li.restorable:not(.selected) .agent {
+		opacity: 0.55;
 	}
 	.row {
 		flex: 1;
@@ -218,7 +233,7 @@
 		min-width: 0;
 	}
 	.title.unread {
-		font-weight: bold;
+		font-weight: 600;
 	}
 	.status.input {
 		color: #cca700;
@@ -265,14 +280,24 @@
 		font-size: 11px;
 		color: #999;
 	}
+	/* #999 is too faint on the selection for its size. */
+	li.selected .detail:not(.input, .auth) {
+		color: #aaa;
+	}
+	/* What the session waits on, readable at a glance. */
+	.detail:is(.input, .auth) {
+		color: #cca700;
+	}
 	/* Over the end of the title, fading into it, so showing them moves nothing;
-	   their icons end where the title does (8 + 6 + 6 + 14 + 6 from the right,
-	   less the buttons' 2px padding), leaving the status and its tooltip in view.
-	   Opacity rather than visibility keeps them in the Tab order. */
+	   their icons end 3px past where the title does (8 + 6 + 6 + 14 + 6 from
+	   the right, less the buttons' 2px padding), as the x-mark's strokes sit
+	   inside its box: the gaps to the status and the dot look even, and the
+	   status and its tooltip stay in view. Opacity rather than visibility
+	   keeps them in the Tab order. */
 	.actions {
 		position: absolute;
 		top: 4px;
-		right: 38px;
+		right: 35px;
 		display: flex;
 		gap: 2px;
 		height: 18px;
@@ -281,7 +306,9 @@
 		opacity: 0;
 		pointer-events: none;
 	}
-	li:not(.editing):is(:hover, :focus-within) .actions,
+	/* A keyboard focus only: a clicked row keeps the focus in Chrome, and one
+	   whose menu closed gets it back, and neither should keep them shown. */
+	li:not(.editing):is(:hover, :has(:focus-visible)) .actions,
 	.actions.armed,
 	.actions.open {
 		opacity: 1;
@@ -307,7 +334,7 @@
 	}
 	.actions button.armed {
 		padding: 0 4px;
-		color: #f14c4c;
+		color: #f48771;
 		font-size: 11px;
 		white-space: nowrap;
 	}

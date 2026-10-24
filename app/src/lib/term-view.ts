@@ -94,6 +94,10 @@ export class TermView implements ViewLike {
 		this.stop();
 	}
 
+	focus(): void {
+		this.term.focus();
+	}
+
 	// fit() is never called: it would resize the terminal itself, hiding the
 	// change from the core, which resizes the terminal and the session.
 	refit(): void {

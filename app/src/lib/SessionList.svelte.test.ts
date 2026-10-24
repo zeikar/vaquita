@@ -34,6 +34,7 @@ function show(sessions: SessionRow<unknown>[], repos: string[] = []) {
 		onremoverepo: vi.fn(),
 		onrename: vi.fn(),
 		onreport: vi.fn(),
+		addDisabled: false,
 		onaddrepo: vi.fn(),
 		onnewsession: vi.fn(),
 	});
@@ -230,6 +231,8 @@ describe('SessionList rows', () => {
 		]);
 		const details = () => all('.detail').map((e) => e.textContent);
 		expect(details()).toEqual(['Allow Bash(git status)?', '/U/m/D/P/iki', 'from an earlier run', 'exited (1)', 'exited (0) · orphans: 7, 8']);
+		// A message is marked with its state, for the colour of what waits on the user.
+		expect(all('.detail').map((e) => e.classList.contains('input'))).toEqual([true, false, false, false, false]);
 		p.home = '/Users/me';
 		flushSync();
 		expect(details()[1]).toBe('~/D/P/iki');
@@ -338,6 +341,40 @@ describe('SessionList repo groups', () => {
 		expect(header('repo').querySelector('[data-icon="chevron-down"]')).not.toBeNull();
 		remount(p);
 		expect(rowCount()).toBe(2);
+	});
+
+	it('shows on a collapsed header that a hidden row needs input, else a login, and that one is unread', () => {
+		const p = show(
+			[
+				row(1, { status: { state: 'auth' } }),
+				row(2, { status: { state: 'input', msg: 'Allow Bash(git status)?' } }),
+				row(3, { unread: true }),
+				row(4, { cwd: '/tmp/elsewhere', unread: true }),
+			],
+			['/tmp/repo'],
+		);
+		const badge = () => target.querySelector('.badges [role="img"][aria-label^="needs"]');
+		const dot = () => target.querySelector('.badges .dot.unread');
+		// Open groups leave it to their rows.
+		expect(target.querySelector('.badges')).toBeNull();
+		click(header('repo'));
+		expect(badge()?.getAttribute('aria-label')).toBe('needs input');
+		expect(badge()?.querySelector('[data-icon="exclamation-triangle"]')).not.toBeNull();
+		expect(dot()).not.toBeNull();
+		p.sessions = [row(1, { status: { state: 'auth' } }), row(3)];
+		flushSync();
+		expect(badge()?.getAttribute('aria-label')).toBe('needs login');
+		expect(badge()?.querySelector('[data-icon="key"]')).not.toBeNull();
+		expect(dot()).toBeNull();
+		p.sessions = [row(3)];
+		flushSync();
+		expect(target.querySelector('.badges')).toBeNull();
+		// The group outside every repo too.
+		p.sessions = [row(4, { cwd: '/tmp/elsewhere', unread: true })];
+		flushSync();
+		click(header('other'));
+		expect(dot()).not.toBeNull();
+		expect(badge()).toBeNull();
 	});
 
 	it('opens every group when the stored collapsed groups are unreadable', () => {
@@ -642,6 +679,17 @@ describe('SessionList empty-area menu', () => {
 		expect(p.onnewsession).toHaveBeenCalledTimes(1);
 		expect(p.onaddrepo).toHaveBeenCalledTimes(1);
 		expect(menu()).toBeNull();
+	});
+
+	it('disables Add repo as the + button is, but not New session', () => {
+		const p = show([row(1)]);
+		p.addDisabled = true;
+		flushSync();
+		rightClick(list());
+		expect(item('Add repo…').getAttribute('aria-disabled')).toBe('true');
+		expect(item('New session…').getAttribute('aria-disabled')).toBeNull();
+		click(item('Add repo…'));
+		expect(p.onaddrepo).not.toHaveBeenCalled();
 	});
 
 	it('offers them in an empty list too', () => {

@@ -2,10 +2,13 @@
 	import { repoName } from './groups';
 	import Icon from './Icon.svelte';
 	import type { MenuAt } from './menu';
+	import { SUFFIX } from './notify';
 
 	let {
 		repo,
 		collapsed,
+		needs,
+		unread,
 		disabled,
 		menuOpen,
 		ontoggle,
@@ -15,6 +18,10 @@
 		// None for the group of sessions outside every repo, which has no menu.
 		repo?: string;
 		collapsed: boolean;
+		// What the group's hidden rows would show: one waits on the user, one
+		// is unread. Given only while collapsed.
+		needs?: 'input' | 'auth';
+		unread: boolean;
 		disabled: boolean;
 		menuOpen: boolean;
 		ontoggle: () => void;
@@ -70,10 +77,19 @@
 			</button>
 		</span>
 	{/if}
+	{#if needs || unread}
+		<span class="badges">
+			<span class="status {needs}" role={needs && 'img'} aria-label={needs && SUFFIX[needs]}>
+				{#if needs === 'input'}<Icon name="exclamation-triangle" />{:else if needs === 'auth'}<Icon name="key" />{/if}
+			</span>
+			<span class="dot" class:unread role={unread ? 'img' : undefined} aria-label={unread ? 'unread' : undefined}></span>
+		</span>
+	{/if}
 </li>
 
 <style>
 	li {
+		position: relative;
 		display: flex;
 		align-items: center;
 		gap: 2px;
@@ -82,7 +98,7 @@
 		color: #999;
 	}
 	li:not(:first-child) {
-		margin-top: 6px;
+		margin-top: 12px;
 	}
 	button {
 		border: none;
@@ -95,28 +111,26 @@
 		outline: 1px solid #4fc1ff;
 		outline-offset: -1px;
 	}
-	/* The chevron sits where the rows' agent icons do and the name where
-	   their titles start. */
+	/* The chevron's stroke lines up with the rows' agent icons, whose marks
+	   fill more of their box, and the name with their titles. */
 	.toggle {
 		flex: 1;
 		min-width: 0;
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: 8px;
 		height: 22px;
-		padding: 0 8px;
+		padding: 0 6px;
 		border-radius: 6px;
 		text-align: left;
-	}
-	.toggle:hover {
-		background: #2a2d2e;
 	}
 	.toggle > :global(svg) {
 		flex: none;
 	}
-	/* Set apart from the rows' paths, which have the same size and colour; the
-	   case is the folder's own. */
+	/* Set apart from the rows' paths, which have the same size; the case is
+	   the folder's own. */
 	.name {
+		color: #bbb;
 		font-weight: 600;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -131,7 +145,7 @@
 		opacity: 0;
 		pointer-events: none;
 	}
-	li:is(:hover, :focus-within) .actions,
+	li:is(:hover, :has(:focus-visible)) .actions,
 	.actions.open {
 		opacity: 1;
 		pointer-events: auto;
@@ -153,5 +167,39 @@
 	.actions button:disabled {
 		opacity: 0.4;
 		cursor: default;
+	}
+	/* In the rows' status and dot columns, under the actions, which take
+	   their place while shown. Clicks go through to the toggle beneath. */
+	.badges {
+		position: absolute;
+		top: 0;
+		right: 8px;
+		bottom: 0;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		pointer-events: none;
+	}
+	li:is(:hover, :has(:focus-visible)) .actions ~ .badges,
+	.actions.open ~ .badges {
+		visibility: hidden;
+	}
+	.status {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 14px;
+		height: 14px;
+	}
+	.status.input {
+		color: #cca700;
+	}
+	.dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+	}
+	.dot.unread {
+		background: #4fc1ff;
 	}
 </style>

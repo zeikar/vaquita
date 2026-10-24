@@ -183,6 +183,7 @@
 			onremoverepo={(p) => manager.removeRepo(p)}
 			onrename={(sid, name) => manager.rename(sid, name)}
 			onreport={(m) => manager.report(m)}
+			addDisabled={$manager.status !== 'connected'}
 			onaddrepo={() => void addRepo?.open()}
 			onnewsession={newSession}
 		/>
@@ -201,6 +202,7 @@
 		disabled={$manager.creating || $manager.status !== 'connected'}
 		oncreate={(cwd, cmd, name) => manager.create(cwd, cmd, name)}
 		onclose={() => (dialogOpen = false)}
+		fallbackFocus={() => $manager.sessions.find((r) => r.info.sid === $manager.selected)?.view?.focus()}
 	/>
 	<TerminalPane sessions={$manager.sessions} selected={$manager.selected} />
 	{#if $manager.update && $manager.status === 'connected'}
