@@ -34,6 +34,8 @@ function show(sessions: SessionRow<unknown>[], repos: string[] = []) {
 		onremoverepo: vi.fn(),
 		onrename: vi.fn(),
 		onreport: vi.fn(),
+		onaddrepo: vi.fn(),
+		onnewsession: vi.fn(),
 	});
 	target = document.createElement('div');
 	document.body.append(target);
@@ -606,5 +608,53 @@ describe('SessionList session menu', () => {
 			rightClick(1);
 			expect(item('Reveal in Finder').getAttribute('aria-disabled')).toBe('true');
 		});
+	});
+});
+
+describe('SessionList empty-area menu', () => {
+	const list = () => target.querySelector<HTMLElement>('ul')!;
+	const menu = () => target.querySelector<HTMLElement>('[role="menu"]');
+	const labels = () => [...target.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].map((b) => b.textContent?.trim());
+	const item = (label: string) => [...target.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === label)!;
+	function rightClick(el: HTMLElement, x = 0, y = 0): MouseEvent {
+		const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y });
+		el.dispatchEvent(e);
+		flushSync();
+		return e;
+	}
+	function click(el: HTMLElement) {
+		el.click();
+		flushSync();
+	}
+
+	it('offers Add repo and New session on a right-click on the empty space, at the pointer', () => {
+		const p = show([row(1)], ['/tmp/repo']);
+		const e = rightClick(list(), 30, 40);
+		expect(e.defaultPrevented).toBe(true);
+		expect(labels()).toEqual(['Add repo…', 'New session…']);
+		expect(menu()!.style.left).toBe('30px');
+		expect(menu()!.style.top).toBe('40px');
+		click(item('Add repo…'));
+		expect(p.onaddrepo).toHaveBeenCalledTimes(1);
+		expect(menu()).toBeNull();
+		rightClick(list());
+		click(item('New session…'));
+		expect(p.onnewsession).toHaveBeenCalledTimes(1);
+		expect(p.onaddrepo).toHaveBeenCalledTimes(1);
+		expect(menu()).toBeNull();
+	});
+
+	it('offers them in an empty list too', () => {
+		show([]);
+		rightClick(list());
+		expect(labels()).toEqual(['Add repo…', 'New session…']);
+	});
+
+	it('still opens the session menu on a row and the repo menu on a header', () => {
+		show([row(1)], ['/tmp/repo']);
+		rightClick(titles()[0]);
+		expect(labels()).toEqual(['Rename', 'Copy path', 'Kill']);
+		rightClick(target.querySelector<HTMLElement>('button[aria-expanded]:not([aria-haspopup])')!);
+		expect(labels()).toEqual(['New Claude session', 'New Codex session', 'New shell', 'Remove repo']);
 	});
 });

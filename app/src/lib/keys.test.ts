@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { keyHandler, swallowsKeypress, translateKey } from './keys';
+import { isNewSessionShortcut, keyHandler, swallowsKeypress, translateKey } from './keys';
 
 function key(type: string, init: Partial<KeyboardEvent>): KeyboardEvent {
 	return { type, key: 'Enter', keyCode: 13, isComposing: false, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, ...init } as KeyboardEvent;
@@ -50,5 +50,26 @@ describe('keyHandler', () => {
 		expect(handle(key('keydown', {}))).toBe(true);
 		expect(handle(key('keypress', {}))).toBe(true);
 		expect(sent).toEqual([]);
+	});
+});
+
+describe('isNewSessionShortcut', () => {
+	const t = (init: Partial<KeyboardEvent>) => key('keydown', { key: 't', keyCode: 84, ...init });
+
+	it('is Cmd+T alone', () => {
+		expect(isNewSessionShortcut(t({ metaKey: true }))).toBe(true);
+		// Caps Lock.
+		expect(isNewSessionShortcut(t({ metaKey: true, key: 'T' }))).toBe(true);
+		expect(isNewSessionShortcut(t({}))).toBe(false);
+		expect(isNewSessionShortcut(t({ ctrlKey: true }))).toBe(false);
+		expect(isNewSessionShortcut(t({ metaKey: true, shiftKey: true, key: 'T' }))).toBe(false);
+		expect(isNewSessionShortcut(t({ metaKey: true, altKey: true, key: '†' }))).toBe(false);
+		expect(isNewSessionShortcut(t({ metaKey: true, ctrlKey: true }))).toBe(false);
+		expect(isNewSessionShortcut(t({ metaKey: true, key: 'n' }))).toBe(false);
+	});
+
+	it('leaves a key that belongs to an IME alone', () => {
+		expect(isNewSessionShortcut(t({ metaKey: true, isComposing: true }))).toBe(false);
+		expect(isNewSessionShortcut(t({ metaKey: true, keyCode: 229 }))).toBe(false);
 	});
 });

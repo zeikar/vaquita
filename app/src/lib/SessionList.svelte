@@ -25,6 +25,8 @@
 		onremoverepo,
 		onrename,
 		onreport,
+		onaddrepo,
+		onnewsession,
 	}: {
 		sessions: SessionRow<unknown>[];
 		selected?: number;
@@ -43,6 +45,8 @@
 		onrename: (sid: number, name: string) => void;
 		// For a failure the list has nowhere to show.
 		onreport: (message: string) => void;
+		onaddrepo: () => void;
+		onnewsession: () => void;
 	} = $props();
 
 	const groups = $derived(groupRows(sessions, repos));
@@ -111,9 +115,19 @@
 				: [{ label: 'Kill', danger: true, confirm: true, run: () => onkill(sid) }]),
 		];
 	}
+
+	// Only on the list's own space: rows and headers open their own menus.
+	function listMenu(e: MouseEvent) {
+		if (e.target !== e.currentTarget) return;
+		e.preventDefault();
+		openMenu('list', { x: e.clientX, y: e.clientY }, [
+			{ label: 'Add repo…', run: onaddrepo },
+			{ label: 'New session…', run: onnewsession },
+		]);
+	}
 </script>
 
-<ul>
+<ul oncontextmenu={listMenu}>
 	{#each groups as g (g.repo ?? '')}
 		{@const key = g.repo ?? 'other'}
 		{@const owner = `repo:${g.repo}`}

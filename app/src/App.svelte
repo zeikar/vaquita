@@ -4,14 +4,18 @@
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { onDestroy } from 'svelte';
 	import AddRepo from './lib/AddRepo.svelte';
-	import CreateForm from './lib/CreateForm.svelte';
 	import { DaemonConnection } from './lib/connection';
 	import { runningCount } from './lib/daemon-update';
 	import { appBuild, checkRestart, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
 	import { watchFocus } from './lib/focus';
+	import { repoOf } from './lib/groups';
+	import Icon from './lib/Icon.svelte';
+	import { isNewSessionShortcut } from './lib/keys';
 	import { SessionManager } from './lib/manager';
+	import NewSessionDialog, { LAST_CWD } from './lib/NewSessionDialog.svelte';
 	import type { Notifier, Target } from './lib/notify';
 	import SessionList from './lib/SessionList.svelte';
+	import { load } from './lib/storage';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
 	import { isTauri } from './lib/tauri';
@@ -78,6 +82,29 @@
 		});
 
 	let aside = $state<HTMLElement>();
+	let addRepo = $state<ReturnType<typeof AddRepo>>();
+
+	let dialogOpen = $state(false);
+	let dialogCwd = $state('');
+
+	// The dialog starts in the selected session's repo, else in the folder it
+	// last created a session in, else in the home folder.
+	function newSession() {
+		if (dialogOpen) return;
+		const { sessions, selected, repos } = $manager;
+		const cwd = sessions.find((r) => r.info.sid === selected)?.info.cwd;
+		dialogCwd = (cwd !== undefined ? repoOf(cwd, repos) : undefined) ?? load(LAST_CWD) ?? '';
+		dialogOpen = true;
+	}
+
+	// On the window in the capture phase, so it runs before xterm's handler on
+	// its textarea and the terminal never sees the key.
+	function shortcut(e: KeyboardEvent) {
+		if (!isNewSessionShortcut(e)) return;
+		e.preventDefault();
+		e.stopPropagation();
+		newSession();
+	}
 
 	// The OS file drop only exists inside Tauri. Paths dropped on the sidebar
 	// are added as repos; anywhere else they are typed into the selected session.
@@ -134,11 +161,13 @@
 	});
 </script>
 
+<svelte:window onkeydowncapture={shortcut} />
+
 <main>
 	<aside bind:this={aside}>
 		<header>
 			<span class="title">Repos</span>
-			<AddRepo disabled={$manager.status !== 'connected'} onadd={(p) => manager.addRepo(p)} />
+			<AddRepo bind:this={addRepo} disabled={$manager.status !== 'connected'} onadd={(p) => manager.addRepo(p)} />
 		</header>
 		<SessionList
 			sessions={$manager.sessions}
@@ -154,12 +183,25 @@
 			onremoverepo={(p) => manager.removeRepo(p)}
 			onrename={(sid, name) => manager.rename(sid, name)}
 			onreport={(m) => manager.report(m)}
+			onaddrepo={() => void addRepo?.open()}
+			onnewsession={newSession}
 		/>
-		<CreateForm
-			disabled={$manager.creating || $manager.status !== 'connected'}
-			oncreate={(cwd, cmd, name) => manager.create(cwd, cmd, name)}
-		/>
+		<div class="sidebar-footer">
+			<button class="new-session" title="New session (⌘T)" onclick={newSession}>
+				<Icon name="plus" />
+				<span class="label">New session</span>
+				<kbd>⌘T</kbd>
+			</button>
+		</div>
 	</aside>
+	<NewSessionDialog
+		open={dialogOpen}
+		repos={$manager.repos}
+		defaultCwd={dialogCwd}
+		disabled={$manager.creating || $manager.status !== 'connected'}
+		oncreate={(cwd, cmd, name) => manager.create(cwd, cmd, name)}
+		onclose={() => (dialogOpen = false)}
+	/>
 	<TerminalPane sessions={$manager.sessions} selected={$manager.selected} />
 	{#if $manager.update && $manager.status === 'connected'}
 		<UpdateBanner

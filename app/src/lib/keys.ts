@@ -33,3 +33,9 @@ export function keyHandler(send: (text: string) => void): (ev: KeyboardEvent) =>
 		return false;
 	};
 }
+
+// Cmd+T, the new-session shortcut. Lower-cased for Caps Lock; Shift, Ctrl and
+// Option make it another shortcut, left to whoever has it.
+export function isNewSessionShortcut(ev: KeyboardEvent): boolean {
+	return ev.key.toLowerCase() === 't' && ev.metaKey && !ev.ctrlKey && !ev.altKey && !ev.shiftKey && !belongsToIME(ev);
+}
