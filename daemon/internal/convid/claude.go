@@ -9,9 +9,10 @@ import (
 	"time"
 )
 
-// claudeStartSlack is how far a pid file's startedAt may be from the start
+// claudeStartSlack is how far a pid file's startedAt may come before the start
 // time of the process with that pid before the file is taken for a leftover of
-// an earlier process that had the pid.
+// an earlier process that had the pid. Later is fine at any distance: claude
+// writes the file only once its folder is trusted, which can take a while.
 const claudeStartSlack = 15 * time.Second
 
 // ReadClaude returns the conversation id of the claude among members, "" if
@@ -44,7 +45,7 @@ func ReadClaude(home string, members []Member, foreground int) string {
 		}
 		// A file without startedAt has nothing to compare, so it skips the
 		// check for a reused pid.
-		if f.StartedAt != 0 && absDuration(time.UnixMilli(f.StartedAt).Sub(m.Start)) > claudeStartSlack {
+		if f.StartedAt != 0 && m.Start.Sub(time.UnixMilli(f.StartedAt)) > claudeStartSlack {
 			continue
 		}
 		fg := m.PGID == foreground
@@ -63,11 +64,4 @@ func ReadClaude(home string, members []Member, foreground int) string {
 		return ""
 	}
 	return best.id
-}
-
-func absDuration(d time.Duration) time.Duration {
-	if d < 0 {
-		return -d
-	}
-	return d
 }

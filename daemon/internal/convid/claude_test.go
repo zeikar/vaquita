@@ -67,6 +67,7 @@ func TestReadClaude(t *testing.T) {
 		}, []Member{member(100, 100, claudeStart), member(200, 200, claudeStart)}, 200, ""},
 		{"no startedAt skips the reuse check", map[int]string{100: `{"sessionId":"` + idA + `"}`}, []Member{m1}, 100, idA},
 		{"stale startedAt", map[int]string{100: pidJSON(idA, claudeStart.Add(-60*time.Second))}, []Member{m1}, 100, ""},
+		{"startedAt written after a slow trust prompt", map[int]string{100: pidJSON(idA, claudeStart.Add(25*time.Second))}, []Member{m1}, 100, idA},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
