@@ -28,24 +28,34 @@ home=$dir/home
 vh=$dir/vaquita-home
 app=$repo/app/src-tauri/target/debug/vaquita
 
-# stop <name> <pattern>: stops the process up recorded under that name, only
-# while its command still matches, as the pid may since belong to another.
+# record <name> <pid> notes a process up started, with its start time, which
+# stop compares: the pid may since belong to another process.
+started() {
+	# Unquoted, so ps's padding collapses.
+	echo $(ps -p "$1" -o lstart= 2>/dev/null)
+}
+record() {
+	echo "$2 $(started "$2")" >"$dir/$1.pid"
+}
 stop() {
 	[ -f "$dir/$1.pid" ] || return 0
-	pid=$(cat "$dir/$1.pid")
+	read -r pid started <"$dir/$1.pid"
 	rm -f "$dir/$1.pid"
-	case $(ps -p "$pid" -o command= 2>/dev/null) in
-	$2) kill "$pid" ;;
-	'') ;;
-	*) echo "$1: pid $pid is no longer ours, left alone" >&2 ;;
-	esac
+	now=$(started "$pid")
+	if [ -z "$now" ]; then
+		return 0
+	elif [ "$now" = "$started" ]; then
+		kill "$pid"
+	else
+		echo "$1: pid $pid is no longer ours, left alone" >&2
+	fi
 }
 
 case $1 in
 down)
-	stop app "$app*"
-	stop vite "*vite*--port 1420*"
-	stop daemon "$dir/bin/vaquitad serve*"
+	stop app
+	stop vite
+	stop daemon
 	exit 0
 	;;
 up) ;;
@@ -83,7 +93,7 @@ node "$here/claude-config.mjs" "$home" "$home/src/vaquita"
 
 cd "$dir"
 HOME=$home VAQUITA_HOME=$vh SHELL=/bin/zsh nohup "$dir/bin/vaquitad" serve --allow-origin http://localhost:1420 >"$dir/daemon.log" 2>&1 &
-echo $! >"$dir/daemon.pid"
+record daemon $!
 i=0
 until [ -f "$vh/endpoint.json" ]; do
 	i=$((i + 1))
@@ -97,7 +107,7 @@ node "$here/sessions.mjs" "$vh" "$home" "$here/fake-agent.sh" agents
 
 cd "$repo/app"
 VAQUITA_HOME=$vh nohup ./node_modules/.bin/vite --port 1420 --strictPort >"$dir/vite.log" 2>&1 &
-echo $! >"$dir/vite.pid"
+record vite $!
 (cd src-tauri && cargo build -q)
 i=0
 until curl -fs -o /dev/null http://localhost:1420/; do
@@ -108,7 +118,7 @@ done
 guis() { grep -c 'msg="client connected".*client=gui' "$vh/vaquitad.log" || true; }
 before=$(guis)
 HOME=$home VAQUITA_HOME=$vh nohup "$app" >"$dir/app.log" 2>&1 &
-echo $! >"$dir/app.pid"
+record app $!
 
 # claude reports its state only once a terminal answers its query, which the
 # app's does for each session it shows.
