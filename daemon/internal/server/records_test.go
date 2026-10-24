@@ -460,3 +460,54 @@ func TestLoadedRecordsListEffectiveCwd(t *testing.T) {
 		t.Errorf("cwd listed as %q, want %q", i.Cwd, filepath.Join(root, "a"))
 	}
 }
+
+// shortRechecks makes the rechecks of startup orphans run at once. It must
+// run before the server starts, which reads them on a goroutine of its own.
+func shortRechecks(t *testing.T) {
+	orig := orphanRechecks
+	orphanRechecks = []time.Duration{10 * time.Millisecond, 10 * time.Millisecond, 10 * time.Millisecond}
+	t.Cleanup(func() { orphanRechecks = orig })
+}
+
+// A record that still held processes at startup, such as an agent still
+// shutting down after a crash, is scanned again shortly after and becomes
+// restorable once its session is empty.
+func TestStartupOrphansAreRechecked(t *testing.T) {
+	shortRechecks(t)
+	rec := goneRecord(t, 4, t.TempDir(), "claude")
+	rec.Orphans = []int{rec.PID}
+	srv := startRecords(t, rec)
+	a := dialClient(t, srv)
+
+	a.waitFor("restorable record", func() bool {
+		i := a.info(4)
+		return i != nil && i.Restorable && len(i.Orphans) == 0
+	})
+	if r := savedRecord(t, srv, 4); r == nil || len(r.Orphans) != 0 {
+		t.Errorf("saved %+v, want the record without orphans", r)
+	}
+}
+
+// A record whose process is still there keeps its orphans through the
+// rechecks.
+func TestStartupOrphansStayWhileTheyRun(t *testing.T) {
+	shortRechecks(t)
+	sleep := exec.Command("/bin/sleep", "60")
+	sleep.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := sleep.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pid := sleep.Process.Pid
+	t.Cleanup(func() {
+		sleep.Process.Kill()
+		sleep.Wait()
+	})
+	rec := state.SessionRecord{SID: 5, PID: pid, Started: time.Now(), Cwd: "/tmp", Cmd: "claude", Orphans: []int{pid}}
+	srv := startRecords(t, rec)
+	a := dialClient(t, srv)
+
+	time.Sleep(100 * time.Millisecond)
+	if i := a.info(5); i == nil || i.Restorable || !slices.Equal(i.Orphans, []int{pid}) {
+		t.Errorf("listed %+v, want orphans [%d] and not restorable", i, pid)
+	}
+}

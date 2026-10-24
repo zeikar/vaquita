@@ -2,7 +2,9 @@ package server
 
 import (
 	"log/slog"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/zeikar/vaquita/daemon/internal/protocol"
 	"github.com/zeikar/vaquita/daemon/internal/session"
@@ -144,4 +146,66 @@ func (c *conn) dismiss(sid uint32) {
 		t.broadcastLocked()
 	}
 	c.send(protocol.Error{T: protocol.TError, Code: protocol.CodeOrphans, SID: sid, PIDs: e.rec.Orphans})
+}
+
+// orphanRechecks are the waits, one after another, after which the records
+// that held processes when the daemon started are scanned again. Right after a
+// crash those are often agents still shutting down, and a record with orphans
+// can be neither reopened nor dismissed. A variable so that tests can shorten
+// it.
+var orphanRechecks = []time.Duration{2 * time.Second, 3 * time.Second, 10 * time.Second}
+
+// recheckOrphans scans the records with orphans again after each of
+// orphanRechecks, until none is left or done is closed.
+func (t *table) recheckOrphans(done <-chan struct{}) {
+	for _, wait := range orphanRechecks {
+		select {
+		case <-done:
+			return
+		case <-time.After(wait):
+		}
+		if !t.rescanOrphans() {
+			return
+		}
+	}
+}
+
+// rescanOrphans rescans the earlier run's records that hold orphans, by the
+// rule SessionRecord.Rescan applies, and sends the list when one changed: a
+// record found empty becomes restorable. It reports whether any record still
+// holds orphans.
+func (t *table) rescanOrphans() bool {
+	t.mu.Lock()
+	var held []*entry
+	for _, e := range t.entries {
+		if e.sess == nil && !e.reopening && len(e.rec.Orphans) > 0 {
+			held = append(held, e)
+		}
+	}
+	t.mu.Unlock()
+
+	changed, left := false, false
+	for _, e := range held {
+		rec, err := t.rescanRecord(e)
+		t.mu.Lock()
+		// A kill, dismiss or reopen may have dealt with the record meanwhile.
+		if t.entries[e.sid] == e && e.sess == nil && !e.reopening {
+			if err != nil {
+				slog.Warn("recheck of orphans: scan failed, so the record is kept", "sid", e.sid, "pid", e.pid, "err", err)
+			} else if !slices.Equal(rec.Orphans, e.rec.Orphans) {
+				e.rec.Orphans = rec.Orphans
+				changed = true
+				slog.Info("recheck of orphans", "sid", e.sid, "pid", e.pid, "orphans", e.rec.Orphans)
+			}
+			left = left || len(e.rec.Orphans) > 0
+		}
+		t.mu.Unlock()
+	}
+	if changed {
+		t.mu.Lock()
+		t.saveLocked()
+		t.broadcastLocked()
+		t.mu.Unlock()
+	}
+	return left
 }

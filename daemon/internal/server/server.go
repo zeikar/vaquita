@@ -67,6 +67,12 @@ type Server struct {
 
 	stopping chan struct{} // closed once a shutdown request is agreed to
 	stopOnce sync.Once
+
+	// done is closed by Close, which then waits on rechecks: no recheck of
+	// orphans saves state.json once Close has returned.
+	done      chan struct{}
+	closeOnce sync.Once
+	rechecks  sync.WaitGroup
 }
 
 // NewToken returns 32 random bytes in hex.
@@ -101,6 +107,7 @@ func Listen(opts Options) (*Server, error) {
 		table:    newTable(opts.Home, opts.State),
 		conns:    make(map[*conn]struct{}),
 		stopping: make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 	// The agents keep their files under the user's home, which Options.Home,
 	// the instance directory, is not.
@@ -108,6 +115,11 @@ func Listen(opts Options) (*Server, error) {
 		slog.Warn("no home directory, so agents' conversation ids are not recorded", "err", err)
 	}
 	s.table.normalizeCwds()
+	s.rechecks.Add(1)
+	session.Go("orphan rechecks", func() {
+		defer s.rechecks.Done()
+		s.table.recheckOrphans(s.done)
+	})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ws", s.handleWS)
 	s.hs = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
@@ -143,6 +155,8 @@ func (s *Server) Close() error {
 		c.closeWith(websocket.StatusGoingAway, "daemon stopping")
 	}
 	s.wg.Wait()
+	s.closeOnce.Do(func() { close(s.done) })
+	s.rechecks.Wait()
 	return err
 }
 
