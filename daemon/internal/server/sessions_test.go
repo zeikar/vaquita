@@ -3,9 +3,6 @@ package server
 import (
 	"bytes"
 	"errors"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -151,13 +148,10 @@ func TestCreateSendsStartupLive(t *testing.T) {
 // agent: a login shell sources $HOME/.profile before running the command.
 func TestCreateKeepsTheTypedCommandForCodex(t *testing.T) {
 	srv := startSessionServer(t, Options{})
-	stub := "codex() { printf 'stub:%s\\n' \"$*\"; }\n"
-	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), ".profile"), []byte(stub), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	stubAgents(t)
 	a := dialClient(t, srv)
 	sid := a.create("codex resume --last")
-	a.waitLive(sid, "stub:"+stubCodexOptions+" resume --last")
+	a.waitLive(sid, "stub:codex:"+stubCodexOptions+" resume --last")
 	i := a.waitListed(sid, running)
 	if i.Cmd != "codex resume --last" {
 		t.Errorf("listed cmd %q, want what the user typed", i.Cmd)
@@ -426,11 +420,7 @@ func TestOrphanKeepsRecord(t *testing.T) {
 // restorable, cannot be subscribed to, keeps its sid out of use, stays after
 // a kill and goes on a dismiss.
 func TestPreviousRunRecord(t *testing.T) {
-	gone := exec.Command("/usr/bin/true")
-	if err := gone.Run(); err != nil {
-		t.Fatal(err)
-	}
-	rec := state.SessionRecord{SID: 7, PID: gone.ProcessState.Pid(), Started: time.Now(), Cwd: "/tmp", Cmd: "old"}
+	rec := goneRecord(t, 7, "/tmp", "old")
 	srv := startSessionServer(t, Options{State: state.State{Shell: "/bin/sh", Sessions: []state.SessionRecord{rec}}})
 	a := dialClient(t, srv)
 	if i := a.info(7); i == nil || i.State != protocol.StateExited || i.PID != rec.PID || i.Cmd != "old" || !i.Restorable {

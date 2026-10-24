@@ -97,12 +97,17 @@ func TestRecordWithOrphansIsCleanedByKill(t *testing.T) {
 const stubCodexOptions = `-c tui.notifications=["agent-turn-complete","approval-requested","plan-mode-prompt","async-question"] -c tui.notification_method="osc9" -c tui.notification_condition="always" -c tui.terminal_title=["thread-name"]`
 
 // stubAgents defines shell functions for claude and codex in $HOME/.profile,
-// which a login shell sources before the command, so that a reopen never
+// which a login shell sources before the command, so that a session never
 // launches the real agents found on PATH. Call it after startSessionServer,
 // which points HOME at a temporary directory.
 func stubAgents(t *testing.T) {
 	t.Helper()
-	stub := "claude() { printf 'stub:claude:%s\\n' \"$*\"; }\ncodex() { printf 'stub:codex:%s\\n' \"$*\"; }\n"
+	writeProfile(t, "claude() { printf 'stub:claude:%s\\n' \"$*\"; }\ncodex() { printf 'stub:codex:%s\\n' \"$*\"; }\n")
+}
+
+// writeProfile writes stub to $HOME/.profile.
+func writeProfile(t *testing.T, stub string) {
+	t.Helper()
 	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), ".profile"), []byte(stub), 0o644); err != nil {
 		t.Fatal(err)
 	}

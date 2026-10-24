@@ -126,10 +126,7 @@ func TestClaudeTopicNamedLikeTheFolder(t *testing.T) {
 // temporary directory.
 func stubCodexJob(t *testing.T, steps ...string) {
 	t.Helper()
-	stub := "codex() { " + agentJob(steps...) + "; }\n"
-	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), ".profile"), []byte(stub), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeProfile(t, "codex() { "+agentJob(steps...)+"; }\n")
 }
 
 // Codex's thread name, which the session's options make its title, titles
