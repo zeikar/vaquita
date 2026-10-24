@@ -37,3 +37,14 @@ A release build looks for the daemon and, if none is running, starts its LaunchA
 A release build also replaces a running daemon that is not the vaquitad inside it, as after the app was updated: the daemon's build (`vaquitad version`) differs from the app's version. When no session is running, it asks the daemon to stop, which the daemon does only if still none is running or starting, and then starts its own vaquitad. Otherwise a bar offers a restart, since running sessions end with the daemon (they stay listed and can be reopened). A daemon from before builds (0.1.0-rc.3 and earlier) cannot make that check, so it is only ever offered. The app restarts a daemon by itself once per app run at most, and stops none when it could not start its own, such as when it runs from a translocated copy. A daemon built with a plain `make`, whose build is `dev`, is left alone.
 
 `npm run tauri build` produces `app/src-tauri/target/release/bundle/macos/vaquita.app`, with vaquitad built into it; set `VAQUITA_SIGN_IDENTITY` to sign that vaquitad with a stable identity, as `SIGN` does for the daemon. That vaquitad's build is `dev` unless `VERSION` is set; the release sets both it and the app's version from the tag. To pass `VAQUITA_HOME`, run `vaquita.app/Contents/MacOS/vaquita` directly. Without it the app uses the default home, `~/Library/Application Support/vaquita`.
+
+## Screenshot
+
+The README's screenshot is of a demo that `tools/screenshot/demo.sh` sets up: a daemon and a HOME of its own in a folder you name, three repos, and sessions (seeded by `sessions.mjs`) in which `fake-agent.sh` reports states the way Claude Code and Codex do. To take it again, with port 1420 free:
+
+```sh
+PATH="/opt/homebrew/opt/rustup/bin:$PATH" tools/screenshot/demo.sh up /tmp/vaquita-demo
+# in the app, select the shell under vaquita and let its tests finish
+screencapture -iw docs/screenshot.png   # then click the app's window
+tools/screenshot/demo.sh down /tmp/vaquita-demo
+```
