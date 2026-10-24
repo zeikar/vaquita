@@ -139,6 +139,7 @@
 			onstart={(repo, cmd) => manager.create(repo, cmd, '')}
 			onremoverepo={(p) => manager.removeRepo(p)}
 			onrename={(sid, name) => manager.rename(sid, name)}
+			onreport={(m) => manager.report(m)}
 		/>
 		<AddRepo disabled={$manager.status !== 'connected'} onadd={(p) => manager.addRepo(p)} />
 		<CreateForm

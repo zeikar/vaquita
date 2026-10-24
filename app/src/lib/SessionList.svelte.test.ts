@@ -2,12 +2,15 @@
 // Named .svelte.test.ts so that the props can be $state: a list update has to
 // reach the mounted list while a name is being edited.
 import { flushSync, mount, unmount } from 'svelte';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionRow } from './manager';
 import type { SessionInfo } from './protocol';
 import SessionList from './SessionList.svelte';
 
-const row = (sid: number, extra: Partial<SessionInfo> = {}): SessionRow<unknown> => ({
+const opener = vi.hoisted(() => ({ revealItemInDir: vi.fn(async (_path: string) => {}) }));
+vi.mock('@tauri-apps/plugin-opener', () => opener);
+
+const row =(sid: number, extra: Partial<SessionInfo> = {}): SessionRow<unknown> => ({
 	info: { sid, inc: 'i', cwd: '/tmp/repo', cmd: 'claude', name: '', cols: 80, rows: 24, state: 'running', pid: 2, code: 0, ...extra },
 	ro: false,
 	reports: 0,
@@ -30,6 +33,7 @@ function show(sessions: SessionRow<unknown>[], repos: string[] = []) {
 		onstart: vi.fn(),
 		onremoverepo: vi.fn(),
 		onrename: vi.fn(),
+		onreport: vi.fn(),
 	});
 	target = document.createElement('div');
 	document.body.append(target);
@@ -458,5 +462,149 @@ describe('SessionList repo groups', () => {
 		now = 500;
 		click(item('Confirm remove repo?'));
 		expect(p.onremoverepo).toHaveBeenCalledWith('/tmp/repo');
+	});
+});
+
+describe('SessionList session menu', () => {
+	const menu = () => target.querySelector<HTMLElement>('[role="menu"]');
+	const items = () => [...target.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+	const labels = () => items().map((b) => b.textContent?.trim());
+	const item = (label: string) => items().find((b) => b.textContent?.trim() === label)!;
+	function click(el: HTMLElement) {
+		el.click();
+		flushSync();
+	}
+	// On the title, which WebKit leaves the row's button unfocused for.
+	function rightClick(i = 0, x = 0, y = 0): MouseEvent {
+		const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y });
+		titles()[i].dispatchEvent(e);
+		flushSync();
+		return e;
+	}
+
+	it('opens at the pointer on a right-click on a row, from the row, and never the webview menu', () => {
+		show([row(1), row(2)]);
+		const e = rightClick(1, 30, 40);
+		expect(e.defaultPrevented).toBe(true);
+		expect(menu()!.style.left).toBe('30px');
+		expect(menu()!.style.top).toBe('40px');
+		// No Reveal in Finder outside Tauri.
+		expect(labels()).toEqual(['Rename', 'Copy path', 'Kill']);
+		expect(item('Kill').classList.contains('danger')).toBe(true);
+		const actions = [...target.querySelectorAll('button[aria-label="Kill"]')].map((b) => b.parentElement!);
+		expect(actions.map((a) => a.classList.contains('open'))).toEqual([false, true]);
+		menu()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		flushSync();
+		expect(menu()).toBeNull();
+		expect(document.activeElement).toBe(target.querySelectorAll('button.row')[1]);
+	});
+
+	it('opens no menu on a row whose name is being edited, leaving the input its own', () => {
+		show([row(1)]);
+		const el = edit();
+		const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+		el.dispatchEvent(e);
+		flushSync();
+		expect(e.defaultPrevented).toBe(false);
+		expect(menu()).toBeNull();
+		expect(document.activeElement).toBe(el);
+	});
+
+	it('renames from the menu', () => {
+		show([row(1, { name: 'w' })]);
+		rightClick();
+		click(item('Rename'));
+		expect(menu()).toBeNull();
+		expect(input()!.value).toBe('w');
+		expect(document.activeElement).toBe(input());
+	});
+
+	it('copies the path from the menu, and reports a failure', async () => {
+		const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+		const p = show([row(1, { cwd: '/tmp/repo/a' })]);
+		rightClick();
+		click(item('Copy path'));
+		expect(write).toHaveBeenCalledWith('/tmp/repo/a');
+		expect(menu()).toBeNull();
+		write.mockRejectedValueOnce(new Error('denied'));
+		rightClick();
+		click(item('Copy path'));
+		await vi.waitFor(() => expect(p.onreport).toHaveBeenCalledWith('copy path failed: denied'));
+	});
+
+	it('disables Copy path for a session without a folder', () => {
+		const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+		show([row(1, { cwd: '' })]);
+		rightClick();
+		expect(item('Copy path').getAttribute('aria-disabled')).toBe('true');
+		click(item('Copy path'));
+		expect(write).not.toHaveBeenCalled();
+		expect(menu()).not.toBeNull();
+	});
+
+	it('kills on a second click on Kill only, keeping the menu open in between', () => {
+		let now = 0;
+		vi.spyOn(performance, 'now').mockImplementation(() => now);
+		const p = show([row(1), row(2)]);
+		rightClick(1);
+		click(item('Kill'));
+		expect(p.onkill).not.toHaveBeenCalled();
+		expect(menu()).not.toBeNull();
+		now = 500;
+		click(item('Confirm kill?'));
+		expect(p.onkill).toHaveBeenCalledTimes(1);
+		expect(p.onkill).toHaveBeenCalledWith(2);
+		expect(menu()).toBeNull();
+	});
+
+	it('offers Reopen and Dismiss for an old session instead of Kill', () => {
+		let now = 0;
+		vi.spyOn(performance, 'now').mockImplementation(() => now);
+		const p = show([row(3, { restorable: true, state: 'exited' })]);
+		rightClick();
+		expect(labels()).toEqual(['Rename', 'Copy path', 'Reopen', 'Dismiss']);
+		click(item('Reopen'));
+		expect(p.onreopen).toHaveBeenCalledWith(3);
+		rightClick();
+		click(item('Dismiss'));
+		expect(p.ondismiss).not.toHaveBeenCalled();
+		now = 500;
+		click(item('Confirm dismiss?'));
+		expect(p.ondismiss).toHaveBeenCalledWith(3);
+		p.disabled = true;
+		flushSync();
+		rightClick();
+		expect(item('Reopen').getAttribute('aria-disabled')).toBe('true');
+		click(item('Reopen'));
+		expect(p.onreopen).toHaveBeenCalledTimes(1);
+	});
+
+	describe('inside Tauri', () => {
+		const internals = window as unknown as { __TAURI_INTERNALS__?: object };
+		beforeEach(() => {
+			internals.__TAURI_INTERNALS__ = {};
+			opener.revealItemInDir.mockClear();
+		});
+		afterEach(() => {
+			delete internals.__TAURI_INTERNALS__;
+		});
+
+		it('reveals a row or a repo in Finder, and reports a failure', async () => {
+			const p = show([row(1, { cwd: '/tmp/repo/a' }), row(2, { cwd: '' })], ['/tmp/repo']);
+			rightClick(0);
+			expect(labels()).toEqual(['Rename', 'Copy path', 'Reveal in Finder', 'Kill']);
+			click(item('Reveal in Finder'));
+			await vi.waitFor(() => expect(opener.revealItemInDir).toHaveBeenCalledWith('/tmp/repo/a'));
+			click(target.querySelector<HTMLButtonElement>('button[aria-label="Repo menu"]')!);
+			expect(labels()).toEqual(['New Claude session', 'New Codex session', 'New shell', 'Reveal in Finder', 'Remove repo']);
+			click(item('Reveal in Finder'));
+			await vi.waitFor(() => expect(opener.revealItemInDir).toHaveBeenLastCalledWith('/tmp/repo'));
+			opener.revealItemInDir.mockRejectedValueOnce(new Error('no such file'));
+			rightClick(0);
+			click(item('Reveal in Finder'));
+			await vi.waitFor(() => expect(p.onreport).toHaveBeenCalledWith('reveal in Finder failed: no such file'));
+			rightClick(1);
+			expect(item('Reveal in Finder').getAttribute('aria-disabled')).toBe('true');
+		});
 	});
 });

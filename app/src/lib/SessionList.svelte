@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { SvelteSet } from 'svelte/reactivity';
+	import { writeClipboard } from './clipboard';
 	import { Confirm } from './confirm.svelte';
 	import ContextMenu from './ContextMenu.svelte';
 	import { groupRows } from './groups';
 	import type { SessionRow } from './manager';
 	import type { MenuAt, MenuItem } from './menu';
 	import RepoHeader from './RepoHeader.svelte';
+	import { canReveal, revealInFinder } from './reveal';
 	import SessionItem from './SessionItem.svelte';
 	import { load, save } from './storage';
 
@@ -22,6 +24,7 @@
 		onstart,
 		onremoverepo,
 		onrename,
+		onreport,
 	}: {
 		sessions: SessionRow<unknown>[];
 		selected?: number;
@@ -38,6 +41,8 @@
 		onstart: (repo: string, cmd: string) => void;
 		onremoverepo: (path: string) => void;
 		onrename: (sid: number, name: string) => void;
+		// For a failure the list has nowhere to show.
+		onreport: (message: string) => void;
 	} = $props();
 
 	const groups = $derived(groupRows(sessions, repos));
@@ -74,14 +79,38 @@
 		menu = { at, items, owner, key: ++opens };
 	}
 
+	const failed = (what: string) => (e: unknown) => onreport(`${what} failed: ${e instanceof Error ? e.message : String(e)}`);
+	const reveal = (path: string): MenuItem[] =>
+		canReveal()
+			? [{ label: 'Reveal in Finder', disabled: !path, run: () => void revealInFinder(path).catch(failed('reveal in Finder')) }]
+			: [];
+
 	// The start items are disabled as the header's buttons are: manager.create
 	// refuses silently while disconnected or creating.
 	const repoMenu = (repo: string): MenuItem[] => [
 		{ label: 'New Claude session', disabled, run: () => onstart(repo, 'claude') },
 		{ label: 'New Codex session', disabled, run: () => onstart(repo, 'codex') },
 		{ label: 'New shell', disabled, run: () => onstart(repo, '') },
+		...reveal(repo),
 		{ label: 'Remove repo', danger: true, confirm: true, run: () => onremoverepo(repo) },
 	];
+
+	// An empty cwd is the home folder, which the list does not always know.
+	// Reopen is disabled as the row's button is.
+	function sessionMenu({ info }: SessionRow<unknown>): MenuItem[] {
+		const { sid, cwd } = info;
+		return [
+			{ label: 'Rename', run: () => (editing = sid) },
+			{ label: 'Copy path', disabled: !cwd, run: () => void writeClipboard(cwd).catch(failed('copy path')) },
+			...reveal(cwd),
+			...(info.restorable
+				? [
+						{ label: 'Reopen', disabled, run: () => onreopen(sid) },
+						{ label: 'Dismiss', confirm: true, run: () => ondismiss(sid) },
+					]
+				: [{ label: 'Kill', danger: true, confirm: true, run: () => onkill(sid) }]),
+		];
+	}
 </script>
 
 <ul>
@@ -100,12 +129,14 @@
 		{#if !collapsed.has(key)}
 			{#each g.rows as r (r.info.sid)}
 				{@const sid = r.info.sid}
+				{@const rowOwner = `session:${sid}`}
 				<SessionItem
 					row={r}
 					{home}
 					selected={sid === selected}
 					{disabled}
 					editing={editing === sid}
+					menuOpen={menu?.owner === rowOwner}
 					{twoClick}
 					onselect={() => onselect(sid)}
 					onedit={() => (editing = sid)}
@@ -114,6 +145,7 @@
 					onkill={() => onkill(sid)}
 					onreopen={() => onreopen(sid)}
 					ondismiss={() => ondismiss(sid)}
+					onmenu={(at) => openMenu(rowOwner, at, sessionMenu(r))}
 				/>
 			{/each}
 		{/if}

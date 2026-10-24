@@ -2,6 +2,7 @@
 	import { agentIcon, agentKind } from './agent';
 	import type { Confirm } from './confirm.svelte';
 	import Icon from './Icon.svelte';
+	import type { MenuAt } from './menu';
 	import NameEditor from './NameEditor.svelte';
 	import type { SessionRow } from './manager';
 	import { sessionTitle, SUFFIX } from './notify';
@@ -14,6 +15,7 @@
 		selected,
 		disabled,
 		editing,
+		menuOpen,
 		twoClick,
 		onselect,
 		onedit,
@@ -22,12 +24,14 @@
 		onkill,
 		onreopen,
 		ondismiss,
+		onmenu,
 	}: {
 		row: SessionRow<unknown>;
 		home?: string;
 		selected: boolean;
 		disabled: boolean;
 		editing: boolean;
+		menuOpen: boolean;
 		// The list's, so that one armed button disarms another.
 		twoClick: Confirm;
 		onselect: () => void;
@@ -37,6 +41,7 @@
 		onkill: () => void;
 		onreopen: () => void;
 		ondismiss: () => void;
+		onmenu: (at: MenuAt) => void;
 	} = $props();
 
 	// What the status icon says without a message: the words notifications use.
@@ -72,6 +77,19 @@
 	);
 
 	const disarm = () => armed && twoClick.disarm();
+
+	let button = $state<HTMLButtonElement>();
+
+	// While the name is edited the input keeps the platform's text menu: one
+	// here would take the focus from it, which commits. Elsewhere WKWebView's
+	// own is prevented. The focus call: WebKit focuses no clicked button, and
+	// the menu gives the focus back to what had it when it opened.
+	function context(e: MouseEvent) {
+		if (editing) return;
+		e.preventDefault();
+		button?.focus();
+		onmenu({ x: e.clientX, y: e.clientY });
+	}
 </script>
 
 <!-- The status and the dot keep their slots when empty, so rows do not jump. -->
@@ -95,7 +113,7 @@
 	<span class="detail">{detail}</span>
 {/snippet}
 
-<li class:selected class:editing onpointerleave={disarm}>
+<li class:selected class:editing onpointerleave={disarm} oncontextmenu={context}>
 	<!-- While its name is edited a row is no button: a button may not hold
 	     an input, and the input's clicks would select the row. -->
 	{#if editing}
@@ -105,6 +123,7 @@
 		     only one on the title renames. -->
 		<button
 			class="row"
+			bind:this={button}
 			title={tip}
 			onclick={() => onselect()}
 			ondblclick={(e) => (e.target as Element).closest('.title') && onedit()}
@@ -112,7 +131,7 @@
 			{@render body()}
 		</button>
 	{/if}
-	<span class="actions" class:armed>
+	<span class="actions" class:armed class:open={menuOpen}>
 		{#if info.restorable}
 			<button aria-label="Reopen" title="Reopen" {disabled} onclick={() => onreopen()}>
 				<Icon name="arrow-uturn-left" />
@@ -263,7 +282,8 @@
 		pointer-events: none;
 	}
 	li:not(.editing):is(:hover, :focus-within) .actions,
-	.actions.armed {
+	.actions.armed,
+	.actions.open {
 		opacity: 1;
 		pointer-events: auto;
 	}
