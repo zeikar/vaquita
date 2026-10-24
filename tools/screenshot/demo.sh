@@ -65,6 +65,8 @@ make -s -C "$repo/daemon" BIN="$dir/bin/vaquitad" >/dev/null
 cat >"$home/.zshrc" <<ZSHRC
 export PATH="$dir/bin:\$PATH" GIT_PAGER=cat GOCACHE="$(go env GOCACHE)" GOMODCACHE="$(go env GOMODCACHE)"
 PROMPT='%F{75}%~%f %# '
+# Its partial-line mark would show once the app resizes the terminal.
+unsetopt prompt_sp
 if [[ -z \$ZSH_EXECUTION_STRING && -z \$DEMO_SHOWN && \$PWD == \$HOME/src/vaquita ]]; then
 	export DEMO_SHOWN=1
 	for c in 'git log --oneline -8' 'go -C daemon test ./...'; do print -P "\$PROMPT\$c"; eval "\$c"; done
