@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { answer, connected, fakeTimersAndStorage, info, live, reconnect, replay } from './manager-harness';
+import { answer, connected, fakeTimersAndStorage, info, live, reconnect, replay, setup } from './manager-harness';
 import { FRAME_LIVE } from './protocol';
 
 const encoder = new TextEncoder();
@@ -225,6 +225,20 @@ describe('SessionManager sessions', () => {
 		expect(t.c.requests.at(-1)).toEqual(['kill', 1]);
 		t.c.emit.error({ t: 'error', code: 'orphans', sid: 1, pids: [9] });
 		expect(t.state().message).toBe('session "sh" left processes behind: 9');
+		t.m.stop();
+	});
+
+	it('sends a rename only with a ready connection', async () => {
+		const t = setup();
+		t.m.rename(1, 'x');
+		t.m.start();
+		await vi.advanceTimersByTimeAsync(0);
+		t.m.rename(1, 'x');
+		t.conns[0].emit.ready([info(1)]);
+		expect(t.conns[0].renames).toEqual([]);
+		t.m.rename(1, 'fix login');
+		t.m.rename(1, '');
+		expect(t.conns[0].renames).toEqual([[1, 'fix login'], [1, '']]);
 		t.m.stop();
 	});
 });

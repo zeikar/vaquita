@@ -11,7 +11,7 @@ import (
 )
 
 func (c *conn) create(m protocol.Create) {
-	c.startSession(m.Cwd, m.Cmd, m.Name, "", m.Cols, m.Rows, nil)
+	c.startSession(m.Cwd, m.Cmd, cleanName(m.Name), m.Cols, m.Rows, nil)
 }
 
 // startSession starts a session with c already subscribed. The subscription
@@ -23,9 +23,11 @@ func (c *conn) create(m protocol.Create) {
 // in the table: in one step, so that one save and one broadcast show the
 // swap. The new record carries old's agent and conversation id over, so a
 // restart before the agent has reported resumes the same conversation, and
-// keeps the restored command as its cmd, which a later reopen maps again.
-// title is the new record's until the agent gives another.
-func (c *conn) startSession(cwd, cmd, name, title string, cols, rows int, old *entry) {
+// keeps the restored command as its cmd, which a later reopen maps again. It
+// takes old's name, and the title reopenTitle gives with it, only then, so
+// that a rename of the record while the session started is kept; name is a
+// create's.
+func (c *conn) startSession(cwd, cmd, name string, cols, rows int, old *entry) {
 	t := c.srv.table
 	sid, ok := t.beginStart()
 	if !ok {
@@ -58,7 +60,7 @@ func (c *conn) startSession(cwd, cmd, name, title string, cols, rows int, old *e
 		return
 	}
 	e.sess, e.pid = s, s.PID()
-	e.rec = state.SessionRecord{SID: int(e.sid), PID: e.pid, Started: s.Started(), Cwd: s.Cwd(), Cmd: cmd, Name: name, Title: title}
+	e.rec = state.SessionRecord{SID: int(e.sid), PID: e.pid, Started: s.Started(), Cwd: s.Cwd(), Cmd: cmd, Name: name}
 	c.addSub(sub)
 
 	// Listed only once started: other connections can find the entry once
@@ -73,6 +75,7 @@ func (c *conn) startSession(cwd, cmd, name, title string, cols, rows int, old *e
 	close(e.listed)
 	byID := false
 	if old != nil {
+		e.rec.Name, e.rec.Title = old.rec.Name, reopenTitle(old.rec, cmd)
 		e.rec.Agent, e.rec.Conversation = old.rec.Agent, old.rec.Conversation
 		byID = convid.ValidID(e.rec.Conversation)
 		if t.entries[old.sid] == old {

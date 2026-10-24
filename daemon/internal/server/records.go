@@ -24,12 +24,12 @@ func (t *table) rescanRecord(e *entry) (state.SessionRecord, error) {
 }
 
 // reopen starts a new session in place of a restorable record, in its cwd and
-// with its name and title (see below for a record with neither), running the
-// agent resumed by the conversation id the record holds, by the agent's
-// continue without one, or a plain shell when the record names no agent. The
-// record is taken as it stands, with no rescan: a PTY session found empty
-// gains no members except by pid reuse, which the rescan rule counts as gone
-// anyway. A record with orphans is refused, and so is one whose conversation
+// with its name and title (see reopenTitle for a record with neither),
+// running the agent resumed by the conversation id the record holds, by the
+// agent's continue without one, or a plain shell when the record names no
+// agent. The record is taken as it stands, with no rescan: a PTY session
+// found empty gains no members except by pid reuse, which the rescan rule
+// counts as gone anyway. A record with orphans is refused, and so is one whose conversation
 // is open in a running session or is being reopened from another record, so
 // that one conversation never runs twice.
 func (c *conn) reopen(m protocol.Reopen) {
@@ -53,17 +53,23 @@ func (c *conn) reopen(m protocol.Reopen) {
 		return
 	}
 	e.reopening = true
-	cwd, name, title := e.rec.Cwd, e.rec.Name, e.rec.Title
+	cwd := e.rec.Cwd
 	cmd := session.RestoreCommand(e.rec.Cmd, e.rec.Agent, e.rec.Conversation)
-	// A session with neither name nor title is titled by its cmd, which would
-	// show the conversation id; the agent's name is title enough. It goes in
-	// as the title, as a name would hide the title the agent gives the
-	// session later.
-	if name == "" && title == "" && cmd != "" {
-		title, _, _ = strings.Cut(cmd, " ")
-	}
 	t.mu.Unlock()
-	c.startSession(cwd, cmd, name, title, m.Cols, m.Rows, e)
+	c.startSession(cwd, cmd, "", m.Cols, m.Rows, e)
+}
+
+// reopenTitle is the title of the session reopened from rec running cmd:
+// rec's. A session with neither name nor title is titled by its cmd, which
+// would show the conversation id; the agent's name is title enough. It goes in
+// as the title, as a name would hide the title the agent gives the session
+// later.
+func reopenTitle(rec state.SessionRecord, cmd string) string {
+	if rec.Name != "" || rec.Title != "" || cmd == "" {
+		return rec.Title
+	}
+	agent, _, _ := strings.Cut(cmd, " ")
+	return agent
 }
 
 // conversationLiveLocked reports whether e's conversation id, if it has one,

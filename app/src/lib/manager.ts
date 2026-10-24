@@ -202,6 +202,11 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		this.link.ready?.dismiss(sid);
 	}
 
+	// An empty name clears the session's, so it is titled by its agent again.
+	rename(sid: number, name: string): void {
+		this.link.ready?.rename(sid, name);
+	}
+
 	// Shows a message from outside the manager in the status line.
 	report(message: string): void {
 		this.set({ message });

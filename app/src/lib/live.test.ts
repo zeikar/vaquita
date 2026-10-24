@@ -85,6 +85,7 @@ function client() {
 				reposRemove: (path) => conn.reposRemove(path),
 				reopen: (sid, cols, rows) => conn.reopen(sid, cols, rows),
 				dismiss: (sid) => conn.dismiss(sid),
+				rename: (sid, name) => conn.rename(sid, name),
 				shutdown: (idle) => conn.shutdown(idle),
 				ack: (sid, gen, off) => conn.ack(sid, gen, off),
 				resize: (sid, cols, rows) => conn.resize(sid, cols, rows),

@@ -139,13 +139,14 @@ describe('DaemonConnection', () => {
 		expect(h.repos).toHaveBeenCalledWith(['/tmp/repo']);
 	});
 
-	it('sends the repo, reopen, dismiss and shutdown messages only when ready', () => {
+	it('sends the repo, reopen, dismiss, rename and shutdown messages only when ready', () => {
 		const a = setup();
 		a.socket.open();
 		a.conn.reposAdd('/tmp/repo');
 		a.conn.reposRemove('/tmp/repo');
 		a.conn.reopen(7, 120, 40);
 		a.conn.dismiss(7);
+		a.conn.rename(7, 'fix login');
 		a.conn.shutdown(true);
 		expect(a.socket.sent).toHaveLength(1);
 		const b = ready();
@@ -153,6 +154,8 @@ describe('DaemonConnection', () => {
 		b.conn.reposRemove('/tmp/repo');
 		b.conn.reopen(7, 120, 40);
 		b.conn.dismiss(7);
+		b.conn.rename(7, 'fix login');
+		b.conn.rename(7, '');
 		b.conn.shutdown(true);
 		b.conn.shutdown(false);
 		expect(b.socket.sent).toEqual([
@@ -160,6 +163,8 @@ describe('DaemonConnection', () => {
 			'{"t":"repos.remove","path":"/tmp/repo"}',
 			'{"t":"reopen","sid":7,"cols":120,"rows":40}',
 			'{"t":"dismiss","sid":7}',
+			'{"t":"rename","sid":7,"name":"fix login"}',
+			'{"t":"rename","sid":7,"name":""}',
 			'{"t":"shutdown","idle":true}',
 			'{"t":"shutdown","idle":false}',
 		]);

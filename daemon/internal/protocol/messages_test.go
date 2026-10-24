@@ -32,6 +32,8 @@ func TestMessageJSON(t *testing.T) {
 		{ReposRemove{T: TReposRemove, Path: "/tmp/repo"}, `{"t":"repos.remove","path":"/tmp/repo"}`},
 		{Reopen{T: TReopen, SID: 7, Cols: 120, Rows: 40}, `{"t":"reopen","sid":7,"cols":120,"rows":40}`},
 		{Dismiss{T: TDismiss, SID: 7}, `{"t":"dismiss","sid":7}`},
+		{Rename{T: TRename, SID: 7, Name: "fix login"}, `{"t":"rename","sid":7,"name":"fix login"}`},
+		{Rename{T: TRename, SID: 7}, `{"t":"rename","sid":7,"name":""}`},
 		{Shutdown{T: TShutdown, Idle: true}, `{"t":"shutdown","idle":true}`},
 		{Shutdown{T: TShutdown}, `{"t":"shutdown","idle":false}`},
 		{

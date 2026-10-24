@@ -137,6 +137,10 @@ export class DaemonConnection {
 		this.sendReady({ t: 'dismiss', sid });
 	}
 
+	rename(sid: number, name: string): void {
+		this.sendReady({ t: 'rename', sid, name });
+	}
+
 	shutdown(idle: boolean): void {
 		this.sendReady({ t: 'shutdown', idle });
 	}

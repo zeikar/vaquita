@@ -203,6 +203,10 @@ func (c *Client) Dismiss(sid uint32) error {
 	return c.send(protocol.Dismiss{T: protocol.TDismiss, SID: sid})
 }
 
+func (c *Client) Rename(sid uint32, name string) error {
+	return c.send(protocol.Rename{T: protocol.TRename, SID: sid, Name: name})
+}
+
 // Input sends p to session sid as input frames of generation gen, split to
 // fit the 64KB payload limit.
 func (c *Client) Input(sid, gen uint32, p []byte) error {

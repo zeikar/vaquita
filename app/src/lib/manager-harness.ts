@@ -46,6 +46,10 @@ export class FakeConnection implements ConnectionLike {
 	dismiss(sid: number): void {
 		this.dismisses.push(sid);
 	}
+	renames: [number, string][] = [];
+	rename(sid: number, name: string): void {
+		this.renames.push([sid, name]);
+	}
 	shutdowns: boolean[] = [];
 	shutdown(idle: boolean): void {
 		this.shutdowns.push(idle);

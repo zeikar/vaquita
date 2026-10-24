@@ -188,6 +188,8 @@ func (c *conn) handle(m any) {
 		c.reopen(m)
 	case protocol.Dismiss:
 		c.dismiss(m.SID)
+	case protocol.Rename:
+		c.rename(m)
 	case protocol.Seen:
 		c.seen(m.SID)
 	case protocol.ReposList:

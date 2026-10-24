@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { Confirm } from './confirm.svelte';
 	import { groupRows, repoName } from './groups';
+	import { belongsToIME } from './keys';
 	import type { SessionRow } from './manager';
 	import { sessionTitle } from './notify';
-	import { STATE_EXITED } from './protocol';
+	import { STATE_EXITED, type SessionInfo } from './protocol';
 
 	let {
 		sessions,
@@ -16,6 +17,7 @@
 		ondismiss,
 		onstart,
 		onremoverepo,
+		onrename,
 	}: {
 		sessions: SessionRow<unknown>[];
 		selected?: number;
@@ -27,13 +29,86 @@
 		ondismiss: (sid: number) => void;
 		onstart: (repo: string, cmd: 'claude' | 'codex') => void;
 		onremoverepo: (path: string) => void;
+		onrename: (sid: number, name: string) => void;
 	} = $props();
 
 	const groups = $derived(groupRows(sessions, repos));
 
 	// Kill, Dismiss and Remove take a second click.
 	const twoClick = new Confirm();
+
+	// The row whose name is being edited, with the name it started from, and
+	// the text typed so far. Kept here rather than read from the row, so that
+	// a list update while typing changes neither.
+	let editing = $state<{ sid: number; from: string }>();
+	let draft = $state('');
+
+	function startEdit(info: SessionInfo) {
+		editing = { sid: info.sid, from: info.name };
+		draft = info.name;
+	}
+
+	// Enter and the blur that follows both commit; the second finds nothing.
+	function commit() {
+		if (!editing) return;
+		const { sid, from } = editing;
+		editing = undefined;
+		const name = draft.trim();
+		if (name !== from) onrename(sid, name);
+	}
+
+	function editKey(e: KeyboardEvent) {
+		// An Enter or Escape that ends an IME composition is the IME's.
+		if (belongsToIME(e)) return;
+		if (e.key === 'Enter') commit();
+		else if (e.key === 'Escape') editing = undefined;
+	}
+
+	function focusInput(el: HTMLInputElement) {
+		el.focus();
+		el.select();
+	}
 </script>
+
+{#snippet rowBody(r: SessionRow<unknown>)}
+	{@const s = r.info.status}
+	<!-- The dot and the status line keep their space when empty, so rows do not jump. -->
+	{#if editing?.sid === r.info.sid}
+		<span class="title editing">
+			<span class="dot">{r.info.unread ? '•' : ''}</span><input
+				aria-label="Session name"
+				placeholder={sessionTitle({ ...r.info, name: '' })}
+				bind:value={draft}
+				onkeydown={editKey}
+				onblur={commit}
+				use:focusInput
+			/>
+		</span>
+	{:else}
+		<span class="title" class:unread={r.info.unread} title={sessionTitle(r.info)}>
+			<span class="dot">{r.info.unread ? '•' : ''}</span>{sessionTitle(r.info)}
+		</span>
+	{/if}
+	<span class="cwd">{r.info.cwd || '~'}</span>
+	<span class="status {s?.state}" title={s?.msg}>
+		{#if s?.state === 'working'}<span class="spinner"></span>
+		{:else if s?.state === 'input'}⚠ {s.msg}
+		{:else if s?.state === 'auth'}🔑
+		{:else if s?.state === 'done'}✓
+		{:else if s?.state === 'error'}✗
+		{:else}&nbsp;{/if}
+	</span>
+	<span class="flags">
+		{#if r.info.restorable}<span>from an earlier run</span>
+		{:else if r.info.state === STATE_EXITED}<span>exited ({r.info.code})</span>{/if}
+		{#if r.info.orphans?.length}<span>orphans: {r.info.orphans.join(', ')}</span>{/if}
+		{#if r.ro}<span>read-only</span>{/if}
+		{#if !r.info.restorable}
+			<span>reports: {r.reports}</span>
+			<span>resets: {r.resets}</span>
+		{/if}
+	</span>
+{/snippet}
 
 <ul>
 	{#each groups as g (g.repo ?? '')}
@@ -56,34 +131,23 @@
 			{/if}
 		</li>
 		{#each g.rows as r (r.info.sid)}
-			{@const s = r.info.status}
 			{@const key = `${r.info.restorable ? 'dismiss' : 'kill'}:${r.info.sid}`}
 			<li class:selected={r.info.sid === selected} onpointerleave={() => twoClick.armed === key && twoClick.disarm()}>
-				<button class="row" onclick={() => onselect(r.info.sid)}>
-					<!-- The dot and the status line keep their space when empty, so rows do not jump. -->
-					<span class="title" class:unread={r.info.unread} title={sessionTitle(r.info)}>
-						<span class="dot">{r.info.unread ? '•' : ''}</span>{sessionTitle(r.info)}
-					</span>
-					<span class="cwd">{r.info.cwd || '~'}</span>
-					<span class="status {s?.state}" title={s?.msg}>
-						{#if s?.state === 'working'}<span class="spinner"></span>
-						{:else if s?.state === 'input'}⚠ {s.msg}
-						{:else if s?.state === 'auth'}🔑
-						{:else if s?.state === 'done'}✓
-						{:else if s?.state === 'error'}✗
-						{:else}&nbsp;{/if}
-					</span>
-					<span class="flags">
-						{#if r.info.restorable}<span>from an earlier run</span>
-						{:else if r.info.state === STATE_EXITED}<span>exited ({r.info.code})</span>{/if}
-						{#if r.info.orphans?.length}<span>orphans: {r.info.orphans.join(', ')}</span>{/if}
-						{#if r.ro}<span>read-only</span>{/if}
-						{#if !r.info.restorable}
-							<span>reports: {r.reports}</span>
-							<span>resets: {r.resets}</span>
-						{/if}
-					</span>
-				</button>
+				<!-- While its name is edited a row is no button: a button may not hold
+				     an input, and the input's clicks would select the row. -->
+				{#if editing?.sid === r.info.sid}
+					<div class="row">{@render rowBody(r)}</div>
+				{:else}
+					<!-- The button takes the double-click, as a span cannot without a role;
+					     only one on the title renames. -->
+					<button
+						class="row"
+						onclick={() => onselect(r.info.sid)}
+						ondblclick={(e) => (e.target as Element).closest('.title') && startEdit(r.info)}
+					>
+						{@render rowBody(r)}
+					</button>
+				{/if}
 				{#if r.info.restorable}
 					<button class="kill" {disabled} onclick={() => onreopen(r.info.sid)}>Reopen</button>
 				{/if}
@@ -153,6 +217,9 @@
 		font: inherit;
 		cursor: pointer;
 	}
+	div.row {
+		cursor: auto;
+	}
 	.title {
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -160,6 +227,22 @@
 	}
 	.title.unread {
 		font-weight: bold;
+	}
+	.title.editing {
+		display: flex;
+	}
+	/* Its border sits in the margins, so the row keeps its height. */
+	.title input {
+		flex: 1;
+		min-width: 0;
+		margin: -1px 0;
+		padding: 0 2px;
+		border: 1px solid #4fc1ff;
+		border-radius: 2px;
+		outline: none;
+		background: #1e1e1e;
+		color: inherit;
+		font: inherit;
 	}
 	.dot {
 		display: inline-block;

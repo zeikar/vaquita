@@ -85,6 +85,13 @@ export interface Dismiss {
 	t: 'dismiss';
 	sid: number;
 }
+// Names session sid, or the record of one; an empty name clears it. A change
+// shows in the next sessions list; an unknown sid gets no-session.
+export interface Rename {
+	t: 'rename';
+	sid: number;
+	name: string;
+}
 // Asks the daemon to stop; with idle it refuses with busy while a session
 // runs or starts. Once it agrees it closes every connection.
 export interface Shutdown {
@@ -104,6 +111,7 @@ export type ClientMessage =
 	| ReposRemove
 	| Reopen
 	| Dismiss
+	| Rename
 	| Shutdown;
 
 // Daemon to client.

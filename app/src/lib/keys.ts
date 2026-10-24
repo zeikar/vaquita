@@ -1,8 +1,13 @@
+// Whether a key belongs to an IME: keyCode 229 is how WKWebView can report the
+// one right after compositionend, when isComposing is already false.
+export function belongsToIME(ev: KeyboardEvent): boolean {
+	return ev.isComposing || ev.keyCode === 229;
+}
+
 // xterm runs the custom key handler before its composition helper, so an Enter
-// that belongs to an IME (keyCode 229 is how WKWebView can report the one right
-// after compositionend) must be left alone or the pending syllable is lost.
+// that belongs to an IME must be left alone or the pending syllable is lost.
 function isShiftEnter(ev: KeyboardEvent): boolean {
-	return ev.key === 'Enter' && ev.shiftKey && !ev.ctrlKey && !ev.altKey && !ev.metaKey && !ev.isComposing && ev.keyCode !== 229;
+	return ev.key === 'Enter' && ev.shiftKey && !ev.ctrlKey && !ev.altKey && !ev.metaKey && !belongsToIME(ev);
 }
 
 // Shift+Enter is sent as ESC CR, which Claude Code reads as "newline without

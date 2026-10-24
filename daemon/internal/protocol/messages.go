@@ -48,6 +48,7 @@ const (
 	TReopen      = "reopen"
 	TDismiss     = "dismiss"
 	TShutdown    = "shutdown"
+	TRename      = "rename"
 )
 
 // Error codes.
@@ -294,6 +295,15 @@ type Dismiss struct {
 	SID uint32 `json:"sid"`
 }
 
+// Rename names session SID, running or exited, or the record of one from an
+// earlier daemon run; an empty Name clears the name. A change shows in the
+// next Sessions list; an unknown SID is answered with CodeNoSession.
+type Rename struct {
+	T    string `json:"t"`
+	SID  uint32 `json:"sid"`
+	Name string `json:"name"`
+}
+
 // Shutdown asks the daemon to stop as it does on SIGTERM; the app sends it to
 // replace an outdated daemon with its own. With Idle it stops only when no
 // session is running or starting, and answers CodeBusy otherwise. Once it has
@@ -358,6 +368,8 @@ func ParseMessage(data []byte) (any, error) {
 		return parse[Dismiss](data)
 	case TShutdown:
 		return parse[Shutdown](data)
+	case TRename:
+		return parse[Rename](data)
 	}
 	return nil, fmt.Errorf("parse message: unknown type %q", head.T)
 }

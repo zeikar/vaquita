@@ -21,7 +21,7 @@ PATH="/opt/homebrew/opt/rustup/bin:$PATH" npm run tauri dev
 - One terminal shown at a time. You can create and kill sessions.
 - The sidebar is grouped by repo. Add a repo with the folder picker or `vaquitad repos add`; a session belongs to the repo whose path is the longest prefix of its folder, matched by path component, and the rest sit under "other". Each repo has claude and codex buttons that start an agent in it, and a button to remove it from the list (its sessions keep running).
 - Sessions from an earlier daemon run are listed under their repo as "from an earlier run", with Reopen and Dismiss.
-- A session is titled by the name you gave it, else by the topic Claude Code or Codex gives its conversation (kept across restarts), else by its command.
+- A session is titled by the name you gave it, else by the topic Claude Code or Codex gives its conversation (kept across restarts), else by its command. Double-click a title to rename the session; clear it to go back to the agent's title.
 - Sessions live in the daemon, so after an app restart the screen is restored.
 - A fix for Korean IME input on WebKit, clickable links, file drop, and OSC 52 copy.
 - Each session shows its agent's state: a spinner while it works, ⚠ with the permission or question it waits on, 🔑 when it needs a login, ✓ or ✗ when a turn ends, and a dot until you have looked at it.

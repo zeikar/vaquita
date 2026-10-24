@@ -35,6 +35,7 @@ export interface ConnectionLike extends CoreOut {
 	reposRemove(path: string): void;
 	reopen(sid: number, cols: number, rows: number): void;
 	dismiss(sid: number): void;
+	rename(sid: number, name: string): void;
 	shutdown(idle: boolean): void;
 }
 
