@@ -77,10 +77,20 @@
 			if (failure) manager.report(failure);
 		});
 
-	// The OS file drop only exists inside Tauri; the paths are typed into the selected session.
+	let aside = $state<HTMLElement>();
+
+	// The OS file drop only exists inside Tauri. Paths dropped on the sidebar
+	// are added as repos; anywhere else they are typed into the selected session.
 	if (isTauri()) {
 		const unlisten = getCurrentWebview().onDragDropEvent((e) => {
 			if (e.payload.type !== 'drop') return;
+			// The position arrives in physical pixels.
+			const { x, y } = e.payload.position.toLogical(window.devicePixelRatio);
+			const box = aside?.getBoundingClientRect();
+			if (box && x >= box.left && x < box.right && y >= box.top && y < box.bottom) {
+				for (const p of e.payload.paths) manager.addRepo(p);
+				return;
+			}
 			const { sessions, selected } = $manager;
 			const view = sessions.find((r) => r.info.sid === selected)?.view;
 			if (!view) return;
@@ -125,7 +135,11 @@
 </script>
 
 <main>
-	<aside>
+	<aside bind:this={aside}>
+		<header>
+			<span class="title">Repos</span>
+			<AddRepo disabled={$manager.status !== 'connected'} onadd={(p) => manager.addRepo(p)} />
+		</header>
 		<SessionList
 			sessions={$manager.sessions}
 			selected={$manager.selected}
@@ -141,7 +155,6 @@
 			onrename={(sid, name) => manager.rename(sid, name)}
 			onreport={(m) => manager.report(m)}
 		/>
-		<AddRepo disabled={$manager.status !== 'connected'} onadd={(p) => manager.addRepo(p)} />
 		<CreateForm
 			disabled={$manager.creating || $manager.status !== 'connected'}
 			oncreate={(cwd, cmd, name) => manager.create(cwd, cmd, name)}
