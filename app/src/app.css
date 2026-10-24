@@ -32,22 +32,50 @@ aside input {
 	user-select: text;
 }
 
+/* The sidebar's grey, so it reads as part of the window's frame. */
 footer {
 	grid-column: 1 / -1;
 	display: flex;
+	align-items: center;
 	gap: 16px;
-	padding: 2px 8px;
+	padding: 3px 8px;
 	border-top: 1px solid #333;
-	background: #007acc;
-	color: #fff;
+	background: #252526;
+	color: #999;
 	font-size: 12px;
 	white-space: nowrap;
 	overflow: hidden;
 }
 
-footer span:last-child {
+footer .state {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+footer .dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+}
+
+footer .dot.ok {
+	background: #89d185;
+}
+
+footer .dot.wait {
+	background: #cca700;
+}
+
+footer .dot.bad {
+	background: #f14c4c;
+}
+
+/* Every message reports something that failed. */
+footer .message {
 	overflow: hidden;
 	text-overflow: ellipsis;
+	color: #f48771;
 }
 
 /* Sidebar header row; RepoHeader's look. */

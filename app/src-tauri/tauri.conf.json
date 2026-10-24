@@ -17,6 +17,8 @@
         "title": "vaquita",
         "width": 1200,
         "height": 800,
+        "theme": "Dark",
+        "backgroundColor": "#1e1e1e",
         "backgroundThrottling": "disabled"
       }
     ],

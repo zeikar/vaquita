@@ -35,14 +35,17 @@
 </div>
 
 <style>
+	/* The status line's grey, set apart by a blue edge as a notice. */
 	div {
 		grid-column: 1 / -1;
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		padding: 2px 8px;
+		padding: 4px 8px 4px 10px;
 		border-top: 1px solid #333;
-		background: #3a3d41;
+		background: #252526;
+		box-shadow: inset 2px 0 #0e639c;
+		color: #ccc;
 		font-size: 12px;
 	}
 	span {
@@ -52,13 +55,29 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
+	/* The new-session dialog's primary button, smaller. */
 	button {
-		font-size: 11px;
-		padding: 0 6px;
+		height: 22px;
+		padding: 0 10px;
+		border: 1px solid #0e639c;
+		border-radius: 4px;
+		background: #0e639c;
+		color: #fff;
+		font: inherit;
+		cursor: pointer;
+	}
+	button:hover {
+		background: #1177bb;
+	}
+	button:focus-visible {
+		outline: 1px solid #4fc1ff;
+		outline-offset: 1px;
 	}
 	button.armed {
-		background: #c72e2e;
 		border-color: #f14c4c;
-		color: #fff;
+		background: #c72e2e;
+	}
+	button.armed:hover {
+		background: #d63a3a;
 	}
 </style>

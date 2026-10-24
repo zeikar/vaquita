@@ -159,6 +159,18 @@
 				return 'disconnected, retrying…';
 		}
 	});
+	// The status line is grey; only its dot says how the daemon is.
+	const statusTone = $derived.by(() => {
+		switch ($manager.status) {
+			case 'connected':
+				return 'ok';
+			case 'not-running':
+			case 'version-mismatch':
+				return 'bad';
+			default:
+				return 'wait';
+		}
+	});
 </script>
 
 <svelte:window onkeydowncapture={shortcut} />
@@ -213,8 +225,8 @@
 		/>
 	{/if}
 	<footer>
-		<span>{statusText}</span>
+		<span class="state"><span class="dot {statusTone}"></span>{statusText}</span>
 		<span>{$manager.sessions.length} sessions</span>
-		{#if $manager.message}<span title={$manager.message}>{$manager.message}</span>{/if}
+		{#if $manager.message}<span class="message" title={$manager.message}>{$manager.message}</span>{/if}
 	</footer>
 </main>
