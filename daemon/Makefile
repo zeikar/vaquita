@@ -12,6 +12,10 @@ SIGN ?=
 # whose build differs from the one it ships, and leaves a dev one alone.
 VERSION ?= dev
 
+# Without the symbol table and DWARF (-s -w) the binary is a third smaller and
+# its zip half the size; panics still name functions and lines. -trimpath keeps
+# the builder's folders out of it.
+#
 # Built and signed beside the target, then renamed into place, so a running
 # daemon keeps its old file until it is restarted. Paths are quoted, and the
 # directory comes from dirname rather than $(dir), which splits on spaces: the
@@ -19,7 +23,7 @@ VERSION ?= dev
 .PHONY: build
 build:
 	mkdir -p "$$(dirname "$(BIN)")"
-	go build -ldflags "-X main.version=$(VERSION)" -o "$(BIN).tmp" ./cmd/vaquitad
+	go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o "$(BIN).tmp" ./cmd/vaquitad
 ifneq ($(SIGN),)
 	codesign --force --sign "$(SIGN)" --identifier io.github.zeikar.vaquitad "$(BIN).tmp"
 endif
