@@ -1,8 +1,7 @@
-<p align="center">
-  <img src="app/app-icon.png" width="128" height="128" alt="vaquita app icon">
-</p>
-
-<h1 align="center">vaquita</h1>
+<h1 align="center">
+  <img src="app/app-icon.png" width="128" height="128" alt="vaquita app icon"><br>
+  vaquita
+</h1>
 
 <p align="center">
   <strong>A lightweight ADE for Claude Code and Codex on macOS.</strong><br>
