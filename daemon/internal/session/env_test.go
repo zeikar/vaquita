@@ -47,6 +47,7 @@ func TestChildEnvAllowlist(t *testing.T) {
 		"TERM":               "xterm-256color",
 		"COLORTERM":          "truecolor",
 		"TERM_PROGRAM":       "vaquita",
+		"FORCE_HYPERLINK":    "1",
 		"VAQUITA_SESSION_ID": "7",
 	}
 	for k, v := range want {

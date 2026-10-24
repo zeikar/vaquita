@@ -19,7 +19,7 @@ const fallbackLang = "en_US.UTF-8"
 // that shell rather than the daemon's, so programs that start $SHELL get the
 // one the session runs.
 func ChildEnv(sid int, shell string) []string {
-	env := make([]string, 0, len(inheritedEnv)+5)
+	env := make([]string, 0, len(inheritedEnv)+6)
 	for _, k := range inheritedEnv {
 		v := os.Getenv(k)
 		if v == "" && k == "LANG" {
@@ -34,6 +34,11 @@ func ChildEnv(sid int, shell string) []string {
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
 		"TERM_PROGRAM=vaquita",
+		// Tools using supports-hyperlinks, Claude Code among them, don't know
+		// TERM_PROGRAM=vaquita and would drop the OSC 8 links xterm.js renders.
+		// They read it before their TTY check, so piped output gets the links
+		// too; FORCE_HYPERLINK=0 before a command turns them off for that one.
+		"FORCE_HYPERLINK=1",
 		"VAQUITA_SESSION_ID="+strconv.Itoa(sid),
 	)
 }
