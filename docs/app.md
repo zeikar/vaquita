@@ -39,6 +39,10 @@ A release build also replaces a running daemon that is not the vaquitad inside i
 
 `npm run tauri build` produces `app/src-tauri/target/release/bundle/macos/vaquita.app`, with vaquitad built into it; set `VAQUITA_SIGN_IDENTITY` to sign that vaquitad with a stable identity, as `SIGN` does for the daemon. That vaquitad's build is `dev` unless `VERSION` is set; the release sets both it and the app's version from the tag. To pass `VAQUITA_HOME`, run `vaquita.app/Contents/MacOS/vaquita` directly. Without it the app uses the default home, `~/Library/Application Support/vaquita`.
 
+## Footprint
+
+Measured on 2026-10-24 with a release build on an Apple Silicon Mac: 10 shell sessions, each holding about 300 lines of output, one of them on screen, left idle for a minute. Memory is macOS's `footprint` (the Memory column of Activity Monitor) of the app, the three WebKit processes it starts and `vaquitad`; the shells and agents in the sessions are not counted. Together they came to about 200–230 MB (app about 30, WebKit about 190, daemon about 11), with no terminal on screen 181 MB. Idle CPU over that minute was 0.5% of one core with a terminal on screen (its cursor blinks) and 0.02% without.
+
 ## Icon
 
 `app/app-icon.png` is the source of the app icon. After changing it, run `npx tauri icon app-icon.png` in `app/` and delete the `android/`, `ios/` and `64x64.png` it also writes into `src-tauri/icons/`, which the app does not use.
