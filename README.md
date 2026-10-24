@@ -1,14 +1,31 @@
-# vaquita
+<p align="center">
+  <img src="app/app-icon.png" width="128" height="128" alt="vaquita app icon">
+</p>
 
-A lightweight alternative to [Orca](https://www.onorca.dev/), the agent IDE, for macOS. It starts from the core: coding agents such as Claude Code and Codex running side by side in the repos they work on.
+<h1 align="center">vaquita</h1>
+
+<p align="center">
+  <strong>Run Claude Code and Codex side by side on your Mac, and see at a glance which agent is working, waiting for you or done.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/zeikar/vaquita/releases/latest"><img src="https://img.shields.io/github/v/release/zeikar/vaquita" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-black?logo=apple" alt="macOS on Apple Silicon">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/zeikar/vaquita" alt="MIT license"></a>
+</p>
+
+vaquita is a small macOS app for running AI coding agents such as [Claude Code](https://code.claude.com) and [Codex CLI](https://github.com/openai/codex) in the repos they work on. It is a lightweight alternative to [Orca](https://www.onorca.dev/), the agent IDE: a Tauri app and a Go daemon in a download of about 10 MB, with no hooks to install.
 
 ![The vaquita app: repos and their sessions in the sidebar, each with its agent's state, and a Claude Code session open](docs/screenshot.png)
 
-It's at the very start. The daemon works from the terminal, and the app exists in an early form: a session list grouped by repo that shows each agent's state, and one terminal. Alongside it is the tooling used to check the risky parts before building. The plan:
+## Features
 
-- Sessions live in a small daemon (`vaquitad`), so shells and agents keep running when the app restarts.
-- One sidebar shows your repos and the sessions in each, with every agent's state: working, needs input, done.
-- Agent state comes from what the agents already write to the terminal (OSC 7501 status reports and their notification sequences), so no hooks or global settings are needed.
+- **Every agent in one sidebar.** Your repos are listed with their sessions under them. Start Claude Code, Codex or a shell in a repo from its header, its right-click menu or ⌘T.
+- **See what each agent is doing.** A spinner while it works, ⚠ with the permission or question it waits on, ✓ or ✗ when its turn ends, and a dot until you have looked.
+- **Notifications that take you there.** A desktop notification when an agent finishes, fails or needs input; click it to open that session. The ones missed while the app was closed are summed up when it comes back.
+- **Sessions outlive the app.** Shells and agents run in a small daemon, `vaquitad`, so quitting or updating the app leaves them running. After a reboot, reopen a session and Claude Code or Codex resumes its conversation.
+- **No hooks, no global config.** State comes from what the agents already write to the terminal (Claude Code's OSC 7501 status reports, Codex's notifications), so nothing is written into your agents' settings.
+- **Titles that say what a session is about.** A session takes the topic its agent gives the conversation; double-click it to rename.
 
 ## Install
 
@@ -18,7 +35,9 @@ Download `vaquita-<version>-macos-arm64.zip` from [Releases](https://github.com/
 xattr -dr com.apple.quarantine /Applications/vaquita.app
 ```
 
-The app installs and starts its daemon by itself. To update, quit vaquita, replace the app in Finder and open it; the app takes care of the daemon. Don't `cp -R` over the app while the daemon runs.
+The app installs and starts its daemon by itself. It runs the `claude` and `codex` you already have; it does not bundle them. To update, quit vaquita, replace the app in Finder and open it; the app takes care of the daemon. Don't `cp -R` over the app while the daemon runs.
+
+vaquita is young (0.1.x) and macOS only. Issues and ideas are welcome.
 
 ## Develop
 
@@ -36,7 +55,7 @@ PATH="/opt/homebrew/opt/rustup/bin:$PATH" npm run tauri dev
 ## Docs
 
 - [Daemon](docs/daemon.md): `vaquitad` commands, Codex notifications, reopening sessions after a restart.
-- [App](docs/app.md): the dev loop, what the app does so far, release builds.
+- [App](docs/app.md): the dev loop, what the app does, release builds, the icon and the screenshot.
 - [tools/probe](docs/probe.md): the recorders and test beds used to check the risky parts.
 
 ## License
