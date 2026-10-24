@@ -41,6 +41,16 @@ describe('resolvePath', () => {
 });
 
 describe('findPaths', () => {
+	it('stays fast on a line of the length the provider sees', () => {
+		for (const unit of ['(', '=', '.(', '[a', '=.', 'a(']) {
+			const line = unit.repeat(Math.ceil(4300 / unit.length));
+			const t0 = performance.now();
+			findPaths(line);
+			expect(performance.now() - t0, unit).toBeLessThan(20);
+		}
+		expect(findPaths('('.repeat(4300) + ' ls /tmp/a.txt')).toEqual([{ start: 4304, end: 4314, target: '/tmp/a.txt' }]);
+	});
+
 	it('finds an absolute path with offsets', () => {
 		expect(findPaths('ls /tmp/a.txt')).toEqual([{ start: 3, end: 13, target: '/tmp/a.txt' }]);
 	});

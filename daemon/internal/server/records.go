@@ -176,21 +176,31 @@ func (t *table) recheckOrphans(done <-chan struct{}) {
 // holds orphans.
 func (t *table) rescanOrphans() bool {
 	t.mu.Lock()
-	var held []*entry
+	type held struct {
+		e       *entry
+		orphans []int // what the record held when the scan began
+	}
+	var todo []held
 	for _, e := range t.entries {
 		if e.sess == nil && !e.reopening && len(e.rec.Orphans) > 0 {
-			held = append(held, e)
+			todo = append(todo, held{e, slices.Clone(e.rec.Orphans)})
 		}
 	}
 	t.mu.Unlock()
 
 	changed, left := false, false
-	for _, e := range held {
+	for _, h := range todo {
+		e := h.e
 		rec, err := t.rescanRecord(e)
 		t.mu.Lock()
-		// A kill, dismiss or reopen may have dealt with the record meanwhile.
+		// A dismiss or reopen may have dealt with the record meanwhile.
 		if t.entries[e.sid] == e && e.sess == nil && !e.reopening {
-			if err != nil {
+			// A kill keeps the record but clears its orphans, and a dismiss may
+			// narrow them; whoever changed them during the scan knows better
+			// than the scan does. Orphans that remain are still rechecked.
+			if !slices.Equal(e.rec.Orphans, h.orphans) {
+				slog.Info("recheck of orphans: the record changed during the scan, so its result is dropped", "sid", e.sid, "pid", e.pid)
+			} else if err != nil {
 				slog.Warn("recheck of orphans: scan failed, so the record is kept", "sid", e.sid, "pid", e.pid, "err", err)
 			} else if !slices.Equal(rec.Orphans, e.rec.Orphans) {
 				e.rec.Orphans = rec.Orphans

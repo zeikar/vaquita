@@ -46,6 +46,8 @@ const RELATIVE = new RegExp(String.raw`^${SEG}+(?:\/${SEG}+)+$`, 'u');
 const EXTENSION = /\.\p{L}[\p{L}\p{N}]*$/u;
 const TOKEN_START = /[\s(["'`=,]/u;
 const TOKEN_END = /[\s"'`)\]<>,]/u;
+// The first character of every shape isPath accepts, and of a file:// URL.
+const PATH_START = new RegExp(`[/~${SEG_CHARS}]`, 'u');
 const LINE_SUFFIX = /:\d+(?::\d+)?$/;
 
 function isPath(text: string): boolean {
@@ -62,23 +64,34 @@ function isPath(text: string): boolean {
 
 export function findPaths(line: string): PathHit[] {
 	const hits: PathHit[] = [];
+	// Every start inside one run of non-TOKEN_END characters shares the run's end,
+	// its trimmed stop and its line suffix, so they are found once per run: terminal
+	// output is untrusted, and a long run of "(" must not cost a scan per character.
+	let runEnd = -1;
+	let stopRun = 0;
+	let suffixAt = 0;
 	let i = 0;
 	while (i < line.length) {
-		if (i > 0 && !TOKEN_START.test(line[i - 1])) {
+		if ((i > 0 && !TOKEN_START.test(line[i - 1])) || !PATH_START.test(line[i])) {
 			i++;
 			continue;
 		}
-		let end = i;
-		while (end < line.length && !TOKEN_END.test(line[end])) end++;
-		if (end === i) {
+		if (i >= runEnd) {
+			runEnd = i;
+			while (runEnd < line.length && !TOKEN_END.test(line[runEnd])) runEnd++;
+			// Sentence punctuation goes first so that "a.ts:12." still ends in a line suffix.
+			stopRun = runEnd;
+			while (stopRun > i && '.,;:!?'.includes(line[stopRun - 1])) stopRun--;
+			const m = LINE_SUFFIX.exec(line.slice(i, stopRun));
+			suffixAt = m ? i + m.index : stopRun;
+		}
+		if (stopRun <= i) {
 			i++;
 			continue;
 		}
-		// Sentence punctuation goes first so that "a.ts:12." still ends in a line suffix.
-		let stop = end;
-		while (stop > i && '.,;:!?'.includes(line[stop - 1])) stop--;
-		const token = line.slice(i, stop);
-		const bare = token.replace(LINE_SUFFIX, '');
+		const token = line.slice(i, stopRun);
+		// A suffix that begins before this start is not this token's: it finds its own.
+		const bare = suffixAt >= i ? line.slice(i, suffixAt) : token.replace(LINE_SUFFIX, '');
 		let target: string | undefined;
 		if (token.startsWith('file://')) {
 			if (fileUrlToPath(bare)) target = bare;
@@ -86,8 +99,8 @@ export function findPaths(line: string): PathHit[] {
 			target = bare;
 		}
 		if (target !== undefined) {
-			hits.push({ start: i, end: stop, target });
-			i = end;
+			hits.push({ start: i, end: stopRun, target });
+			i = runEnd;
 		} else {
 			i++;
 		}

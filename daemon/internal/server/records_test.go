@@ -433,6 +433,68 @@ func TestDismissDuringReopen(t *testing.T) {
 	}
 }
 
+// A scan that began before a kill of the same record does not put back the
+// orphans the kill cleared.
+func TestRecheckKeepsWhatAKillDuringTheScanCleared(t *testing.T) {
+	srv := startRecords(t, goneRecord(t, 7, t.TempDir(), "old"))
+	srv.table.mu.Lock()
+	srv.table.entries[7].rec.Orphans = []int{4242}
+	orig := rescanPIDs
+	rescanPIDs = func(int) ([]int, time.Time, error) {
+		srv.table.mu.Lock()
+		srv.table.entries[7].rec.Orphans = nil
+		srv.table.mu.Unlock()
+		return []int{4242}, time.Time{}, nil
+	}
+	srv.table.mu.Unlock()
+	t.Cleanup(func() {
+		srv.table.mu.Lock()
+		rescanPIDs = orig
+		srv.table.mu.Unlock()
+	})
+
+	if srv.table.rescanOrphans() {
+		t.Error("rescanOrphans reports orphans left, want none")
+	}
+	srv.table.mu.Lock()
+	got := srv.table.entries[7].rec.Orphans
+	srv.table.mu.Unlock()
+	if len(got) != 0 {
+		t.Errorf("record holds orphans %v, want none", got)
+	}
+}
+
+// Orphans a dismiss or kill narrowed, but not to zero, during a scan are
+// still counted as held, so the rechecks go on.
+func TestRecheckGoesOnWhenOrphansWereNarrowedDuringTheScan(t *testing.T) {
+	srv := startRecords(t, goneRecord(t, 7, t.TempDir(), "old"))
+	srv.table.mu.Lock()
+	srv.table.entries[7].rec.Orphans = []int{4242, 4243}
+	orig := rescanPIDs
+	rescanPIDs = func(int) ([]int, time.Time, error) {
+		srv.table.mu.Lock()
+		srv.table.entries[7].rec.Orphans = []int{4243}
+		srv.table.mu.Unlock()
+		return nil, time.Time{}, nil
+	}
+	srv.table.mu.Unlock()
+	t.Cleanup(func() {
+		srv.table.mu.Lock()
+		rescanPIDs = orig
+		srv.table.mu.Unlock()
+	})
+
+	if !srv.table.rescanOrphans() {
+		t.Error("rescanOrphans reports none left, want the narrowed orphan counted")
+	}
+	srv.table.mu.Lock()
+	got := srv.table.entries[7].rec.Orphans
+	srv.table.mu.Unlock()
+	if !slices.Equal(got, []int{4243}) {
+		t.Errorf("record holds orphans %v, want [4243]", got)
+	}
+}
+
 // Loaded records are listed with the directory their shell started in: the
 // user's home for an empty cwd, the real path for one with "..".
 func TestLoadedRecordsListEffectiveCwd(t *testing.T) {

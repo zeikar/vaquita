@@ -46,11 +46,18 @@ const HANDLERS: &[&str] = &[
     "com.apple.mcx.ProfileHelper", // .mobileconfig
     "com.apple.IPAInstaller",      // .ipa
     "com.apple.keychainaccess",    // .cer, .p12, .keychain: imports a certificate or adds a keychain
+    "com.apple.shortcuts",         // .wflow, .shortcut
+    "com.apple.pluginIM.pluginIMRegistrator", // .inputplugin, .cin: registers an input method
     // Installed by the python.org installer:
     "org.python.PythonLauncher",
 ];
 
 const FINDER: &str = "com.apple.finder";
+
+// What handler_id reports when LaunchServices names the item itself as its
+// opener, which is how a folder it treats as an application answers whatever
+// the folder is called. Not a bundle identifier, so no app can claim it.
+const ITSELF: &str = "(itself)";
 
 /// What a click did, as openPath in src/lib/file-links.ts receives it; the
 /// webview shows the why of a reveal in its status line.
@@ -89,12 +96,16 @@ fn is_local_host(host: &str) -> bool {
 }
 
 /// The bundle identifier of the app macOS would open path with; None when no
-/// app would, or that app has none.
+/// app would, or that app has none; ITSELF when that app is path itself.
 fn handler_id(path: &Path) -> Option<String> {
     // A blocking thread has no autorelease pool of its own.
     autoreleasepool(|_| {
         let url = NSURL::fileURLWithPath(&NSString::from_str(path.to_str()?));
         let app = NSWorkspace::sharedWorkspace().URLForApplicationToOpenURL(&url)?;
+        let app_path = app.path()?.to_string();
+        if std::fs::canonicalize(&app_path).is_ok_and(|a| a == path) {
+            return Some(ITSELF.to_string());
+        }
         Some(NSBundle::bundleWithURL(&app)?.bundleIdentifier()?.to_string())
     })
 }
@@ -146,6 +157,9 @@ fn judge(canonical: &Path, meta: &Metadata, handler: &dyn Fn(&Path) -> Option<St
         return Action::Revealed(format!("it is inside a .{ext}"));
     }
     match handler(canonical) {
+        // An extension off the lists does not make a folder safe: opening an
+        // application bundle launches it.
+        Some(id) if id == ITSELF => Action::Revealed("it is an app".to_string()),
         Some(id) if HANDLERS.iter().any(|h| h.eq_ignore_ascii_case(&id)) => {
             Action::Revealed(format!("its default app {id} runs or installs what it opens"))
         }
@@ -360,6 +374,44 @@ mod tests {
         let command = handler_id(&file(&d, "x.command", 0o644)).unwrap();
         assert!(!command.is_empty() && !command.contains('/'), "{command}");
         assert_eq!(handler_id(&d).as_deref(), Some("com.apple.finder"));
+    }
+
+    #[test]
+    fn a_folder_that_is_its_own_opener_is_revealed() {
+        let p = dir("selfopen");
+        assert_eq!(act(&p, &|_: &Path| Some(ITSELF.to_string())), revealed("it is an app"));
+    }
+
+    #[test]
+    fn a_shortcut_or_input_method_app_is_revealed() {
+        for id in ["com.apple.shortcuts", "com.apple.pluginIM.pluginIMRegistrator"] {
+            let why = format!("its default app {id} runs or installs what it opens");
+            assert_eq!(handled_by("apple-apps", id), revealed(&why));
+        }
+    }
+
+    // An app bundle under a name no list has. Asks LaunchServices only.
+    #[test]
+    fn an_app_bundle_with_an_odd_name_is_never_opened() {
+        let app = dir("oddapp").join("guide.d");
+        std::fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
+        std::fs::write(
+            app.join("Contents/Info.plist"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>dev.vaquita.test.oddapp</string>
+<key>CFBundleExecutable</key><string>run</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+</dict></plist>
+"#,
+        )
+        .unwrap();
+        std::fs::write(app.join("Contents/PkgInfo"), "APPL????").unwrap();
+        let run = app.join("Contents/MacOS/run");
+        std::fs::write(&run, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&run, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let (_, action) = resolve_with(&app, &handler_id).unwrap();
+        assert!(matches!(action, Action::Revealed(_)), "{action:?}");
     }
 
     #[test]
