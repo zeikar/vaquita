@@ -34,7 +34,7 @@
 		restartDaemon,
 		connect: (endpoint, handlers) => new DaemonConnection(endpoint, handlers),
 		createTerminal: (cols, rows) => createTerminal(cols, rows),
-		createView: (term, core) => new TermView(term, core, (m) => manager.report(m)),
+		createView: (term, core, cwd) => new TermView(term, core, (m) => manager.report(m), cwd),
 		notifier: { show: (n) => notifier.show(n) },
 	});
 	let destroyed = false;

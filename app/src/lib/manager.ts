@@ -58,7 +58,7 @@ export interface ManagerState<V = ViewLike> extends LinkState {
 
 export interface ManagerDeps<T extends ManagedTerm, V extends ViewLike> extends LinkDeps {
 	createTerminal: (cols: number, rows: number) => T;
-	createView: (term: T, core: SessionCore) => V;
+	createView: (term: T, core: SessionCore, cwd: string) => V;
 	notifier: Notifier;
 }
 
@@ -429,7 +429,7 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		const core = new SessionCore(term, e.info.sid, out);
 		e.term = term;
 		e.core = core;
-		e.view = this.deps.createView(term, core);
+		e.view = this.deps.createView(term, core, e.info.cwd);
 		// Reports are counted while xterm parses, outside any handler here.
 		e.parsed = term.onWriteParsed(() => {
 			if (core.reports !== e.shownReports) this.publish();

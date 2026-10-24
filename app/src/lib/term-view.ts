@@ -6,14 +6,11 @@ import { Terminal } from '@xterm/xterm';
 import { clipboardProvider } from './clipboard-provider';
 import { installHangulFix, type HangulFix } from './hangul-fix';
 import { keyHandler } from './keys';
-import { openExternal } from './links';
+import { activateUri } from './file-links';
 import type { ViewLike } from './manager';
+import { pathLinkProvider } from './path-link-provider';
 import type { SessionCore, Size } from './session-core';
 import { theme } from './theme';
-
-function errText(e: unknown): string {
-	return e instanceof Error ? e.message : String(e);
-}
 
 export function createTerminal(cols: number, rows: number): Terminal {
 	return new Terminal({
@@ -46,6 +43,7 @@ export class TermView implements ViewLike {
 		private readonly term: Terminal,
 		private readonly core: SessionCore,
 		private readonly report: (message: string) => void,
+		private readonly cwd: string,
 	) {}
 
 	// Types text into the session, e.g. dropped file paths.
@@ -66,17 +64,18 @@ export class TermView implements ViewLike {
 		// Output chooses both the visible text and the URI, so a link opens only on
 		// Cmd+click and its URI is shown as a tooltip while hovered. For OSC 8
 		// hyperlinks xterm passes the link's URI to linkHandler, not the visible text.
-		const activate = (e: MouseEvent, uri: string) => {
-			if (e.metaKey) openExternal(uri, (err) => this.report(`open link failed: ${errText(err)}`));
-		};
+		// Without allowNonHttpProtocols xterm would drop file: links; activateUri is
+		// the one gate that decides what a click opens.
+		const activate = (e: MouseEvent, uri: string) => activateUri(e, uri, this.report);
 		const hover = (_e: MouseEvent, uri: string) => {
 			container.title = uri;
 		};
 		const leave = () => {
 			container.title = '';
 		};
-		this.term.options.linkHandler = { activate, hover, leave };
+		this.term.options.linkHandler = { activate, hover, leave, allowNonHttpProtocols: true };
 		this.term.loadAddon(new WebLinksAddon(activate, { hover, leave }));
+		this.term.registerLinkProvider(pathLinkProvider(this.term.buffer, this.cwd, { activate, hover, leave }));
 		this.term.loadAddon(new ClipboardAddon(undefined, clipboardProvider(() => this.core.pendingReplay > 0, this.report)));
 		this.term.attachCustomKeyEventHandler(keyHandler((text) => this.core.sendInput(text)));
 		// The pane can show a view before it has created the view's element.
