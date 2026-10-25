@@ -21,6 +21,11 @@ else
 ifeq ($(shell git ls-tree HEAD . 2>/dev/null),)
 $(error VERSION is set, but the daemon's files are not committed in git, which its fingerprint is taken from)
 endif
+# The fingerprint is of the committed files, and go build compiles the ones on
+# disk, so they must be the same.
+ifneq ($(shell git status --porcelain -- . | grep -v '_test\.go$$'),)
+$(error VERSION is set, but the daemon has uncommitted changes, which its fingerprint would not show)
+endif
 BUILD := $(VERSION)+$(shell git ls-tree -r HEAD . | grep -v '_test\.go$$' | git hash-object --stdin | cut -c1-12)
 endif
 
