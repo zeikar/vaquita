@@ -359,11 +359,11 @@ func TestOrphansLeaveOutCaffeinate(t *testing.T) {
 			sleep = p.pid
 		}
 	}
-	ts.Lock()
-	orphans, err := ts.Orphans()
-	ts.Unlock()
+	// SessionPIDs rather than Orphans: the exit's scan may have run before the
+	// children exec'd, and every orphan scan goes through it.
+	orphans, _, err := SessionPIDs(pid)
 	if !slices.Equal(orphans, []int{sleep}) || err != nil {
-		t.Errorf("Orphans() = %v, %v; want only the sleep [%d]", orphans, err, sleep)
+		t.Errorf("SessionPIDs(%d) = %v, %v; want only the sleep [%d]", pid, orphans, err, sleep)
 	}
 	ts.waitClosed(t)
 }
