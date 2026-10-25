@@ -2,11 +2,11 @@ html, body, #app { margin: 0; height: 100%; }
 
 /* The icon's neon cyan, for focus rings and unread marks, and a deeper cyan
    that white text reads on (4.6:1), for primary buttons and the highlighted
-   menu item. */
+   menu item; hovered, they darken, so the text never reads worse. */
 :root {
 	--neon: #6cd4f4;
 	--accent: #177ea0;
-	--accent-hover: #1b8fb5;
+	--accent-hover: #146f8e;
 }
 
 body {

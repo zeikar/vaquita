@@ -2,6 +2,12 @@
 
 Each release's notes open with its section here.
 
+## 0.1.6
+
+- An update no longer asks to restart the daemon unless the daemon itself changed. A daemon's build now names its code, and releases that leave the daemon alone ship the same one. Updating to this release still asks once, as the running daemon's build is from before.
+- The update and daemon-restart notices are cards in the bottom right, over the terminal, so one coming or going no longer resizes the terminal. The daemon notice can be closed for the rest of the run, and the update notice says your sessions keep running through the relaunch.
+- Buttons, focus rings and unread marks take the icon's cyan instead of the editor blue.
+
 ## 0.1.5
 
 - Check for Updates… in the vaquita menu, under About, looks for a newer release at once. It brings back the update bar for a version you closed it for, and the status line says when vaquita is up to date or the check failed.
