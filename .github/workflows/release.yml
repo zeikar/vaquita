@@ -20,14 +20,17 @@ jobs:
     steps:
       - name: Check signing secrets
         env:
-          P12: ${{ secrets.VAQUITA_SIGN_P12 }}
-          P12_PASSWORD: ${{ secrets.VAQUITA_SIGN_P12_PASSWORD }}
-          IDENTITY: ${{ secrets.VAQUITA_SIGN_IDENTITY }}
+          VAQUITA_SIGN_P12: ${{ secrets.VAQUITA_SIGN_P12 }}
+          VAQUITA_SIGN_P12_PASSWORD: ${{ secrets.VAQUITA_SIGN_P12_PASSWORD }}
+          VAQUITA_SIGN_IDENTITY: ${{ secrets.VAQUITA_SIGN_IDENTITY }}
+          VAQUITA_UPDATER_KEY: ${{ secrets.VAQUITA_UPDATER_KEY }}
+          VAQUITA_UPDATER_KEY_PASSWORD: ${{ secrets.VAQUITA_UPDATER_KEY_PASSWORD }}
         run: |
           missing=0
-          for name in P12 P12_PASSWORD IDENTITY; do
+          for name in VAQUITA_SIGN_P12 VAQUITA_SIGN_P12_PASSWORD VAQUITA_SIGN_IDENTITY \
+            VAQUITA_UPDATER_KEY VAQUITA_UPDATER_KEY_PASSWORD; do
             if [ -z "${!name}" ]; then
-              echo "::error::Repository secret VAQUITA_SIGN_${name} is not set; a release must be signed."
+              echo "::error::Repository secret $name is not set; a release must be signed."
               missing=1
             fi
           done
@@ -122,20 +125,47 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN" $existing
 
       # VERSION, from the tag, also reaches the Makefile, which stamps it into
-      # vaquitad as its build.
+      # vaquitad as its build. Only release builds update, which is why the
+      # updater endpoint is set here and not in tauri.conf.json; GitHub's
+      # /releases/latest/ skips prereleases, so an rc never reaches users.
       - name: Build
         working-directory: app
         env:
           VAQUITA_SIGN_IDENTITY: ${{ secrets.VAQUITA_SIGN_IDENTITY }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.VAQUITA_SIGN_IDENTITY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.VAQUITA_UPDATER_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.VAQUITA_UPDATER_KEY_PASSWORD }}
         run: |
-          npx tauri build --config "{\"version\": \"$VERSION\"}"
+          config="$(jq -nc --arg version "$VERSION" '{
+            version: $version,
+            bundle: { createUpdaterArtifacts: true },
+            plugins: { updater: { endpoints: [
+              "https://github.com/zeikar/vaquita/releases/latest/download/latest.json"
+            ] } }
+          }')"
+          npx tauri build --config "$config"
+
+      # The bundler always archives the macOS app here, its signature beside
+      # it. The archive is what the updater installs, so the checks below run
+      # on what it unpacks to as well as on the app that goes into the zip.
+      - name: Unpack updater archive
+        run: |
+          TARBALL=app/src-tauri/target/release/bundle/macos/vaquita.app.tar.gz
+          for path in "$TARBALL" "$TARBALL.sig"; do
+            if [ ! -f "$path" ]; then
+              echo "::error::$path is missing; the build made no updater archive."
+              exit 1
+            fi
+          done
+          mkdir -p "$RUNNER_TEMP/updater"
+          tar -xzf "$TARBALL" -C "$RUNNER_TEMP/updater"
+          echo "TARBALL=$TARBALL" >> "$GITHUB_ENV"
+          echo "UPDATER_APP=$RUNNER_TEMP/updater/vaquita.app" >> "$GITHUB_ENV"
 
       - name: Verify signatures
         env:
           IDENTITY: ${{ secrets.VAQUITA_SIGN_IDENTITY }}
         run: |
-          APP=app/src-tauri/target/release/bundle/macos/vaquita.app
           check() {
             local path="$1" want_id="$2" info
             info="$(codesign -dv --verbose=2 "$path" 2>&1)"
@@ -149,16 +179,49 @@ jobs:
               exit 1
             fi
           }
-          check "$APP/Contents/MacOS/vaquitad" io.github.zeikar.vaquitad
-          check "$APP" ""
-          codesign --verify --deep --strict --verbose=2 "$APP"
+          for APP in app/src-tauri/target/release/bundle/macos/vaquita.app "$UPDATER_APP"; do
+            check "$APP/Contents/MacOS/vaquitad" io.github.zeikar.vaquitad
+            check "$APP" ""
+            codesign --verify --deep --strict --verbose=2 "$APP"
+          done
 
       # The app replaces a running daemon whose build is not its version.
       - name: Verify daemon build
         run: |
-          got="$(app/src-tauri/target/release/bundle/macos/vaquita.app/Contents/MacOS/vaquitad version)"
-          if [ "$got" != "$VERSION" ]; then
-            echo "::error::The embedded vaquitad reports build $got, not $VERSION."
+          for APP in app/src-tauri/target/release/bundle/macos/vaquita.app "$UPDATER_APP"; do
+            got="$("$APP/Contents/MacOS/vaquitad" version)"
+            if [ "$got" != "$VERSION" ]; then
+              echo "::error::The vaquitad in $APP reports build $got, not $VERSION."
+              exit 1
+            fi
+          done
+
+      # The updater on the Mac checks the signature against the pubkey in
+      # tauri.conf.json, and (requireSignedVersion) that the signed version is
+      # the feed's. Catch a wrong key or version here, before users do.
+      - name: Verify updater signature
+        run: |
+          # The .sig is base64 of a minisign signature file.
+          sig="$(base64 --decode < "$TARBALL.sig")"
+          trusted="$(sed -n 's/^trusted comment: //p' <<< "$sig")"
+          if ! tr '\t' '\n' <<< "$trusted" | grep -qxF "version:$VERSION"; then
+            echo "::error::$TARBALL.sig does not sign version $VERSION (trusted comment: ${trusted:-none})."
+            exit 1
+          fi
+
+          # Bytes 2-9 of a minisign signature or key line are its key id. The
+          # config value is the .pub file's content, itself base64 of the key
+          # text, so it is decoded once more.
+          key_id() { base64 --decode | od -An -tx1 -j2 -N8 | tr -d ' \n'; }
+          got="$(sed -n 2p <<< "$sig" | key_id)"
+          want="$(jq -r .plugins.updater.pubkey app/src-tauri/tauri.conf.json \
+            | base64 --decode | sed -n 2p | key_id)"
+          if [ "${#want}" -ne 16 ]; then
+            echo "::error::Could not read the key id of plugins.updater.pubkey in tauri.conf.json."
+            exit 1
+          fi
+          if [ "$got" != "$want" ]; then
+            echo "::error::The updater archive is signed with key ${got:-unknown}, but tauri.conf.json trusts $want; VAQUITA_UPDATER_KEY is likely not the private half of that pubkey."
             exit 1
           fi
 
@@ -168,6 +231,26 @@ jobs:
           ditto -c -k --keepParent app/src-tauri/target/release/bundle/macos/vaquita.app "$ZIP"
           shasum -a 256 "$ZIP" > "$ZIP.sha256"
           echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+
+          # latest.json is the feed the app polls; it points at the archive in
+          # this release. The signature goes in without a trailing newline, as
+          # the updater base64-decodes it strictly.
+          ARCHIVE="vaquita-$VERSION-macos-arm64.app.tar.gz"
+          cp "$TARBALL" "$ARCHIVE"
+          jq -n \
+            --arg version "$VERSION" \
+            --rawfile notes "$RUNNER_TEMP/changes.md" \
+            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg url "https://github.com/zeikar/vaquita/releases/download/$GITHUB_REF_NAME/$ARCHIVE" \
+            --arg signature "$(cat "$TARBALL.sig")" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: { "darwin-aarch64": { url: $url, signature: $signature } }
+            }' > latest.json
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+          echo "FEED=latest.json" >> "$GITHUB_ENV"
 
       - name: Release
         env:
@@ -188,7 +271,7 @@ jobs:
           xattr -dr com.apple.quarantine /Applications/vaquita.app
           ```
 
-          Update: quit vaquita, replace the app in Finder and open it; the app replaces the older daemon with its own, by itself when no session is running, else (and always for a daemon from 0.1.0-rc.3 or earlier) once you confirm. Do not `cp -R` over it while the daemon runs.
+          Update: vaquita checks for a newer release after launch and every six hours and offers it in a bar; one click installs it and relaunches vaquita, and your sessions stay. From 0.1.3 or earlier, update by hand once: quit vaquita, replace the app in Finder and open it. Either way, the app replaces the older daemon with its own, by itself when no session is running, else (and always for a daemon from 0.1.0-rc.3 or earlier) once you confirm. Do not `cp -R` over it while the daemon runs.
 
           The app installs and starts its daemon (a LaunchAgent; nothing starts at login) by itself.
 
@@ -198,7 +281,7 @@ jobs:
           } > "$RUNNER_TEMP/notes.md"
           flags=()
           if [[ "$VERSION" == *-* ]]; then flags+=(--prerelease); fi
-          gh release create "$GITHUB_REF_NAME" "$ZIP" "$ZIP.sha256" \
+          gh release create "$GITHUB_REF_NAME" "$ZIP" "$ZIP.sha256" "$ARCHIVE" "$FEED" \
             --verify-tag \
             --title "vaquita $VERSION" \
             --notes-file "$RUNNER_TEMP/notes.md" \
