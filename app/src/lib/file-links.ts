@@ -8,6 +8,11 @@ export type Invoker = (path: string, host: string) => Promise<OpenResult>;
 // terminal cells, where a wide character takes two.
 export type PathHit = { start: number; end: number; target: string };
 
+// What a click on a link hands the gate: its text, or a path joined across a
+// line break (see path-link-provider) with a path it replaced, the one on the
+// clicked row, which opens instead when the joined path does not exist.
+export type LinkText = string | readonly [path: string, fallback: string];
+
 const defaultInvoker: Invoker = async (path, host) => {
 	if (!isTauri()) throw new Error('file links open only in the app');
 	const { invoke } = await import('@tauri-apps/api/core');
@@ -49,6 +54,10 @@ const TOKEN_END = /[\s"'`)\]<>,]/u;
 // The first character of every shape isPath accepts, and of a file:// URL.
 const PATH_START = new RegExp(`[/~${SEG_CHARS}]`, 'u');
 const LINE_SUFFIX = /:\d+(?::\d+)?$/;
+// What may continue a path a TUI wrapped onto the next line: the characters of
+// a segment and of separators and line suffixes, so whitespace and prose
+// punctuation such as ( or , end it.
+const RUN = new RegExp(`[${SEG_CHARS}/~=:]+`, 'uy');
 
 function isPath(text: string): boolean {
 	if (text === '~') return true;
@@ -108,16 +117,28 @@ export function findPaths(line: string): PathHit[] {
 	return hits;
 }
 
+// Where the run of path characters that starts at from ends; from when there is
+// none, or when it has no letter or digit, as a list's - or an ellipsis has not.
+export function pathRun(text: string, from: number): number {
+	RUN.lastIndex = from;
+	const m = RUN.exec(text);
+	return m && /[\p{L}\p{N}]/u.test(m[0]) ? from + m[0].length : from;
+}
+
 export async function openPath(
 	path: string,
 	host: string,
 	report: (m: string) => void,
 	invoker: Invoker = defaultInvoker,
+	fallback?: string,
 ): Promise<void> {
 	try {
 		const r = await invoker(path, host);
 		if (r.action === 'revealed') report(`revealed in Finder, not opened: ${path} (${r.why})`);
 	} catch (e) {
+		// open_path's word for a path that does not exist, the one failure that
+		// says a joined path was a wrong guess.
+		if (fallback !== undefined && errText(e) === 'no such file') return openPath(fallback, host, report, invoker);
 		report(`open ${path}: ${errText(e)}`);
 	}
 }
@@ -125,20 +146,21 @@ export async function openPath(
 // The only place that decides whether a click on terminal text opens anything.
 export function activateUri(
 	e: MouseEvent,
-	text: string,
+	text: LinkText,
 	report: (m: string) => void,
 	invoker: Invoker = defaultInvoker,
 	opener?: Opener,
 ): void {
 	if (!e.metaKey) return;
-	if (text.startsWith('/') || text === '~' || text.startsWith('~/')) {
-		void openPath(text, '', report, invoker);
+	const [uri, fallback] = typeof text === 'string' ? [text, undefined] : text;
+	if (uri.startsWith('/') || uri === '~' || uri.startsWith('~/')) {
+		void openPath(uri, '', report, invoker, fallback);
 		return;
 	}
-	const file = fileUrlToPath(text);
+	const file = fileUrlToPath(uri);
 	if (file) {
 		void openPath(file.path, file.host, report, invoker);
 		return;
 	}
-	openExternal(text, (err) => report(`open ${text}: ${errText(err)}`), opener);
+	openExternal(uri, (err) => report(`open ${uri}: ${errText(err)}`), opener);
 }

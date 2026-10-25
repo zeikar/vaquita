@@ -6,7 +6,7 @@ import { Terminal } from '@xterm/xterm';
 import { clipboardProvider } from './clipboard-provider';
 import { installHangulFix, type HangulFix } from './hangul-fix';
 import { keyHandler } from './keys';
-import { activateUri } from './file-links';
+import { activateUri, type LinkText } from './file-links';
 import type { ViewLike } from './manager';
 import { pathLinkProvider } from './path-link-provider';
 import type { SessionCore, Size } from './session-core';
@@ -66,7 +66,7 @@ export class TermView implements ViewLike {
 		// hyperlinks xterm passes the link's URI to linkHandler, not the visible text.
 		// Without allowNonHttpProtocols xterm would drop file: links; activateUri is
 		// the one gate that decides what a click opens.
-		const activate = (e: MouseEvent, uri: string) => activateUri(e, uri, this.report);
+		const activate = (e: MouseEvent, uri: LinkText) => activateUri(e, uri, this.report);
 		const hover = (_e: MouseEvent, uri: string) => {
 			container.title = uri;
 		};

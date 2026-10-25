@@ -2,6 +2,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { Terminal } from '@xterm/headless';
 import type { ILink } from '@xterm/xterm';
 import { describe, expect, it } from 'vitest';
+import { activateUri, type Invoker } from './file-links';
 import { lineText, pathLinkProvider, type LinkHandlers } from './path-link-provider';
 
 const noop: LinkHandlers = { activate() {}, hover() {}, leave() {} };
@@ -23,6 +24,14 @@ function links(t: Terminal, y: number, cwd = '', handlers = noop): ILink[] | und
 
 function spans(l: ILink[] | undefined) {
 	return l?.map(({ range, text }) => ({ start: range.start, end: range.end, text }));
+}
+
+// What a click on each link on row y hands the gate.
+function clicked(t: Terminal, y: number, cwd = ''): unknown[] {
+	const got: unknown[] = [];
+	const handlers = { ...noop, activate: (_e: MouseEvent, text: unknown) => void got.push(text) };
+	for (const l of links(t, y, cwd, handlers) ?? []) l.activate({} as MouseEvent, '');
+	return got;
 }
 
 describe('pathLinkProvider', () => {
@@ -102,6 +111,162 @@ describe('pathLinkProvider', () => {
 		const t = await term(80, 'hello world');
 		expect(links(t, 1)).toBeUndefined();
 		expect(links(t, 2)).toBeUndefined();
+	});
+});
+
+describe('pathLinkProvider across a line break', () => {
+	// Claude Code wraps this list item itself: a newline, then an indent.
+	const item = '  - 고친 원본: /private/tmp/example/d1c67ac3/scratchpad/\r\n    icon/fixed-shadow.png';
+	const joined = '/private/tmp/example/d1c67ac3/scratchpad/icon/fixed-shadow.png';
+	const fragment = '/private/tmp/example/d1c67ac3/scratchpad/';
+
+	it('joins a path that fills its row with the run that begins the next one', async () => {
+		// 15 cells before the path, 41 in it: the row is full at 56.
+		const t = await term(56, item);
+		expect(t.buffer.active.getLine(1)?.isWrapped).toBe(false);
+		const hovered: string[] = [];
+		const handlers: LinkHandlers = { ...noop, hover: (_e, text) => void hovered.push(text) };
+		const want = [{ start: { x: 16, y: 1 }, end: { x: 25, y: 2 }, text: joined }];
+		expect(spans(links(t, 1, '/tmp/repo'))).toEqual(want);
+		const got = links(t, 2, '/tmp/repo', handlers);
+		expect(spans(got)).toEqual(want);
+		got![0].hover!({} as MouseEvent, '');
+		expect(hovered).toEqual([joined]);
+	});
+
+	it('falls back to the path that stood on its own on the clicked row', async () => {
+		const t = await term(56, item);
+		const own = '/tmp/repo/icon/fixed-shadow.png';
+		expect(clicked(t, 1, '/tmp/repo')).toEqual([[joined, fragment]]);
+		expect(clicked(t, 2, '/tmp/repo')).toEqual([[joined, own]]);
+		// Through the gate: the joined path is missing, so row 2's own path opens, not row 1's.
+		const tried: string[] = [];
+		const invoker: Invoker = async (path) => {
+			tried.push(path);
+			if (tried.length === 1) throw 'no such file';
+			return { action: 'opened' };
+		};
+		const handlers: LinkHandlers = { ...noop, activate: (e, text) => activateUri(e, text, () => {}, invoker) };
+		links(t, 2, '/tmp/repo', handlers)![0].activate({ metaKey: true } as MouseEvent, '');
+		// The invoker settles in microtasks, all run before a timer.
+		await new Promise((r) => setTimeout(r));
+		expect(tried).toEqual([joined, own]);
+	});
+
+	it('does not join a path at column 0, as in a listing', async () => {
+		for (const next of ['/tmp/other.txt', '~/other.txt']) {
+			// The first path ends one cell short of the edge.
+			const t = await term(20, `/tmp/abc/defg/hi.ts\r\n${next}`);
+			expect(spans(links(t, 1)), next).toEqual([
+				{ start: { x: 1, y: 1 }, end: { x: 19, y: 1 }, text: '/tmp/abc/defg/hi.ts' },
+			]);
+			expect(spans(links(t, 2)), next).toEqual([{ start: { x: 1, y: 2 }, end: { x: next.length, y: 2 }, text: next }]);
+		}
+	});
+
+	it('joins an indented run that starts with a slash', async () => {
+		const t = await term(20, 'see /tmp/abc/defghi\r\n    /j.ts');
+		const want = [{ start: { x: 5, y: 1 }, end: { x: 9, y: 2 }, text: '/tmp/abc/defghi/j.ts' }];
+		expect(spans(links(t, 1))).toEqual(want);
+		expect(spans(links(t, 2))).toEqual(want);
+		expect(clicked(t, 1)).toEqual([['/tmp/abc/defghi/j.ts', '/tmp/abc/defghi']]);
+		expect(clicked(t, 2)).toEqual([['/tmp/abc/defghi/j.ts', '/j.ts']]);
+	});
+
+	it('allows two empty cells at the edge, not three', async () => {
+		const want = [{ start: { x: 16, y: 1 }, end: { x: 25, y: 2 }, text: joined }];
+		expect(spans(links(await term(58, item), 2))).toEqual(want);
+		const t = await term(59, item);
+		expect(spans(links(t, 1, '/tmp/repo'))).toEqual([{ start: { x: 16, y: 1 }, end: { x: 56, y: 1 }, text: fragment }]);
+		expect(spans(links(t, 2, '/tmp/repo'))).toEqual([
+			{ start: { x: 5, y: 2 }, end: { x: 25, y: 2 }, text: '/tmp/repo/icon/fixed-shadow.png' },
+		]);
+	});
+
+	it('leaves a path that ends well before the edge alone', async () => {
+		const t = await term(80, item);
+		expect(spans(links(t, 1, '/tmp/repo'))).toEqual([{ start: { x: 16, y: 1 }, end: { x: 56, y: 1 }, text: fragment }]);
+		expect(spans(links(t, 2, '/tmp/repo'))).toEqual([
+			{ start: { x: 5, y: 2 }, end: { x: 25, y: 2 }, text: '/tmp/repo/icon/fixed-shadow.png' },
+		]);
+	});
+
+	// 30 cells: the row is full at 30.
+	const full = 'out: /tmp/example/aaaaaaaaaaa/';
+
+	it('takes only the first run of the next line, whatever follows it', async () => {
+		// The run replaces the path it is on its own; a guess wrong about prose is
+		// undone by the click, which falls back to the first line's path.
+		const t = await term(30, `${full}\r\n    src/a.ts and src/b.ts`);
+		const first = { start: { x: 6, y: 1 }, end: { x: 12, y: 2 }, text: '/tmp/example/aaaaaaaaaaa/src/a.ts' };
+		expect(spans(links(t, 1, '/tmp/repo'))).toEqual([first]);
+		expect(spans(links(t, 2, '/tmp/repo'))).toEqual([
+			first,
+			{ start: { x: 18, y: 2 }, end: { x: 25, y: 2 }, text: '/tmp/repo/src/b.ts' },
+		]);
+	});
+
+	it('keeps the line suffix out of the joined path and trailing punctuation out of its range', async () => {
+		const t = await term(30, `${full}\r\n    src/a.ts:12.`);
+		const want = [{ start: { x: 6, y: 1 }, end: { x: 15, y: 2 }, text: '/tmp/example/aaaaaaaaaaa/src/a.ts' }];
+		expect(spans(links(t, 1))).toEqual(want);
+		expect(spans(links(t, 2))).toEqual(want);
+	});
+
+	it('does not join a next line that begins with other text', async () => {
+		const alone = [{ start: { x: 6, y: 1 }, end: { x: 30, y: 1 }, text: '/tmp/example/aaaaaaaaaaa/' }];
+		for (const next of ['    (see notes)', '  - next item', '', '    ... more']) {
+			const t = await term(30, `${full}\r\n${next}`);
+			expect(spans(links(t, 1)), next).toEqual(alone);
+			expect(links(t, 2), next).toBeUndefined();
+		}
+	});
+
+	it('does not join a file URI', async () => {
+		const t = await term(28, 'see file:///tmp/example/dir/\r\n    a/b.png');
+		expect(spans(links(t, 1))).toEqual([
+			{ start: { x: 5, y: 1 }, end: { x: 28, y: 1 }, text: 'file:///tmp/example/dir/' },
+		]);
+		expect(spans(links(t, 2, '/tmp/repo'))).toEqual([
+			{ start: { x: 5, y: 2 }, end: { x: 11, y: 2 }, text: '/tmp/repo/a/b.png' },
+		]);
+	});
+
+	// Rows of 24 cells, each full.
+	const b = 'b'.repeat(19);
+	const c = 'c'.repeat(19);
+
+	it('joins a third line when the second run fills its row too', async () => {
+		const t = await term(24, `out: /tmp/example/aaaaa/\r\n    ${b}/\r\n    c.png`);
+		const want = [{ start: { x: 6, y: 1 }, end: { x: 9, y: 3 }, text: `/tmp/example/aaaaa/${b}/c.png` }];
+		for (const y of [1, 2, 3]) expect(spans(links(t, y)), `row ${y}`).toEqual(want);
+		// Rows 2 and 3 have no path of their own: a click falls back to row 1's.
+		for (const y of [2, 3]) expect(clicked(t, y), `row ${y}`).toEqual([[want[0].text, '/tmp/example/aaaaa/']]);
+	});
+
+	it('joins at most three lines', async () => {
+		const t = await term(24, `out: /tmp/example/aaaaa/\r\n    ${b}/\r\n    ${c}/\r\n    d/e.png`);
+		const want = [{ start: { x: 6, y: 1 }, end: { x: 24, y: 3 }, text: `/tmp/example/aaaaa/${b}/${c}/` }];
+		for (const y of [1, 2, 3]) expect(spans(links(t, y, '/tmp/repo')), `row ${y}`).toEqual(want);
+		expect(spans(links(t, 4, '/tmp/repo'))).toEqual([
+			{ start: { x: 5, y: 4 }, end: { x: 11, y: 4 }, text: '/tmp/repo/d/e.png' },
+		]);
+	});
+
+	it('joins at the end of a line that wrapped on its own', async () => {
+		// Rows 1 and 2 are one wrapped line, full at 20; row 3 follows a newline.
+		const t = await term(20, `see /tmp/${'a'.repeat(30)}/\r\n    b.txt`);
+		expect(t.buffer.active.getLine(1)?.isWrapped).toBe(true);
+		const want = [{ start: { x: 5, y: 1 }, end: { x: 9, y: 3 }, text: `/tmp/${'a'.repeat(30)}/b.txt` }];
+		for (const y of [1, 2, 3]) expect(spans(links(t, y)), `row ${y}`).toEqual(want);
+	});
+
+	it('joins a path that ends in a wide character', async () => {
+		// 더 ends in column 21 of 22, leaving one cell.
+		const t = await term(22, 'cat ~/문서/보고서폴더\r\n  /최종.md');
+		const want = [{ start: { x: 5, y: 1 }, end: { x: 10, y: 2 }, text: '~/문서/보고서폴더/최종.md' }];
+		expect(spans(links(t, 1))).toEqual(want);
+		expect(spans(links(t, 2))).toEqual(want);
 	});
 });
 

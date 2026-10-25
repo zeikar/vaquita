@@ -130,9 +130,11 @@ describe('findPaths', () => {
 	});
 });
 
-function fakeInvoker(result: Awaited<ReturnType<Invoker>> | Error | string) {
+// One result per call, the last repeating.
+function fakeInvoker(...results: (Awaited<ReturnType<Invoker>> | Error | string)[]) {
 	const calls: { path: string; host: string }[] = [];
 	const invoker: Invoker = async (path, host) => {
+		const result = results[Math.min(calls.length, results.length - 1)];
 		calls.push({ path, host });
 		if (typeof result === 'string' || result instanceof Error) throw result;
 		return result;
@@ -199,5 +201,49 @@ describe('activateUri', () => {
 
 	it('ignores other schemes', () => {
 		for (const t of ['javascript:alert(1)', 'ssh://host']) expect(click(t, true)).toEqual({ calls: [], opened: [] });
+	});
+});
+
+describe('activateUri with a fallback', () => {
+	const pair = ['/tmp/example/dir/icon/a.png', '/tmp/example/dir/'] as const;
+
+	async function click(metaKey: boolean, ...results: Parameters<typeof fakeInvoker>) {
+		const { invoker, calls } = fakeInvoker(...results);
+		const said: string[] = [];
+		activateUri({ metaKey } as MouseEvent, pair, (m) => said.push(m), invoker);
+		// The invoker settles in microtasks, all run before a timer.
+		await new Promise((r) => setTimeout(r));
+		return { tried: calls.map((c) => c.path), said };
+	}
+
+	it('does nothing without Cmd', async () => {
+		expect(await click(false, 'no such file')).toEqual({ tried: [], said: [] });
+	});
+
+	it('opens the joined path when it exists', async () => {
+		expect(await click(true, { action: 'opened' })).toEqual({ tried: [pair[0]], said: [] });
+	});
+
+	it('opens the first line\'s path when the joined one does not exist', async () => {
+		expect(await click(true, 'no such file', { action: 'opened' })).toEqual({ tried: [...pair], said: [] });
+		expect(await click(true, new Error('no such file'), { action: 'opened' })).toEqual({ tried: [...pair], said: [] });
+	});
+
+	it('reports when neither exists', async () => {
+		expect(await click(true, 'no such file')).toEqual({ tried: [...pair], said: [`open ${pair[1]}: no such file`] });
+	});
+
+	it('does not try again after any other failure', async () => {
+		expect(await click(true, 'not an absolute path')).toEqual({
+			tried: [pair[0]],
+			said: [`open ${pair[0]}: not an absolute path`],
+		});
+	});
+
+	it('does not try again after a reveal', async () => {
+		expect(await click(true, { action: 'revealed', why: 'it is a script' })).toEqual({
+			tried: [pair[0]],
+			said: [`revealed in Finder, not opened: ${pair[0]} (it is a script)`],
+		});
 	});
 });
