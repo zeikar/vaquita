@@ -81,7 +81,7 @@ It needs node, cargo, python3 and a running dev daemon for `~/.vaquita-dev` from
 
 ```sh
 PATH="/opt/homebrew/opt/rustup/bin:$PATH" tools/update-check/check.sh up /tmp/vaquita-update-check
-# within about 15 s the bar says "vaquita 0.0.2 is available."; click Update by hand,
+# within about 15 s a notice says "vaquita 0.0.2 is available."; click Update by hand,
 # the app relaunches as 0.0.2; quit it with Cmd+Q
 tools/update-check/check.sh down /tmp/vaquita-update-check   # PASS or FAIL
 rm -rf /tmp/vaquita-update-check
