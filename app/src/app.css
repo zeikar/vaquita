@@ -1,5 +1,14 @@
 html, body, #app { margin: 0; height: 100%; }
 
+/* The icon's neon cyan, for focus rings and unread marks, and a deeper cyan
+   that white text reads on (4.6:1), for primary buttons and the highlighted
+   menu item. */
+:root {
+	--neon: #6cd4f4;
+	--accent: #177ea0;
+	--accent-hover: #1b8fb5;
+}
+
 body {
 	background: #1e1e1e;
 	color: #d4d4d4;
@@ -62,16 +71,16 @@ footer {
 	pointer-events: none;
 }
 
-/* The status line's grey, set apart by a blue edge as a notice. */
+/* The status line's grey, lifted off the terminal by its shadow. */
 .notice {
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
-	padding: 10px 12px 10px 14px;
+	padding: 10px 12px;
 	border: 1px solid #3c3c3c;
 	border-radius: 8px;
 	background: #252526;
-	box-shadow: inset 3px 0 #0e639c, 0 6px 20px rgb(0 0 0 / 45%);
+	box-shadow: 0 6px 20px rgb(0 0 0 / 45%);
 	color: #ccc;
 	font-size: 12px;
 	line-height: 1.4;
@@ -84,10 +93,21 @@ footer {
 	gap: 8px;
 }
 
-.notice .text {
+.notice .text,
+.notice .body {
 	flex: 1;
 	min-width: 0;
 	overflow-wrap: anywhere;
+}
+
+.notice .body {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.notice .sub {
+	color: #999;
 }
 
 .notice .actions {
@@ -114,17 +134,17 @@ footer {
 }
 
 .notice button.primary {
-	border-color: #0e639c;
-	background: #0e639c;
+	border-color: var(--accent);
+	background: var(--accent);
 	color: #fff;
 }
 
 .notice button.primary:hover:not(:disabled) {
-	background: #1177bb;
+	background: var(--accent-hover);
 }
 
 .notice button:not(.icon-btn):focus-visible {
-	outline: 1px solid #4fc1ff;
+	outline: 1px solid var(--neon);
 	outline-offset: 1px;
 }
 
@@ -216,7 +236,7 @@ svg[data-icon='openai'] {
 }
 
 .icon-btn:focus-visible {
-	outline: 1px solid #4fc1ff;
+	outline: 1px solid var(--neon);
 	outline-offset: -1px;
 }
 
@@ -253,7 +273,7 @@ svg[data-icon='openai'] {
 }
 
 .new-session:focus-visible {
-	outline: 1px solid #4fc1ff;
+	outline: 1px solid var(--neon);
 	outline-offset: -1px;
 }
 

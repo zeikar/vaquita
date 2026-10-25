@@ -64,7 +64,7 @@
 		box-sizing: border-box;
 		height: 18px;
 		padding: 0 2px;
-		border: 1px solid #4fc1ff;
+		border: 1px solid var(--neon);
 		border-radius: 3px;
 		outline: none;
 		background: #1e1e1e;

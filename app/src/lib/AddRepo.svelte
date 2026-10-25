@@ -93,7 +93,7 @@
 		font-size: 13px;
 	}
 	input:focus {
-		border-color: #4fc1ff;
+		border-color: var(--neon);
 	}
 	small {
 		color: #f48771;

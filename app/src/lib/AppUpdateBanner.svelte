@@ -28,7 +28,11 @@
 
 <div class="notice" role="status">
 	<div class="head">
-		<span class="text">{text}</span>
+		<div class="body">
+			<span class="text">{text}</span>
+			<!-- What a restart does not take: the sessions live in the daemon. -->
+			{#if error === undefined}<span class="sub">It relaunches; your sessions keep running.</span>{/if}
+		</div>
 		<button class="icon-btn" title="Not now" aria-label="Not now" disabled={installing} onclick={ondismiss}>
 			<Icon name="x-mark" />
 		</button>

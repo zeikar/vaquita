@@ -26,8 +26,14 @@ afterEach(() => {
 });
 
 describe('AppUpdateBanner', () => {
-	it('announces the version', () => {
-		expect(show().querySelector('span')?.textContent).toBe('vaquita 0.2.0 is available.');
+	it('announces the version, and that sessions survive the relaunch', () => {
+		const el = show();
+		expect(el.querySelector('.text')?.textContent).toBe('vaquita 0.2.0 is available.');
+		expect(el.querySelector('.sub')?.textContent).toBe('It relaunches; your sessions keep running.');
+	});
+
+	it('leaves the note out next to an error', () => {
+		expect(show({ error: 'no network' }).querySelector('.sub')).toBeNull();
 	});
 
 	it('says it is updating while installing', () => {

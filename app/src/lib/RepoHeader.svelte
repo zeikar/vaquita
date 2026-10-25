@@ -108,7 +108,7 @@
 		cursor: pointer;
 	}
 	button:focus-visible {
-		outline: 1px solid #4fc1ff;
+		outline: 1px solid var(--neon);
 		outline-offset: -1px;
 	}
 	/* The chevron's stroke lines up with the rows' agent icons, whose marks
@@ -200,6 +200,6 @@
 		border-radius: 50%;
 	}
 	.dot.unread {
-		background: #4fc1ff;
+		background: var(--neon);
 	}
 </style>

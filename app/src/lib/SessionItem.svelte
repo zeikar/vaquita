@@ -197,7 +197,7 @@
 		cursor: auto;
 	}
 	button:focus-visible {
-		outline: 1px solid #4fc1ff;
+		outline: 1px solid var(--neon);
 		outline-offset: -1px;
 	}
 	/* Both lines have a fixed height, so a state, an icon or the editor cannot
@@ -251,7 +251,7 @@
 		width: 12px;
 		height: 12px;
 		border: 2px solid #555;
-		border-top-color: #4fc1ff;
+		border-top-color: var(--neon);
 		border-radius: 50%;
 		animation: spin 0.8s linear infinite;
 	}
@@ -272,7 +272,7 @@
 		border-radius: 50%;
 	}
 	.dot.unread {
-		background: #4fc1ff;
+		background: var(--neon);
 	}
 	.detail {
 		height: 16px;

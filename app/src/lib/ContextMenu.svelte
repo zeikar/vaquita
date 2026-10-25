@@ -139,7 +139,7 @@
 	   sidebar's #2a2d2e is too close to the panel to show a keyboard user where
 	   they are. */
 	button:focus {
-		background: #0e639c;
+		background: var(--accent);
 		color: #fff;
 	}
 	button.danger {

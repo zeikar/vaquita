@@ -261,7 +261,7 @@
 	}
 	input:not([type='radio']):focus,
 	select:focus {
-		border-color: #4fc1ff;
+		border-color: var(--neon);
 	}
 	small {
 		color: #f48771;
@@ -309,7 +309,7 @@
 		color: #fff;
 	}
 	.segments label:has(input:focus-visible) {
-		outline: 1px solid #4fc1ff;
+		outline: 1px solid var(--neon);
 		outline-offset: -1px;
 	}
 	.segments input {
@@ -340,19 +340,19 @@
 		background: #45494e;
 	}
 	button.primary {
-		border-color: #0e639c;
-		background: #0e639c;
+		border-color: var(--accent);
+		background: var(--accent);
 		color: #fff;
 	}
 	button.primary:hover:not(:disabled) {
-		background: #1177bb;
+		background: var(--accent-hover);
 	}
 	button:disabled {
 		opacity: 0.5;
 		cursor: default;
 	}
 	button:focus-visible {
-		outline: 1px solid #4fc1ff;
+		outline: 1px solid var(--neon);
 		outline-offset: 1px;
 	}
 </style>
