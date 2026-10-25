@@ -45,7 +45,7 @@ Measured on 2026-10-24 with a release build on an Apple Silicon Mac: 10 shell se
 
 ## Icon
 
-`app/app-icon.png` is the source of the app icon. After changing it, run `npx tauri icon app-icon.png` in `app/` and delete the `android/`, `ios/` and `64x64.png` it also writes into `src-tauri/icons/`, which the app does not use.
+`app/app-icon.png` is the source of the app icon. Its body must be Apple's rounded square exactly, 824 × 824 at 100, 100 on the 1024 canvas, and fully opaque: macOS 26 and later checks each size in the icon on its own, and one that is a few pixels off or slightly see-through is drawn small on a gray plate, as the Dock did on a non-Retina display. After changing it, run `npx tauri icon app-icon.png` in `app/` and delete the `android/`, `ios/` and `64x64.png` it also writes into `src-tauri/icons/`, which the app does not use.
 
 ## Screenshot
 
