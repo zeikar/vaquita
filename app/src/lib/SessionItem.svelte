@@ -120,13 +120,15 @@
 		<div class="row">{@render body()}</div>
 	{:else}
 		<!-- The button takes the double-click, as a span cannot without a role;
-		     only one on the title renames. -->
+		     only one on the title renames. A record of an earlier run has no
+		     screen to show, so a click reopens it, and it is renamed from its
+		     menu: a double-click's first click would already have reopened it. -->
 		<button
 			class="row"
 			bind:this={button}
 			title={tip}
-			onclick={() => onselect()}
-			ondblclick={(e) => (e.target as Element).closest('.title') && onedit()}
+			onclick={() => (info.restorable && !disabled ? onreopen() : onselect())}
+			ondblclick={(e) => !info.restorable && (e.target as Element).closest('.title') && onedit()}
 		>
 			{@render body()}
 		</button>

@@ -289,6 +289,21 @@ describe('SessionList rows', () => {
 		expect(button('Dismiss')).not.toBeNull();
 	});
 
+	it('reopens an old session when its row is clicked, and selects it while reopening is disabled', () => {
+		const p = show([row(3, { restorable: true, state: 'exited' })]);
+		click(target.querySelector<HTMLButtonElement>('button.row')!);
+		expect(p.onreopen).toHaveBeenCalledWith(3);
+		expect(p.onselect).not.toHaveBeenCalled();
+		p.disabled = true;
+		flushSync();
+		click(target.querySelector<HTMLButtonElement>('button.row')!);
+		expect(p.onreopen).toHaveBeenCalledTimes(1);
+		expect(p.onselect).toHaveBeenCalledWith(3);
+		target.querySelector('.title')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+		flushSync();
+		expect(target.querySelector('input')).toBeNull();
+	});
+
 	it('disables Reopen while disabled', () => {
 		const p = show([row(3, { restorable: true, state: 'exited' })]);
 		p.disabled = true;
