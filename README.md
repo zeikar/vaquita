@@ -37,7 +37,7 @@ Download `vaquita-<version>-macos-arm64.zip` from [Releases](https://github.com/
 xattr -dr com.apple.quarantine /Applications/vaquita.app
 ```
 
-The app installs and starts its daemon by itself. It runs the `claude` and `codex` you already have; it does not bundle them. Releases after 0.1.3 update themselves: when a newer release is out, a bar in the app offers it, and one click installs it and relaunches the app while your sessions keep running; the app takes care of the daemon ([how updates work](docs/app.md#updates)). To update by hand, as you need to once from 0.1.3 or earlier, quit vaquita, replace the app in Finder and open it. Don't `cp -R` over the app while the daemon runs.
+The app installs and starts its daemon by itself. It runs the `claude` and `codex` you already have; it does not bundle them. Releases after 0.1.3 update themselves: when a newer release is out, a notice in the app offers it, and one click installs it and relaunches the app while your sessions keep running; the app takes care of the daemon ([how updates work](docs/app.md#updates)). To update by hand, as you need to once from 0.1.3 or earlier, quit vaquita, replace the app in Finder and open it. Don't `cp -R` over the app while the daemon runs.
 
 vaquita is young (0.1.x) and macOS only. Issues and ideas are welcome.
 

@@ -23,16 +23,18 @@
 </script>
 
 <div class="notice" role="status">
-	<span title={text}>{text}</span>
-	<button
-		class="primary"
-		class:armed={twoClick.armed === 'restart'}
-		onclick={() => twoClick.click('restart', onrestart)}
-		onblur={() => twoClick.disarm()}
-		onpointerleave={() => twoClick.disarm()}
-	>
-		{twoClick.armed === 'restart' ? 'Confirm restart?' : 'Restart daemon'}
-	</button>
+	<span class="text">{text}</span>
+	<div class="actions">
+		<button
+			class="primary"
+			class:armed={twoClick.armed === 'restart'}
+			onclick={() => twoClick.click('restart', onrestart)}
+			onblur={() => twoClick.disarm()}
+			onpointerleave={() => twoClick.disarm()}
+		>
+			{twoClick.armed === 'restart' ? 'Confirm restart?' : 'Restart daemon'}
+		</button>
+	</div>
 </div>
 
 <style>

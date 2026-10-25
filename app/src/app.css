@@ -6,12 +6,11 @@ body {
 	font: 13px system-ui, sans-serif;
 }
 
-/* Sidebar left, terminal pane right, along the bottom an app update bar and a
-   daemon update bar, each when there is one, then the status bar. */
+/* Sidebar left, terminal pane right, the status bar along the bottom. */
 main {
 	display: grid;
 	grid-template-columns: 280px minmax(0, 1fr);
-	grid-template-rows: minmax(0, 1fr) auto auto auto;
+	grid-template-rows: minmax(0, 1fr) auto;
 	height: 100%;
 }
 
@@ -47,26 +46,54 @@ footer {
 	overflow: hidden;
 }
 
-/* The status line's grey, set apart by a blue edge as a notice. */
-.notice {
-	grid-column: 1 / -1;
+/* The update notices float in the bottom right, above the status bar and
+   over the terminal: one that comes or goes resizes no terminal, which would
+   make the agent in it redraw. Only the cards take clicks. */
+.notices {
+	position: fixed;
+	right: 12px;
+	bottom: 32px;
+	z-index: 10;
 	display: flex;
-	align-items: center;
+	flex-direction: column;
 	gap: 8px;
-	padding: 4px 8px 4px 10px;
-	border-top: 1px solid #333;
-	background: #252526;
-	box-shadow: inset 2px 0 #0e639c;
-	color: #ccc;
-	font-size: 12px;
+	width: 320px;
+	max-width: calc(100vw - 24px);
+	pointer-events: none;
 }
 
-.notice > span {
+/* The status line's grey, set apart by a blue edge as a notice. */
+.notice {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 10px 12px 10px 14px;
+	border: 1px solid #3c3c3c;
+	border-radius: 8px;
+	background: #252526;
+	box-shadow: inset 3px 0 #0e639c, 0 6px 20px rgb(0 0 0 / 45%);
+	color: #ccc;
+	font-size: 12px;
+	line-height: 1.4;
+	pointer-events: auto;
+}
+
+.notice .head {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+}
+
+.notice .text {
 	flex: 1;
 	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+	overflow-wrap: anywhere;
+}
+
+.notice .actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
 }
 
 /* The new-session dialog's buttons, smaller. :not keeps this off the dismiss

@@ -232,24 +232,26 @@
 		fallbackFocus={() => $manager.sessions.find((r) => r.info.sid === $manager.selected)?.view?.focus()}
 	/>
 	<TerminalPane sessions={$manager.sessions} selected={$manager.selected} />
-	{#if $appUpdater.version !== undefined}
-		{@const version = $appUpdater.version}
-		<AppUpdateBanner
-			{version}
-			installing={$appUpdater.installing}
-			error={$appUpdater.error}
-			oninstall={() => appUpdater.install()}
-			ondismiss={() => appUpdater.dismiss()}
-			onnotes={() => openExternal(releaseUrl(version), (e) => manager.report(`opening the release notes failed: ${e instanceof Error ? e.message : String(e)}`))}
-		/>
-	{/if}
-	{#if $manager.update && $manager.status === 'connected'}
-		<UpdateBanner
-			update={$manager.update}
-			running={runningCount($manager.sessions.map((r) => r.info))}
-			onrestart={() => manager.restartDaemon()}
-		/>
-	{/if}
+	<div class="notices">
+		{#if $appUpdater.version !== undefined}
+			{@const version = $appUpdater.version}
+			<AppUpdateBanner
+				{version}
+				installing={$appUpdater.installing}
+				error={$appUpdater.error}
+				oninstall={() => appUpdater.install()}
+				ondismiss={() => appUpdater.dismiss()}
+				onnotes={() => openExternal(releaseUrl(version), (e) => manager.report(`opening the release notes failed: ${e instanceof Error ? e.message : String(e)}`))}
+			/>
+		{/if}
+		{#if $manager.update && $manager.status === 'connected'}
+			<UpdateBanner
+				update={$manager.update}
+				running={runningCount($manager.sessions.map((r) => r.info))}
+				onrestart={() => manager.restartDaemon()}
+			/>
+		{/if}
+	</div>
 	<footer>
 		<span class="state"><span class="dot {statusTone}"></span>{statusText}</span>
 		<span>{$manager.sessions.length} sessions</span>

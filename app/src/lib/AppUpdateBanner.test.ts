@@ -26,10 +26,8 @@ afterEach(() => {
 });
 
 describe('AppUpdateBanner', () => {
-	it('announces the version, in the text and the title', () => {
-		const span = show().querySelector('span')!;
-		expect(span.textContent).toBe('vaquita 0.2.0 is available.');
-		expect(span.title).toBe('vaquita 0.2.0 is available.');
+	it('announces the version', () => {
+		expect(show().querySelector('span')?.textContent).toBe('vaquita 0.2.0 is available.');
 	});
 
 	it('says it is updating while installing', () => {
