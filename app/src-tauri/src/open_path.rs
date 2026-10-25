@@ -175,7 +175,9 @@ fn judge(canonical: &Path, meta: &Metadata, handler: &dyn Fn(&Path) -> Option<St
 
 fn io_error(e: std::io::Error) -> String {
     match e.kind() {
-        std::io::ErrorKind::NotFound => "no such file".to_string(),
+        // A path that runs through a file (a.txt/b) names nothing either, and the
+        // webview takes this word as a miss.
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => "no such file".to_string(),
         _ => e.to_string(),
     }
 }
@@ -470,6 +472,8 @@ mod tests {
         let d = dir("bad");
         assert_eq!(resolve("rel/x.txt", "", &d, &editor).unwrap_err(), "not an absolute path");
         assert_eq!(resolve_with(&d.join("missing.txt"), &editor).unwrap_err(), "no such file");
+        let f = file(&d, "x.txt", 0o644);
+        assert_eq!(resolve_with(&f.join("y.txt"), &editor).unwrap_err(), "no such file");
     }
 
     #[test]

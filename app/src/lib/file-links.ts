@@ -125,6 +125,22 @@ export function pathRun(text: string, from: number): number {
 	return m && /[\p{L}\p{N}]/u.test(m[0]) ? from + m[0].length : from;
 }
 
+// Where the run of path characters that ends text at end begins, when it is a
+// token of its own (after whitespace, a TOKEN_START character or nothing), has
+// a / and does not end in sentence punctuation, as a relative folder (src/lib/)
+// that is no path by itself; -1 when there is none.
+export function pathRunBefore(text: string, end: number): number {
+	let start = end;
+	while (start > 0 && !TOKEN_START.test(text[start - 1])) start--;
+	if (start === end || !text.slice(start, end).includes('/') || '.,;:!?'.includes(text[end - 1])) return -1;
+	return pathRun(text, start) === end ? start : -1;
+}
+
+// Whether a path ends in a file name with an extension.
+export function hasExtension(path: string): boolean {
+	return EXTENSION.test(path);
+}
+
 export async function openPath(
 	path: string,
 	host: string,
@@ -137,8 +153,12 @@ export async function openPath(
 		if (r.action === 'revealed') report(`revealed in Finder, not opened: ${path} (${r.why})`);
 	} catch (e) {
 		// open_path's word for a path that does not exist, the one failure that
-		// says a joined path was a wrong guess.
-		if (fallback !== undefined && errText(e) === 'no such file') return openPath(fallback, host, report, invoker);
+		// says a joined path was a wrong guess. The fallback may be another file
+		// than the one the hover named, so the switch is told.
+		if (fallback !== undefined && errText(e) === 'no such file') {
+			report(`${path}: no such file, opening ${fallback}`);
+			return openPath(fallback, host, report, invoker);
+		}
 		report(`open ${path}: ${errText(e)}`);
 	}
 }

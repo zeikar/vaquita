@@ -34,6 +34,23 @@ function clicked(t: Terminal, y: number, cwd = ''): unknown[] {
 	return got;
 }
 
+// What a Cmd+click on row y's first link tries through the gate, and what it
+// reports, when missing is the one path that does not exist.
+async function cmdClick(t: Terminal, y: number, cwd: string, missing: string) {
+	const tried: string[] = [];
+	const said: string[] = [];
+	const invoker: Invoker = async (path) => {
+		tried.push(path);
+		if (path === missing) throw 'no such file';
+		return { action: 'opened' };
+	};
+	const handlers: LinkHandlers = { ...noop, activate: (e, text) => activateUri(e, text, (m) => said.push(m), invoker) };
+	links(t, y, cwd, handlers)![0].activate({ metaKey: true } as MouseEvent, '');
+	// The invoker settles in microtasks, all run before a timer.
+	await new Promise((r) => setTimeout(r));
+	return { tried, said };
+}
+
 describe('pathLinkProvider', () => {
 	it('links an absolute path and passes its text to the handlers', async () => {
 		const t = await term(80, 'ls /tmp/a.txt');
@@ -140,28 +157,86 @@ describe('pathLinkProvider across a line break', () => {
 		expect(clicked(t, 1, '/tmp/repo')).toEqual([[joined, fragment]]);
 		expect(clicked(t, 2, '/tmp/repo')).toEqual([[joined, own]]);
 		// Through the gate: the joined path is missing, so row 2's own path opens, not row 1's.
-		const tried: string[] = [];
-		const invoker: Invoker = async (path) => {
-			tried.push(path);
-			if (tried.length === 1) throw 'no such file';
-			return { action: 'opened' };
-		};
-		const handlers: LinkHandlers = { ...noop, activate: (e, text) => activateUri(e, text, () => {}, invoker) };
-		links(t, 2, '/tmp/repo', handlers)![0].activate({ metaKey: true } as MouseEvent, '');
-		// The invoker settles in microtasks, all run before a timer.
-		await new Promise((r) => setTimeout(r));
-		expect(tried).toEqual([joined, own]);
+		expect(await cmdClick(t, 2, '/tmp/repo', joined)).toEqual({
+			tried: [joined, own],
+			said: [`${joined}: no such file, opening ${own}`],
+		});
 	});
 
-	it('does not join a path at column 0, as in a listing', async () => {
-		for (const next of ['/tmp/other.txt', '~/other.txt']) {
-			// The first path ends one cell short of the edge.
-			const t = await term(20, `/tmp/abc/defg/hi.ts\r\n${next}`);
-			expect(spans(links(t, 1)), next).toEqual([
-				{ start: { x: 1, y: 1 }, end: { x: 19, y: 1 }, text: '/tmp/abc/defg/hi.ts' },
-			]);
-			expect(spans(links(t, 2)), next).toEqual([{ start: { x: 1, y: 2 }, end: { x: next.length, y: 2 }, text: next }]);
+	it('opens the clicked row\'s own path when a listing\'s paths are joined by mistake', async () => {
+		// The first path ends one cell short of the edge. open_path answers a path
+		// through a file, as the joined one is, as missing.
+		const t = await term(24, '  ⎿  /tmp/repo/bin/tool\r\n     /tmp/repo/src/c.ts');
+		const joined = '/tmp/repo/bin/tool/tmp/repo/src/c.ts';
+		for (const [y, own] of [
+			[1, '/tmp/repo/bin/tool'],
+			[2, '/tmp/repo/src/c.ts'],
+		] as const) {
+			expect(await cmdClick(t, y, '', joined), `row ${y}`).toEqual({
+				tried: [joined, own],
+				said: [`${joined}: no such file, opening ${own}`],
+			});
 		}
+	});
+
+	it('does not join a line that starts at column 0, as in a listing', async () => {
+		for (const [next, own] of [
+			['/tmp/other.txt', '/tmp/other.txt'],
+			['~/other.txt', '~/other.txt'],
+			['./x/y.ts', '/tmp/repo/./x/y.ts'],
+			['src/lib/x.ts', '/tmp/repo/src/lib/x.ts'],
+		]) {
+			// The first path ends one cell short of the edge.
+			const t = await term(20, `/tmp/abc/defg/hijk/\r\n${next}`);
+			expect(spans(links(t, 1, '/tmp/repo')), next).toEqual([
+				{ start: { x: 1, y: 1 }, end: { x: 19, y: 1 }, text: '/tmp/abc/defg/hijk/' },
+			]);
+			expect(spans(links(t, 2, '/tmp/repo')), next).toEqual([
+				{ start: { x: 1, y: 2 }, end: { x: next.length, y: 2 }, text: own },
+			]);
+		}
+	});
+
+	it('does not join a first part that already ends in a file name', async () => {
+		// Each first line is full; the next begins with a word, a list number or a
+		// status letter. Each row keeps its own links, on itself.
+		const own = (t: Terminal, y: number) => spans(links(t, y, '/tmp/repo'))?.map((l) => [l.start.y, l.end.y, l.text]);
+		const prose = await term(34, 'I updated /tmp/repo/src/lib/aa.ts\r\n  to handle the rest');
+		expect(own(prose, 1)).toEqual([[1, 1, '/tmp/repo/src/lib/aa.ts']]);
+		expect(own(prose, 2)).toBeUndefined();
+		const list = await term(20, '  1. /tmp/ab/cdef.ts\r\n  2. /tmp/x/y.ts');
+		expect(own(list, 1)).toEqual([[1, 1, '/tmp/ab/cdef.ts']]);
+		expect(own(list, 2)).toEqual([[2, 2, '/tmp/x/y.ts']]);
+		const status = await term(24, ' M app/src/lib/abcde.ts\r\n M app/src/b.ts');
+		expect(own(status, 1)).toEqual([[1, 1, '/tmp/repo/app/src/lib/abcde.ts']]);
+		expect(own(status, 2)).toEqual([[2, 2, '/tmp/repo/app/src/b.ts']]);
+	});
+
+	it('joins a relative path whose first part is no path by itself', async () => {
+		// A folder, then a break inside a name. Neither part is a path alone, so a
+		// click has nothing to fall back to.
+		for (const [first, rest] of [
+			['app/src/lib/abc/', 'file-links.ts'],
+			['app/src/lib/file', '-links.ts'],
+		]) {
+			const t = await term(20, `  - ${first}\r\n    ${rest}`);
+			const path = `/tmp/repo/${first}${rest}`;
+			const want = [{ start: { x: 5, y: 1 }, end: { x: 4 + rest.length, y: 2 }, text: path }];
+			for (const y of [1, 2]) {
+				expect(spans(links(t, y, '/tmp/repo')), `${first} row ${y}`).toEqual(want);
+				expect(clicked(t, y, '/tmp/repo'), `${first} row ${y}`).toEqual([path]);
+			}
+		}
+	});
+
+	it('falls back to the clicked row\'s own path, or to none, when the first part is no path', async () => {
+		const t = await term(27, '  - the file is in app/src/\r\n    lib/file-links.ts');
+		const joined = '/tmp/repo/app/src/lib/file-links.ts';
+		const want = [{ start: { x: 20, y: 1 }, end: { x: 21, y: 2 }, text: joined }];
+		expect(spans(links(t, 1, '/tmp/repo'))).toEqual(want);
+		expect(spans(links(t, 2, '/tmp/repo'))).toEqual(want);
+		expect(clicked(t, 1, '/tmp/repo')).toEqual([joined]);
+		expect(clicked(t, 2, '/tmp/repo')).toEqual([[joined, '/tmp/repo/lib/file-links.ts']]);
 	});
 
 	it('joins an indented run that starts with a slash', async () => {
@@ -251,6 +326,62 @@ describe('pathLinkProvider across a line break', () => {
 		expect(spans(links(t, 4, '/tmp/repo'))).toEqual([
 			{ start: { x: 5, y: 4 }, end: { x: 11, y: 4 }, text: '/tmp/repo/d/e.png' },
 		]);
+	});
+
+	it('joins a path that begins a row below a full row that cannot go on', async () => {
+		// Rows 2 and 3 are one path; row 1 ends at the edge in a whole file name, a
+		// word of prose, or tool output.
+		const joined = async (rows: string[], x0: number, x1: number, text: string) => {
+			const t = await term(24, rows.join('\r\n'));
+			const want = [{ start: { x: x0, y: 2 }, end: { x: x1, y: 3 }, text }];
+			for (const y of [2, 3]) expect(spans(links(t, y, '/tmp/repo')), `${rows[1]} row ${y}`).toEqual(want);
+			return spans(links(t, 1, '/tmp/repo'));
+		};
+		const listing = ['  ⎿  /tmp/repo/src/aa.ts', '     /tmp/repo/src/lib/b', '     b/c.ts'];
+		expect(await joined(listing, 6, 11, '/tmp/repo/src/lib/bb/c.ts')).toEqual([
+			{ start: { x: 6, y: 1 }, end: { x: 24, y: 1 }, text: '/tmp/repo/src/aa.ts' },
+		]);
+		const prose = ['* The fixed one is now', '  /tmp/repo/scratchpad/', '  icon/fixed-shadow.png'];
+		expect(await joined(prose, 3, 23, '/tmp/repo/scratchpad/icon/fixed-shadow.png')).toBeUndefined();
+		const tool = ['  ⎿  Wrote 3 files in a ', '     app/src/lib/aaaaaa/', '     file-links.ts'];
+		expect(await joined(tool, 6, 18, '/tmp/repo/app/src/lib/aaaaaa/file-links.ts')).toBeUndefined();
+	});
+
+	it('goes on from a row that is the rest of the row above only by the run it begins with', async () => {
+		// Row 2 is all one name, so the path goes on into row 3.
+		const b = 'b'.repeat(20);
+		const t = await term(24, `out: /tmp/example/aaaaa/\r\n    ${b}\r\n    c.png`);
+		const want = [{ start: { x: 6, y: 1 }, end: { x: 9, y: 3 }, text: `/tmp/example/aaaaa/${b}c.png` }];
+		for (const y of [1, 2, 3]) expect(spans(links(t, y)), `row ${y}`).toEqual(want);
+		// Row 2's path takes b.ts only, so the path ends there, and the path that
+		// ends row 2 starts nothing.
+		const u = await term(24, 'out: /tmp/example/aaaaa/\r\n    b.ts and /tmp/cc/dd/\r\n    e.ts');
+		expect(spans(links(u, 2))).toEqual([
+			{ start: { x: 6, y: 1 }, end: { x: 8, y: 2 }, text: '/tmp/example/aaaaa/b.ts' },
+			{ start: { x: 14, y: 2 }, end: { x: 24, y: 2 }, text: '/tmp/cc/dd/' },
+		]);
+		expect(links(u, 3)).toBeUndefined();
+	});
+
+	it('stops a chain at a part that already ends in a file name', async () => {
+		// A folder at the edge, then two whole entries of a listing.
+		const rows = ['  ⎿  /tmp/repo/src/libxx', '     /tmp/repo/src/a.tsx', '     /tmp/repo/b.ts'];
+		const t = await term(24, rows.join('\r\n'));
+		const guess = { start: { x: 6, y: 1 }, end: { x: 24, y: 2 }, text: '/tmp/repo/src/libxx/tmp/repo/src/a.tsx' };
+		expect(spans(links(t, 1))).toEqual([guess]);
+		expect(spans(links(t, 2))).toEqual([guess]);
+		expect(spans(links(t, 3))).toEqual([{ start: { x: 6, y: 3 }, end: { x: 19, y: 3 }, text: '/tmp/repo/b.ts' }]);
+		expect(clicked(t, 2)).toEqual([[guess.text, '/tmp/repo/src/a.tsx']]);
+	});
+
+	it('starts nothing from a row inside a joined path, seen from any row', async () => {
+		// Row 2's path would join rows 2 to 4, but row 2 continues row 1: row 4 is
+		// past the cap and gets no link.
+		const d = 'd'.repeat(15);
+		const t = await term(20, ['out: /aa/aaaaaaaaaaa', '     /bbbbbbbb/cccc', `     ${d}`, '     eeee.ts'].join('\r\n'));
+		const want = [{ start: { x: 6, y: 1 }, end: { x: 20, y: 3 }, text: `/aa/aaaaaaaaaaa/bbbbbbbb/cccc${d}` }];
+		for (const y of [1, 2, 3]) expect(spans(links(t, y)), `row ${y}`).toEqual(want);
+		expect(links(t, 4)).toBeUndefined();
 	});
 
 	it('joins at the end of a line that wrapped on its own', async () => {

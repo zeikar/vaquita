@@ -224,13 +224,21 @@ describe('activateUri with a fallback', () => {
 		expect(await click(true, { action: 'opened' })).toEqual({ tried: [pair[0]], said: [] });
 	});
 
-	it('opens the first line\'s path when the joined one does not exist', async () => {
-		expect(await click(true, 'no such file', { action: 'opened' })).toEqual({ tried: [...pair], said: [] });
-		expect(await click(true, new Error('no such file'), { action: 'opened' })).toEqual({ tried: [...pair], said: [] });
+	const switched = `${pair[0]}: no such file, opening ${pair[1]}`;
+
+	it('opens the fallback, saying so, when the joined path does not exist', async () => {
+		expect(await click(true, 'no such file', { action: 'opened' })).toEqual({ tried: [...pair], said: [switched] });
+		expect(await click(true, new Error('no such file'), { action: 'opened' })).toEqual({
+			tried: [...pair],
+			said: [switched],
+		});
 	});
 
 	it('reports when neither exists', async () => {
-		expect(await click(true, 'no such file')).toEqual({ tried: [...pair], said: [`open ${pair[1]}: no such file`] });
+		expect(await click(true, 'no such file')).toEqual({
+			tried: [...pair],
+			said: [switched, `open ${pair[1]}: no such file`],
+		});
 	});
 
 	it('does not try again after any other failure', async () => {

@@ -1,5 +1,13 @@
 import type { IBufferCell, IBufferLine, ILink, ILinkProvider } from '@xterm/xterm';
-import { findPaths, pathRun, resolvePath, type LinkText, type PathHit } from './file-links';
+import {
+	findPaths,
+	hasExtension,
+	pathRun,
+	pathRunBefore,
+	resolvePath,
+	type LinkText,
+	type PathHit,
+} from './file-links';
 
 // Only getLine, so a headless terminal's buffer can stand in for xterm's.
 export interface BufferLike {
@@ -79,12 +87,15 @@ export function lineText(buffer: BufferLike, row: number): LineText {
 
 // Claude Code wraps a long line itself, with a newline and an indent, so the
 // rest of a path goes on the next line, which xterm does not mark as wrapped.
-// A path that ends its line at the right edge, give or take the EDGE_SLACK
-// cells such a wrap may leave, takes the run of path characters that begins the
-// next line, and the next one's if that run fills its row in turn. Prose that
-// happens to begin the next line makes a wrong guess, which costs the hover
-// text only: the click falls back to the path that stood on its own on the
-// clicked row, or else to the one on the first line.
+// One rule, runsOn, says whether a line goes on into the next: its tail ends
+// it at the right edge (give or take the EDGE_SLACK cells such a wrap may
+// leave), is no whole file name, and the next line begins with a run of path
+// characters after an indent. A file name that ends a line is far likelier
+// followed by a word than broken inside its extension. A path is the lines
+// joined so from one that is not itself the rest of the line above, up to
+// MAX_LINES of them. A wrong guess still underlines too much, so a click on it
+// falls back, and says so, to the path that stood on its own on the clicked
+// row, or else to the first line's.
 const EDGE_SLACK = 2;
 // The lines one path may take, which bounds how many more a hover reads.
 const MAX_LINES = 3;
@@ -92,12 +103,17 @@ const MAX_LINES = 3;
 // A slice of a line's text: a path, or a run that continues it.
 type Piece = { line: LineText; start: number; end: number };
 
+// Where a path that may go on into the next line begins, with its target when
+// it is a path by itself.
+type Opening = { start: number; end: number; target?: string };
+
 // A path to link, by its first and last cells.
 type Span = { first: CellPos; last: CellPos; path: string };
 
-// A joined path also has the paths it replaces, the first line's one first,
-// for a click to fall back to; taken is the last cell of the runs it took.
-type Found = Span & { parts?: Span[]; taken?: CellPos };
+// A joined path also has the paths it replaces, for a click to fall back to, and
+// lead among them when the first line's part is one; taken is the last cell of
+// the runs it took.
+type Found = Span & { parts?: Span[]; lead?: Span; taken?: CellPos };
 
 function span(line: LineText, hit: PathHit, cwd: string): Span {
 	return { first: line.cells[hit.start], last: line.cells[hit.end - 1], path: resolvePath(hit.target, cwd) };
@@ -112,31 +128,67 @@ function atEdge(buffer: BufferLike, { line, end }: Piece): boolean {
 	return !/\S/.test(line.text.slice(end));
 }
 
-// The run of path characters that begins a line, after its indent. A wrap
-// indents what it carries over, so a path at column 0 is one of its own, as in
-// a listing from find or ls.
+// The run of path characters that begins a line after an indent. A wrap
+// indents what it carries over, so what starts at column 0 is a line of its
+// own, as in a listing, a prompt or a log.
 function leadingRun(line: LineText): Piece | undefined {
 	const start = line.text.search(/\S/);
-	if (start < 0 || (start === 0 && /^~?\//.test(line.text))) return undefined;
+	if (start <= 0) return undefined;
 	const end = pathRun(line.text, start);
 	return end > start ? { line, start, end } : undefined;
 }
 
-// The path a hit makes with the runs that continue it on the next lines, when
-// it ends its line at the edge. A file:// URI is left as it is.
-function join(buffer: BufferLike, line: LineText, hit: PathHit, cwd: string): Found | undefined {
-	if (hit.target.startsWith('file:')) return undefined;
-	const pieces: Piece[] = [{ line, start: hit.start, end: hit.end }];
-	for (let p = pieces[0]; pieces.length < MAX_LINES && atEdge(buffer, p); ) {
-		const run = leadingRun(lineText(buffer, p.line.cells[p.end - 1].row + 1));
-		if (!run) break;
-		pieces.push((p = run));
-	}
-	if (pieces.length === 1) return undefined;
+// The line's last path when it ends the line, else the run of path characters
+// with a / that ends it.
+function opening(line: LineText): Opening | undefined {
+	const end = line.text.trimEnd().length;
+	const last = findPaths(line.text).at(-1);
+	if (last?.end === end) return last;
+	const start = pathRunBefore(line.text, end);
+	return start < 0 ? undefined : { start, end };
+}
+
+// What of a line may go on into the next: its opening; or, when the line is
+// itself the rest of the line above, the run it begins with, which is the part
+// of it a path takes, when that run ends it.
+function tail(line: LineText, rest: boolean): Opening | undefined {
+	if (!rest) return opening(line);
+	const run = leadingRun(line);
+	return run && !/\S/.test(line.text.slice(run.end)) ? { start: run.start, end: run.end } : undefined;
+}
+
+// Whether a line goes on into the next, and with which tail into which run.
+// rest says whether the line is itself the rest of the line above.
+function runsOn(buffer: BufferLike, line: LineText, rest: boolean): [Opening, Piece] | undefined {
+	const t = tail(line, rest);
+	if (!t) return undefined;
+	const text = t.target ?? line.text.slice(t.start, t.end);
+	if (text.startsWith('file:') || hasExtension(text) || !atEdge(buffer, { line, ...t })) return undefined;
+	const run = leadingRun(lineText(buffer, line.cells[t.end - 1].row + 1));
+	return run && [t, run];
+}
+
+// Whether lines[k] is the rest of the line above, worked out down from at most
+// MAX_LINES lines up, the first taken as no rest: the answer is then the
+// line's own, the same for every row that asks.
+function isRest(buffer: BufferLike, lines: LineText[], k: number): boolean {
+	let rest = false;
+	for (let j = Math.max(0, k - MAX_LINES) + 1; j <= k; j++) rest = !!runsOn(buffer, lines[j - 1], rest);
+	return rest;
+}
+
+// The path a line starts, with the runs that continue it on the next lines.
+function join(buffer: BufferLike, line: LineText, cwd: string): Found | undefined {
+	let on = runsOn(buffer, line, false);
+	if (!on) return undefined;
+	const { start, end, target } = on[0];
+	const pieces: Piece[] = [{ line, start, end }];
+	for (; on && pieces.length < MAX_LINES; on = runsOn(buffer, on[1].line, true)) pieces.push(on[1]);
 	const text = pieces.map((p) => p.line.text.slice(p.start, p.end)).join('');
 	const got = findPaths(text)[0];
 	if (got?.start !== 0) return undefined;
-	const parts = [span(line, hit, cwd)];
+	const lead = target === undefined ? undefined : span(line, { start, end, target }, cwd);
+	const parts = lead ? [lead] : [];
 	for (const p of pieces.slice(1)) {
 		for (const h of findPaths(p.line.text)) {
 			if (h.start >= p.end) break;
@@ -145,26 +197,27 @@ function join(buffer: BufferLike, line: LineText, hit: PathHit, cwd: string): Fo
 	}
 	// What findPaths trims off the end, punctuation, is all in the last run, which
 	// has a letter or a digit.
-	const tail = pieces[pieces.length - 1];
+	const last = pieces[pieces.length - 1];
 	return {
-		first: line.cells[hit.start],
-		last: tail.line.cells[tail.end - (text.length - got.end) - 1],
+		first: line.cells[start],
+		last: last.line.cells[last.end - (text.length - got.end) - 1],
 		path: resolvePath(got.target, cwd),
 		parts,
-		taken: tail.line.cells[tail.end - 1],
+		lead,
+		taken: last.line.cells[last.end - 1],
 	};
 }
 
-// The lines before here, in order, whose last path may run on into it: each
-// line after the first begins with a run that may continue the one before.
-function earlier(buffer: BufferLike, here: LineText): LineText[] {
-	const lines: LineText[] = [];
-	for (let line = here; lines.length < MAX_LINES - 1 && leadingRun(line); ) {
-		const first = line.cells[0].row;
+// here and the lines above it, in order, while each begins with a run after an
+// indent and so may be the rest of the one above: enough for a path from
+// MAX_LINES - 1 lines up to reach here, and for isRest on each of those lines.
+function linesInto(buffer: BufferLike, here: LineText): LineText[] {
+	const lines = [here];
+	while (lines.length < 2 * MAX_LINES && leadingRun(lines[0])) {
+		const first = lines[0].cells[0].row;
 		// A wrapped first row is not where the line begins: lineText stopped inside it.
 		if (first === 0 || buffer.active.getLine(first)?.isWrapped) break;
-		line = lineText(buffer, first - 1);
-		lines.unshift(line);
+		lines.unshift(lineText(buffer, first - 1));
 	}
 	return lines;
 }
@@ -174,27 +227,28 @@ function earlier(buffer: BufferLike, here: LineText): LineText[] {
 export function pathLinkProvider(buffer: BufferLike, cwd: string, handlers: LinkHandlers): ILinkProvider {
 	return {
 		provideLinks(y, callback) {
-			const here = lineText(buffer, y - 1);
+			const lines = linesInto(buffer, lineText(buffer, y - 1));
+			const here = lines[lines.length - 1];
 			const found: Found[] = [];
 			// A joined path replaces the paths in the runs it took, up to this cell.
 			let taken: CellPos | undefined;
 			const free = (c: CellPos) => !taken || c.row > taken.row || (c.row === taken.row && c.x > taken.x);
-			for (const line of earlier(buffer, here)) {
-				const hit = findPaths(line.text).at(-1);
-				const f = hit && free(line.cells[hit.start]) ? join(buffer, line, hit, cwd) : undefined;
+			// A path that reaches here starts at most MAX_LINES - 1 lines up.
+			for (let k = Math.max(0, lines.length - MAX_LINES); k < lines.length; k++) {
+				const f = isRest(buffer, lines, k) ? undefined : join(buffer, lines[k], cwd);
+				// here's paths link on their own but for those an earlier path took and
+				// the one here's own path starts from.
+				if (k === lines.length - 1) {
+					const own = (hit: PathHit) => free(here.cells[hit.start]) && f?.first !== here.cells[hit.start];
+					found.push(...findPaths(here.text).filter(own).map((hit) => span(here, hit, cwd)));
+				}
 				if (f) {
 					found.push(f);
 					taken = f.taken;
 				}
 			}
-			const hits = findPaths(here.text).filter((hit) => free(here.cells[hit.start]));
-			hits.forEach((hit, i) => {
-				// Only the last path can end the line.
-				const f = i === hits.length - 1 ? join(buffer, here, hit, cwd) : undefined;
-				found.push(f ?? span(here, hit, cwd));
-			});
 			const links: ILink[] = [];
-			for (const { first, last, path, parts } of found) {
+			for (const { first, last, path, parts, lead } of found) {
 				const range = {
 					start: { x: first.x + 1, y: first.row + 1 },
 					end: { x: last.x + last.width, y: last.row + 1 },
@@ -202,7 +256,7 @@ export function pathLinkProvider(buffer: BufferLike, cwd: string, handlers: Link
 				// xterm asks row by row; a link over several rows is given for each.
 				if (range.start.y > y || range.end.y < y) continue;
 				// xterm asks again for each row the pointer moves to, so a click opens this row's fallback.
-				const part = parts && (parts.find((p) => p.first.row <= y - 1 && y - 1 <= p.last.row) ?? parts[0]);
+				const part = parts?.find((p) => p.first.row <= y - 1 && y - 1 <= p.last.row) ?? lead;
 				const text: LinkText = !part || part.path === path ? path : [path, part.path];
 				links.push({
 					range,
