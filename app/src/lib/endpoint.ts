@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { AppUpdate } from './app-update';
 import { isTauri } from './tauri';
 
 export interface Endpoint {
@@ -77,6 +78,28 @@ export async function restartDaemon(endpoint: Endpoint, signal: boolean): Promis
 	if (!isTauri()) throw new Error(DEV_HINT);
 	try {
 		await invoke('restart_daemon', { pid: endpoint.pid, token: endpoint.token, signal });
+	} catch (e) {
+		throw new Error(String(e));
+	}
+}
+
+// The newer release this app could install, null when there is none; also in
+// a dev run, a plain browser and a build without an update feed.
+export async function checkAppUpdate(): Promise<AppUpdate | null> {
+	if (!isTauri()) return null;
+	try {
+		return await invoke<AppUpdate | null>('check_app_update');
+	} catch (e) {
+		throw new Error(String(e));
+	}
+}
+
+// Downloads and installs the update found, then restarts the app, so on success
+// the promise never settles.
+export async function installAppUpdate(): Promise<void> {
+	if (!isTauri()) throw new Error('updates are installed by the app, not in a browser');
+	try {
+		await invoke('install_app_update');
 	} catch (e) {
 		throw new Error(String(e));
 	}
