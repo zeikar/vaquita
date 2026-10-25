@@ -58,7 +58,7 @@ export class AppUpdater {
 	async install(): Promise<void> {
 		// A check in flight replaces the update the app holds for install, so
 		// it is let finish first: the bar then names what Update installs.
-		await this.checking;
+		while (this.checking) await this.checking;
 		if (this.state.version === undefined || this.state.installing) return;
 		this.set({ ...this.state, installing: true, error: undefined });
 		try {
@@ -72,12 +72,8 @@ export class AppUpdater {
 	// For the app menu's Check for Updates. Unlike the timed checks it says
 	// what it found, and shows again a version the bar was closed for.
 	async checkNow(): Promise<void> {
-		await this.checking;
-		if (this.state.installing) return;
 		this.dismissed = undefined;
-		this.checking = this.check(true);
-		await this.checking;
-		this.checking = undefined;
+		await this.run(true);
 	}
 
 	dismiss(): void {
@@ -91,13 +87,21 @@ export class AppUpdater {
 	}
 
 	private async tick(): Promise<void> {
-		this.checking = this.check();
-		await this.checking;
-		this.checking = undefined;
+		await this.run(false);
 		if (this.running) this.schedule(CHECK_INTERVAL_MS);
 	}
 
-	private async check(asked = false): Promise<void> {
+	// One check at a time, timed or asked for, so one never clears the guard
+	// of another that install() waits on.
+	private async run(asked: boolean): Promise<void> {
+		while (this.checking) await this.checking;
+		const check = this.check(asked);
+		this.checking = check;
+		await check;
+		if (this.checking === check) this.checking = undefined;
+	}
+
+	private async check(asked: boolean): Promise<void> {
 		if (this.state.installing) return;
 		let found: AppUpdate | null;
 		try {

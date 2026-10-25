@@ -198,6 +198,28 @@ describe('AppUpdater checkNow', () => {
 		expect(t.report).not.toHaveBeenCalled();
 	});
 
+	it('runs one check at a time, so an install waits for a timed check a manual one ran into', async () => {
+		const t = setup();
+		const answers: Array<(u: AppUpdate) => void> = [];
+		t.check.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+		t.install.mockImplementation(() => new Promise(() => {}));
+		t.updater.start();
+		const asked = t.updater.checkNow();
+		await at(FIRST_CHECK_MS);
+		expect(t.check).toHaveBeenCalledTimes(1);
+		answers[0]({ version: '0.2.0' });
+		await asked;
+		await at(0);
+		expect(t.check).toHaveBeenCalledTimes(2);
+		void t.updater.install();
+		await at(0);
+		expect(t.install).not.toHaveBeenCalled();
+		answers[1]({ version: '0.3.0' });
+		await at(0);
+		expect(t.install).toHaveBeenCalledTimes(1);
+		expect(t.state()).toEqual({ version: '0.3.0', installing: true, error: undefined });
+	});
+
 	it('does nothing while installing', async () => {
 		const t = setup([{ version: '0.2.0' }]);
 		t.updater.start();
