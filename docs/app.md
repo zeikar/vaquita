@@ -39,7 +39,19 @@ A release build also replaces a running daemon that is not the vaquitad inside i
 
 `npm run tauri build` produces `app/src-tauri/target/release/bundle/macos/vaquita.app`, with vaquitad built into it; set `VAQUITA_SIGN_IDENTITY` to sign that vaquitad with a stable identity, as `SIGN` does for the daemon. That vaquitad's build is `dev` unless `VERSION` is set; the release sets both it and the app's version from the tag. To pass `VAQUITA_HOME`, run `vaquita.app/Contents/MacOS/vaquita` directly. Without it the app uses the default home, `~/Library/Application Support/vaquita`.
 
-Pushing a `v<version>` tag (`v0.1.3`, or `v0.1.3-rc.1` for a prerelease) runs `.github/workflows/release.yml`, which tests, builds, signs and publishes the zip. The release's notes open with that version's section of `CHANGELOG.md`, so add it before tagging: a release without one fails before it builds, and a prerelease goes out without.
+Pushing a `v<version>` tag (`v0.1.3`, or `v0.1.3-rc.1` for a prerelease) runs `.github/workflows/release.yml`, which tests, builds, signs and publishes the zip, and the archive and feed the app updates from ([Updates](#updates)). The release's notes open with that version's section of `CHANGELOG.md`, so add it before tagging: a release without one fails before it builds, and a prerelease goes out without.
+
+## Updates
+
+Only a release build looks for updates. `tauri.conf.json` holds the public key update archives are signed with but no feed; the release workflow adds the feed, `https://github.com/zeikar/vaquita/releases/latest/download/latest.json`, so `tauri dev` and a local `npm run tauri build` never check. That is the latest release's feed, and GitHub's latest skips prereleases, so a prerelease is never offered.
+
+The app checks 15 s after it starts and every six hours after that. A failed check, as when offline, shows nothing in the app; a release build has no web inspector, so the reason goes to the app's stderr. A newer version shows a bar above the status line: What's new opens its release page, Update installs it, and × (Not now) hides it until a still newer one is out or the app starts again.
+
+Update downloads `vaquita-<version>-macos-arm64.app.tar.gz` and checks its minisign signature against that key. The signature also names the version it was made for, which must be the feed's (`requireSignedVersion`), so an altered feed cannot pass an older release off as a newer one. The app then swaps the new bundle in for itself, in one step on APFS; where it cannot write, macOS asks for an administrator's password. The app downloaded the archive itself, so the new bundle has no quarantine flag to clear. It relaunches through `open -n`, which passes on its environment, so an app started with `VAQUITA_HOME` comes back in the same home. A failed install, or a download that does not finish within five minutes, shows its reason in the bar with Retry.
+
+Sessions keep running through an update, in the daemon. The daemon still runs its old binary afterwards, until the relaunched app replaces it as described above: by itself when no session is running, else once you confirm.
+
+The release workflow signs the archive with the private key in the `VAQUITA_UPDATER_KEY` and `VAQUITA_UPDATER_KEY_PASSWORD` repository secrets; it is not in the repo. Before it publishes, it checks that the archive is signed with the key `tauri.conf.json` trusts and for the version being released, and that the app inside passes the same signature checks as the zip's.
 
 ## Footprint
 
