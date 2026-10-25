@@ -328,9 +328,17 @@ func TestOrphansLeaveOutCaffeinate(t *testing.T) {
 	ts := startSession(t, "trap '' HUP; sleep 60 & /usr/bin/caffeinate -i -t 60 & exit 0", nil)
 	ts.waitExit(t)
 	pid := ts.PID()
+	// Each child has the shell's name until its exec, so wait for both names.
+	named := func(procs []proc) bool {
+		names := map[string]bool{}
+		for _, p := range procs {
+			names[p.name] = true
+		}
+		return len(procs) == 2 && names["sleep"] && names["caffeinate"]
+	}
 	var procs []proc
 	deadline := time.Now().Add(testTimeout)
-	for len(procs) < 2 && time.Now().Before(deadline) {
+	for !named(procs) && time.Now().Before(deadline) {
 		var err error
 		if procs, err = sessionProcs(pid); err != nil {
 			t.Fatal(err)
@@ -342,7 +350,7 @@ func TestOrphansLeaveOutCaffeinate(t *testing.T) {
 			unix.Kill(p.pid, unix.SIGKILL)
 		}
 	})
-	if len(procs) != 2 {
+	if !named(procs) {
 		t.Fatalf("sessionProcs(%d) = %v, want the sleep and caffeinate", pid, procs)
 	}
 	var sleep int
