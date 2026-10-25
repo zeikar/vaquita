@@ -3,6 +3,7 @@ mod launchd;
 mod notify;
 mod open_path;
 mod stop;
+mod update;
 mod wait;
 
 use serde::{Deserialize, Serialize};
@@ -107,6 +108,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        // The webview is granted no updater:* permission: the two update
+        // commands below are the only way in.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(update::Pending::default())
         .setup(|app| {
             notify::setup(app.handle());
             Ok(())
@@ -120,7 +125,9 @@ pub fn run() {
             notify::notification_permission,
             notify::notify,
             notify::take_notification_click,
-            open_path::open_path
+            open_path::open_path,
+            update::check_app_update,
+            update::install_app_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

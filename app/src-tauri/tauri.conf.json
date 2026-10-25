@@ -44,5 +44,11 @@
       },
       "signingIdentity": "-"
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc0RDg2M0EwNzk2NDNENEQKUldSTlBXUjVvR1BZZENzL29QWnVmVXlXanFzSUpPU1h4NzdYUHhCL3BibWhjd3FJdzFMNnJLSkgK",
+      "requireSignedVersion": true
+    }
   }
 }
