@@ -32,6 +32,7 @@ var listProcs = func() ([]unix.KinfoProc, error) {
 type proc struct {
 	pid, pgid int
 	start     time.Time
+	name      string // the executable's name, cut to 16 bytes
 }
 
 // sessionProcs lists the processes whose POSIX session id is sid.
@@ -61,6 +62,7 @@ func sessionProcs(sid int) ([]proc, error) {
 			pid:   pid,
 			pgid:  int(kps[i].Eproc.Pgid),
 			start: time.Unix(kps[i].Proc.P_starttime.Unix()),
+			name:  unix.ByteSliceToString(kps[i].Proc.P_comm[:]),
 		})
 	}
 	return procs, nil
@@ -79,14 +81,22 @@ func inSession(pid, sid int) bool {
 // is among them (it leads the session), and zero otherwise; a mismatch with
 // the recorded start shows the pid now leads some other session. An error
 // means the members are unknown, not that there are none.
+//
+// caffeinate is left out: Claude Code keeps one running to stop the Mac from
+// sleeping, and it outlives claude by up to five minutes. It holds nothing a
+// reopened session needs and goes away by itself, so it is no orphan.
 func SessionPIDs(sid int) (pids []int, leaderStart time.Time, err error) {
 	procs, err := sessionProcs(sid)
+	var kept []proc
 	for _, p := range procs {
 		if p.pid == sid {
 			leaderStart = p.start
 		}
+		if p.name != "caffeinate" {
+			kept = append(kept, p)
+		}
 	}
-	return pidsOf(procs), leaderStart, err
+	return pidsOf(kept), leaderStart, err
 }
 
 // Members lists the processes in the PTY session sid for the conversation id

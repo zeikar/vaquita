@@ -321,3 +321,41 @@ func TestMembers(t *testing.T) {
 		t.Fatalf("Members(1) = %v, %v", ms, err)
 	}
 }
+
+// Claude Code leaves caffeinate running for up to five minutes after it
+// exits. It holds nothing a reopened session would need, so it is no orphan.
+func TestOrphansLeaveOutCaffeinate(t *testing.T) {
+	ts := startSession(t, "trap '' HUP; sleep 60 & /usr/bin/caffeinate -i -t 60 & exit 0", nil)
+	ts.waitExit(t)
+	pid := ts.PID()
+	var procs []proc
+	deadline := time.Now().Add(testTimeout)
+	for len(procs) < 2 && time.Now().Before(deadline) {
+		var err error
+		if procs, err = sessionProcs(pid); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Cleanup(func() {
+		for _, p := range procs {
+			unix.Kill(p.pid, unix.SIGKILL)
+		}
+	})
+	if len(procs) != 2 {
+		t.Fatalf("sessionProcs(%d) = %v, want the sleep and caffeinate", pid, procs)
+	}
+	var sleep int
+	for _, p := range procs {
+		if p.name == "sleep" {
+			sleep = p.pid
+		}
+	}
+	ts.Lock()
+	orphans, err := ts.Orphans()
+	ts.Unlock()
+	if !slices.Equal(orphans, []int{sleep}) || err != nil {
+		t.Errorf("Orphans() = %v, %v; want only the sleep [%d]", orphans, err, sleep)
+	}
+	ts.waitClosed(t)
+}
