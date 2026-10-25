@@ -44,6 +44,22 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The release notes open with the version's section of CHANGELOG.md, the
+      # lines under its "## <version>" heading. A release needs one; a
+      # prerelease may go without.
+      - name: Read changelog
+        run: |
+          awk -v want="## $VERSION" '$0 == want { on = 1; next } /^## / { on = 0 } on' \
+            CHANGELOG.md > "$RUNNER_TEMP/changes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/changes.md"; then
+            if [[ "$VERSION" == *-* ]]; then
+              echo "::warning::CHANGELOG.md has no section for $VERSION."
+            else
+              echo "::error::CHANGELOG.md has no section for $VERSION; add one before tagging."
+              exit 1
+            fi
+          fi
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: daemon/go.mod
@@ -157,7 +173,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cat > "$RUNNER_TEMP/notes.md" <<'NOTES'
+          {
+            if grep -q '[^[:space:]]' "$RUNNER_TEMP/changes.md"; then
+              echo "## What's changed"
+              cat "$RUNNER_TEMP/changes.md"
+              printf '\n---\n\n'
+            fi
+            cat <<'NOTES'
           Apple Silicon only. The app is signed with a self-signed certificate and is not notarized.
 
           Install: unzip, move `vaquita.app` to `/Applications`, then run this once to clear the quarantine flag (recursive, so the embedded daemon is cleared too):
@@ -173,6 +195,7 @@ jobs:
           ---
 
           NOTES
+          } > "$RUNNER_TEMP/notes.md"
           flags=()
           if [[ "$VERSION" == *-* ]]; then flags+=(--prerelease); fi
           gh release create "$GITHUB_REF_NAME" "$ZIP" "$ZIP.sha256" \
