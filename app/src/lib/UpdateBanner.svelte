@@ -22,9 +22,10 @@
 	});
 </script>
 
-<div role="status">
+<div class="notice" role="status">
 	<span title={text}>{text}</span>
 	<button
+		class="primary"
 		class:armed={twoClick.armed === 'restart'}
 		onclick={() => twoClick.click('restart', onrestart)}
 		onblur={() => twoClick.disarm()}
@@ -35,49 +36,13 @@
 </div>
 
 <style>
-	/* The status line's grey, set apart by a blue edge as a notice. */
-	div {
-		grid-column: 1 / -1;
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 4px 8px 4px 10px;
-		border-top: 1px solid #333;
-		background: #252526;
-		box-shadow: inset 2px 0 #0e639c;
-		color: #ccc;
-		font-size: 12px;
-	}
-	span {
-		flex: 1;
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	/* The new-session dialog's primary button, smaller. */
-	button {
-		height: 22px;
-		padding: 0 10px;
-		border: 1px solid #0e639c;
-		border-radius: 4px;
-		background: #0e639c;
-		color: #fff;
-		font: inherit;
-		cursor: pointer;
-	}
-	button:hover {
-		background: #1177bb;
-	}
-	button:focus-visible {
-		outline: 1px solid #4fc1ff;
-		outline-offset: 1px;
-	}
-	button.armed {
+	/* .primary as well, so these outrank the shared .notice button.primary
+	   rules rather than tie with them and depend on stylesheet order. */
+	.notice button.primary.armed {
 		border-color: #f14c4c;
 		background: #c72e2e;
 	}
-	button.armed:hover {
+	.notice button.primary.armed:hover {
 		background: #d63a3a;
 	}
 </style>

@@ -4,13 +4,16 @@
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { onDestroy } from 'svelte';
 	import AddRepo from './lib/AddRepo.svelte';
+	import AppUpdateBanner from './lib/AppUpdateBanner.svelte';
+	import { AppUpdater, releaseUrl } from './lib/app-update';
 	import { DaemonConnection } from './lib/connection';
 	import { runningCount } from './lib/daemon-update';
-	import { appBuild, checkRestart, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
+	import { appBuild, checkAppUpdate, checkRestart, installAppUpdate, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
 	import { watchFocus } from './lib/focus';
 	import { repoOf } from './lib/groups';
 	import Icon from './lib/Icon.svelte';
 	import { isNewSessionShortcut } from './lib/keys';
+	import { openExternal } from './lib/links';
 	import { SessionManager } from './lib/manager';
 	import NewSessionDialog, { LAST_CWD } from './lib/NewSessionDialog.svelte';
 	import type { Notifier, Target } from './lib/notify';
@@ -48,6 +51,10 @@
 			(e) => manager.report(`window focus unavailable: ${e instanceof Error ? e.message : String(e)}`),
 		),
 	);
+
+	const appUpdater = new AppUpdater({ check: checkAppUpdate, install: installAppUpdate, warn: (m) => console.warn(m) });
+	appUpdater.start();
+	onDestroy(() => appUpdater.stop());
 
 	// A click brings the window up whatever the notification was about; the
 	// manager selects its session only if that very session is still there.
@@ -217,6 +224,17 @@
 		fallbackFocus={() => $manager.sessions.find((r) => r.info.sid === $manager.selected)?.view?.focus()}
 	/>
 	<TerminalPane sessions={$manager.sessions} selected={$manager.selected} />
+	{#if $appUpdater.version !== undefined}
+		{@const version = $appUpdater.version}
+		<AppUpdateBanner
+			{version}
+			installing={$appUpdater.installing}
+			error={$appUpdater.error}
+			oninstall={() => appUpdater.install()}
+			ondismiss={() => appUpdater.dismiss()}
+			onnotes={() => openExternal(releaseUrl(version), (e) => manager.report(`opening the release notes failed: ${e instanceof Error ? e.message : String(e)}`))}
+		/>
+	{/if}
 	{#if $manager.update && $manager.status === 'connected'}
 		<UpdateBanner
 			update={$manager.update}

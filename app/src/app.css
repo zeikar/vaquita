@@ -6,12 +6,12 @@ body {
 	font: 13px system-ui, sans-serif;
 }
 
-/* Sidebar left, terminal pane right, along the bottom a daemon update banner
-   when there is one and the status bar. */
+/* Sidebar left, terminal pane right, along the bottom an app update bar and a
+   daemon update bar, each when there is one, then the status bar. */
 main {
 	display: grid;
 	grid-template-columns: 280px minmax(0, 1fr);
-	grid-template-rows: minmax(0, 1fr) auto auto;
+	grid-template-rows: minmax(0, 1fr) auto auto auto;
 	height: 100%;
 }
 
@@ -45,6 +45,65 @@ footer {
 	font-size: 12px;
 	white-space: nowrap;
 	overflow: hidden;
+}
+
+/* The status line's grey, set apart by a blue edge as a notice. */
+.notice {
+	grid-column: 1 / -1;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 8px 4px 10px;
+	border-top: 1px solid #333;
+	background: #252526;
+	box-shadow: inset 2px 0 #0e639c;
+	color: #ccc;
+	font-size: 12px;
+}
+
+.notice > span {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* The new-session dialog's buttons, smaller. :not keeps this off the dismiss
+   icon button, whose .icon-btn rules it would otherwise outrank. */
+.notice button:not(.icon-btn) {
+	height: 22px;
+	padding: 0 10px;
+	border: 1px solid #3c3c3c;
+	border-radius: 4px;
+	background: #3a3d41;
+	color: #d4d4d4;
+	font: inherit;
+	cursor: pointer;
+}
+
+.notice button:not(.icon-btn):hover:not(:disabled) {
+	background: #45494e;
+}
+
+.notice button.primary {
+	border-color: #0e639c;
+	background: #0e639c;
+	color: #fff;
+}
+
+.notice button.primary:hover:not(:disabled) {
+	background: #1177bb;
+}
+
+.notice button:not(.icon-btn):focus-visible {
+	outline: 1px solid #4fc1ff;
+	outline-offset: 1px;
+}
+
+.notice button:not(.icon-btn):disabled {
+	opacity: 0.5;
+	cursor: default;
 }
 
 footer .state {
