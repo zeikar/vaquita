@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Confirm } from './confirm.svelte';
-	import type { DaemonUpdate } from './daemon-update';
+	import { shownBuild, type DaemonUpdate } from './daemon-update';
 
 	let {
 		update,
@@ -15,10 +15,10 @@
 	// A restart ends the running sessions, so it takes a second click.
 	const twoClick = new Confirm();
 	const text = $derived.by(() => {
-		const daemon = update.daemon === undefined ? 'An older vaquitad' : `vaquitad ${update.daemon}`;
+		const daemon = update.daemon === undefined ? 'An older vaquitad' : `vaquitad ${shownBuild(update.daemon)}`;
 		const ends = running === 0 ? '' : ` — ${running} running session${running === 1 ? '' : 's'} will end and can be reopened`;
 		const note = update.note === undefined ? '' : ` (${update.note})`;
-		return `${daemon} is running; this app ships ${update.app}. Restart it to update${ends}.${note}`;
+		return `${daemon} is running; this app ships ${shownBuild(update.app)}. Restart it to update${ends}.${note}`;
 	});
 </script>
 

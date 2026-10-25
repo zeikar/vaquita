@@ -124,8 +124,8 @@ jobs:
           # shellcheck disable=SC2086
           security list-keychains -d user -s "$KEYCHAIN" $existing
 
-      # VERSION, from the tag, also reaches the Makefile, which stamps it into
-      # vaquitad as its build. Only release builds update, which is why the
+      # VERSION, from the tag, also reaches the Makefile, which stamps it and
+      # a fingerprint of the daemon's code into vaquitad as its build. Only release builds update, which is why the
       # updater endpoint is set here and not in tauri.conf.json; GitHub's
       # /releases/latest/ skips prereleases, so an rc never reaches users.
       - name: Build
@@ -185,13 +185,17 @@ jobs:
             codesign --verify --deep --strict --verbose=2 "$APP"
           done
 
-      # The app replaces a running daemon whose build is not its version.
+      # The app replaces a running daemon whose build names other daemon code
+      # than the vaquitad inside it: the build is VERSION, a +, and the
+      # fingerprint daemon/Makefile takes of the daemon's committed files.
       - name: Verify daemon build
         run: |
+          fingerprint="$(git -C daemon ls-tree -r HEAD . | grep -v '_test\.go$' | git hash-object --stdin | cut -c1-12)"
+          want="$VERSION+$fingerprint"
           for APP in app/src-tauri/target/release/bundle/macos/vaquita.app "$UPDATER_APP"; do
             got="$("$APP/Contents/MacOS/vaquitad" version)"
-            if [ "$got" != "$VERSION" ]; then
-              echo "::error::The vaquitad in $APP reports build $got, not $VERSION."
+            if [ "$got" != "$want" ]; then
+              echo "::error::The vaquitad in $APP reports build $got, not $want."
               exit 1
             fi
           done

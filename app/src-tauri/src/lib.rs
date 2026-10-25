@@ -46,11 +46,29 @@ async fn start_daemon() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(start_and_wait).await.map_err(|e| e.to_string())?
 }
 
-/// The version of a release build, which the release also stamps into the
-/// vaquitad it ships; None in a `tauri dev` run, which never manages the daemon.
+/// The build of the vaquitad inside the app, as `vaquitad version` prints it,
+/// which a running daemon's is compared with; None in a `tauri dev` run, which
+/// never manages the daemon, and in an app without one.
 #[tauri::command]
-fn app_build(app: tauri::AppHandle) -> Option<String> {
-    (!tauri::is_dev()).then(|| app.package_info().version.to_string())
+async fn app_build() -> Result<Option<String>, String> {
+    if tauri::is_dev() {
+        return Ok(None);
+    }
+    tauri::async_runtime::spawn_blocking(|| shipped_build(&app_exe()?)).await.map_err(|e| e.to_string())?
+}
+
+fn shipped_build(exe: &Path) -> Result<Option<String>, String> {
+    let Some(daemon) = launchd::embedded(exe)? else {
+        return Ok(None);
+    };
+    let out = std::process::Command::new(&daemon)
+        .arg("version")
+        .output()
+        .map_err(|e| format!("run {} version: {e}", daemon.display()))?;
+    if !out.status.success() {
+        return Err(format!("{} version exited with {}", daemon.display(), out.status));
+    }
+    Ok(Some(String::from_utf8_lossy(&out.stdout).trim().to_string()))
 }
 
 const NO_EMBEDDED: &str = "the app has no vaquitad inside it to start in place of the running one";
@@ -141,6 +159,20 @@ pub fn run() {
 mod tests {
     use super::*;
     use crate::stop::tests::{dir, is_running_vaquitad, stand_in, write_endpoint};
+
+    #[test]
+    fn the_shipped_build_is_what_the_vaquitad_beside_the_app_prints() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = dir("shipped");
+        std::fs::create_dir_all(d.join("app")).unwrap();
+        let exe = d.join("app/vaquita");
+        std::fs::write(&exe, "").unwrap();
+        assert_eq!(shipped_build(&exe), Ok(None));
+        let daemon = d.join("app/vaquitad");
+        std::fs::write(&daemon, "#!/bin/sh\n[ \"$1\" = version ] && echo 0.1.6+3b9cdd54fa29\n").unwrap();
+        std::fs::set_permissions(&daemon, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(shipped_build(&exe), Ok(Some("0.1.6+3b9cdd54fa29".to_string())));
+    }
 
     #[test]
     fn a_restart_the_app_cannot_finish_leaves_the_daemon_running() {

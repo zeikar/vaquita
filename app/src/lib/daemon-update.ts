@@ -1,10 +1,23 @@
 import { STATE_RUNNING, type SessionInfo } from './protocol';
 
 // What a vaquitad built without a release version reports, the Makefile's
-// default VERSION: a developer's own, which the app leaves alone. A local
-// `tauri build` ships one too, beside the version in tauri.conf.json, so
-// comparing the two would find its own daemon outdated.
+// default: a developer's own, which the app leaves alone. A local `tauri build`
+// ships one too, and never replaces a running daemon with it.
 export const DEV_BUILD = 'dev';
+
+// A release's build is its version, a +, and a fingerprint of the daemon's
+// code (see daemon/Makefile), so releases that left the daemon alone ship the
+// same code. A build from before fingerprints is compared whole.
+function code(build: string): string {
+	const plus = build.indexOf('+');
+	return plus < 0 ? build : build.slice(plus + 1);
+}
+
+// A build as the bar names it: its version, without the fingerprint.
+export function shownBuild(build: string): string {
+	const plus = build.indexOf('+');
+	return plus < 0 ? build : build.slice(0, plus);
+}
 
 export type UpdateAction = 'none' | 'restart-now' | 'offer';
 
@@ -18,8 +31,9 @@ export interface DaemonUpdate {
 	note?: string;
 }
 
-// appBuild is null in a dev run, which never manages the daemon; daemonBuild
-// is the hello's, undefined from a daemon older than builds. An outdated
+// appBuild is the build of the vaquitad the app ships, null in a dev run,
+// which never manages the daemon; daemonBuild is the hello's, undefined from a
+// daemon older than builds. Builds are compared by the daemon code they name. An outdated
 // daemon is restarted at once only when that ends no running session, and
 // only once per app run, so a restart that brings back the same build never
 // loops; otherwise the user is offered the restart. The daemon itself makes
@@ -31,7 +45,8 @@ export function updateAction(
 	running: number,
 	autoTried: boolean,
 ): UpdateAction {
-	if (appBuild === null || daemonBuild === DEV_BUILD || daemonBuild === appBuild) return 'none';
+	if (appBuild === null || appBuild === DEV_BUILD || daemonBuild === DEV_BUILD) return 'none';
+	if (daemonBuild !== undefined && code(daemonBuild) === code(appBuild)) return 'none';
 	return daemonBuild !== undefined && running === 0 && !autoTried ? 'restart-now' : 'offer';
 }
 

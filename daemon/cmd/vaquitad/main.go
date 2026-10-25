@@ -25,9 +25,10 @@ commands:
   version  print this vaquitad's build
 `
 
-// version is the build: a release's version, set with
-// -ldflags "-X main.version=...", else dev. The daemon sends it in its hello
-// so the app can tell a daemon other than the one it ships.
+// version is the build: for a release its version and, after a +, a
+// fingerprint of the daemon's code, set with -ldflags "-X main.version=..."
+// (see the Makefile), else dev. The daemon sends it in its hello so the app
+// can tell a daemon other than the one it ships.
 var version = "dev"
 
 // errShown is returned by a command whose failure has already been shown

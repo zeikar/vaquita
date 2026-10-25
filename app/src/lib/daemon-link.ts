@@ -155,7 +155,8 @@ export class DaemonLink {
 		}
 		if (this.appBuild === undefined) {
 			this.appBuild = await this.deps.appBuild().catch((e) => {
-				// The app's command cannot fail; without its answer the daemon is left as it is.
+				// As from a translocated copy, or one whose vaquitad does not run:
+				// without its answer the daemon is left as it is.
 				console.warn(`app build unknown: ${e instanceof Error ? e.message : String(e)}`);
 				return null;
 			});

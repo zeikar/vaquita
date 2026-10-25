@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEV_BUILD, runningCount, updateAction } from './daemon-update';
+import { DEV_BUILD, runningCount, shownBuild, updateAction } from './daemon-update';
 import type { SessionInfo } from './protocol';
 
 const info = (sid: number, state: string, restorable?: boolean): SessionInfo => ({
@@ -25,8 +25,24 @@ describe('updateAction', () => {
 		['0.2.0', '0.1.0', 1, false, 'offer'],
 		['0.2.0', '0.1.0', 0, true, 'offer'],
 		['0.2.0', undefined, 2, true, 'offer'],
+		// Releases are compared by the daemon code their builds name.
+		['0.2.1+3b9cdd54fa29', '0.2.0+3b9cdd54fa29', 0, false, 'none'],
+		['0.2.1+3b9cdd54fa29', '0.2.0+3b9cdd54fa29', 2, false, 'none'],
+		['0.2.1+e9b8d6406e0f', '0.2.0+3b9cdd54fa29', 0, false, 'restart-now'],
+		['0.2.1+e9b8d6406e0f', '0.2.0+3b9cdd54fa29', 2, false, 'offer'],
+		// One from before fingerprints is not the app's.
+		['0.2.1+3b9cdd54fa29', '0.2.0', 0, false, 'restart-now'],
+		// A local build ships a dev daemon, which replaces none.
+		[DEV_BUILD, '0.2.0+3b9cdd54fa29', 0, false, 'none'],
 	] as const)('app %s, daemon %s, %i running, tried %s: %s', (app, daemon, running, tried, want) => {
 		expect(updateAction(app, daemon, running, tried)).toBe(want);
+	});
+});
+
+describe('shownBuild', () => {
+	it('drops the fingerprint', () => {
+		expect(shownBuild('0.2.0+3b9cdd54fa29')).toBe('0.2.0');
+		expect(shownBuild('0.2.0')).toBe('0.2.0');
 	});
 });
 
