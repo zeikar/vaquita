@@ -31,6 +31,7 @@ export class AppUpdater {
 	private running = false;
 	// The version the user closed the bar for; asking again is for a newer one.
 	private dismissed?: string;
+	private checking?: Promise<void>;
 
 	constructor(private readonly deps: AppUpdateDeps) {}
 
@@ -53,7 +54,10 @@ export class AppUpdater {
 	}
 
 	async install(): Promise<void> {
-		if (this.state.installing) return;
+		// A check in flight replaces the update the app holds for install, so
+		// it is let finish first: the bar then names what Update installs.
+		await this.checking;
+		if (this.state.version === undefined || this.state.installing) return;
 		this.set({ ...this.state, installing: true, error: undefined });
 		try {
 			await this.deps.install();
@@ -74,7 +78,9 @@ export class AppUpdater {
 	}
 
 	private async tick(): Promise<void> {
-		await this.check();
+		this.checking = this.check();
+		await this.checking;
+		this.checking = undefined;
 		if (this.running) this.schedule(CHECK_INTERVAL_MS);
 	}
 
@@ -88,8 +94,6 @@ export class AppUpdater {
 			this.deps.warn(`update check failed: ${e instanceof Error ? e.message : String(e)}`);
 			return;
 		}
-		// An install may have begun while the check was in flight.
-		if (this.state.installing) return;
 		if (found === null) {
 			if (this.state.version !== undefined) this.set({ installing: false });
 		} else if (found.version !== this.dismissed && found.version !== this.state.version) {

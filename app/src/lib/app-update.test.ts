@@ -134,7 +134,7 @@ describe('AppUpdater install', () => {
 		expect(t.state()).toEqual({ version: '0.3.0', installing: false });
 	});
 
-	it('drops a check that was in flight when the install began, and ignores dismiss meanwhile', async () => {
+	it('lets a check in flight finish before installing, so the bar names what is installed', async () => {
 		const t = setup([{ version: '0.2.0' }]);
 		t.updater.start();
 		await at(FIRST_CHECK_MS);
@@ -143,10 +143,27 @@ describe('AppUpdater install', () => {
 		t.install.mockImplementationOnce(() => new Promise(() => {}));
 		await at(CHECK_INTERVAL_MS);
 		void t.updater.install();
+		await at(0);
+		expect(t.install).not.toHaveBeenCalled();
 		answer({ version: '0.3.0' });
 		await at(0);
+		expect(t.install).toHaveBeenCalledTimes(1);
 		t.updater.dismiss();
-		expect(t.state()).toEqual({ version: '0.2.0', installing: true, error: undefined });
+		expect(t.state()).toEqual({ version: '0.3.0', installing: true, error: undefined });
+	});
+
+	it('installs nothing when the check it waited for found no update', async () => {
+		const t = setup([{ version: '0.2.0' }]);
+		t.updater.start();
+		await at(FIRST_CHECK_MS);
+		let answer: (u: AppUpdate | null) => void = () => {};
+		t.check.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+		await at(CHECK_INTERVAL_MS);
+		const installing = t.updater.install();
+		answer(null);
+		await installing;
+		expect(t.install).not.toHaveBeenCalled();
+		expect(t.state()).toEqual({ installing: false });
 	});
 });
 

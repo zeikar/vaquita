@@ -29,17 +29,6 @@ const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 // leaving the bar on "Updating…" for good.
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// An updater the plugin built, or None when this build has no feed.
-fn unless_no_feed<T>(built: tauri_plugin_updater::Result<T>) -> Result<Option<T>, String> {
-    match built {
-        Ok(t) => Ok(Some(t)),
-        // Only a release build is given an endpoint; tauri.conf.json names
-        // none, so a local `tauri build` never checks, and that is no update.
-        Err(Error::EmptyEndpoints) => Ok(None),
-        Err(e) => Err(failed(e)),
-    }
-}
-
 fn failed(e: Error) -> String {
     // A release build has no devtools to read the webview's warning in.
     eprintln!("vaquita: checking for an app update failed: {e}");
@@ -53,8 +42,12 @@ pub async fn check_app_update(app: AppHandle, pending: State<'_, Pending>) -> Re
     if tauri::is_dev() {
         return Ok(None);
     }
-    let Some(updater) = unless_no_feed(app.updater_builder().timeout(CHECK_TIMEOUT).build())? else {
-        return Ok(None);
+    let updater = match app.updater_builder().timeout(CHECK_TIMEOUT).build() {
+        Ok(updater) => updater,
+        // Only a release build is given an endpoint; tauri.conf.json names
+        // none, so a local `tauri build` never checks, and that is no update.
+        Err(Error::EmptyEndpoints) => return Ok(None),
+        Err(e) => return Err(failed(e)),
     };
     let found = updater.check().await.map_err(failed)?;
     let version = found.as_ref().map(|u| AppUpdate { version: u.version.clone() });
@@ -76,25 +69,4 @@ pub async fn install_app_update(app: AppHandle, pending: State<'_, Pending>) -> 
     // Not exit(): the new bundle is at the same path, and the relaunch keeps
     // this process's environment, so a VAQUITA_HOME run stays in its home.
     app.restart()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_build_without_endpoints_has_no_update() {
-        assert_eq!(unless_no_feed::<()>(Err(Error::EmptyEndpoints)), Ok(None));
-    }
-
-    #[test]
-    fn any_other_build_error_is_its_message() {
-        let message = Error::ReleaseNotFound.to_string();
-        assert_eq!(unless_no_feed::<()>(Err(Error::ReleaseNotFound)), Err(message));
-    }
-
-    #[test]
-    fn a_built_updater_is_kept() {
-        assert_eq!(unless_no_feed(Ok(7)), Ok(Some(7)));
-    }
 }
