@@ -72,3 +72,19 @@ screencapture -iw docs/screenshot.png   # then click the app's window
 tools/screenshot/demo.sh down /tmp/vaquita-demo
 rm -rf /tmp/vaquita-demo
 ```
+
+## Update check
+
+`tools/update-check/check.sh` runs the in-app update once, end to end, on this Mac: it builds a 0.0.1 bundle and a 0.0.2 bundle signed with a throwaway key, serves the update feed on 127.0.0.1:1421, and opens the old bundle. It proves that the app finds the feed, checks the signature, swaps the bundle and relaunches with `VAQUITA_HOME` kept.
+
+It needs node, cargo, python3 and a running dev daemon for `~/.vaquita-dev` from a plain `make` (so its build is `dev`; a release build that finds another build's daemon may restart it, and one that finds none installs a LaunchAgent). The script refuses otherwise, and also when `/usr/bin/open -n` drops the environment on this Mac, which it tests first with a stand-in bundle. It touches neither `/Applications` nor the default home.
+
+```sh
+PATH="/opt/homebrew/opt/rustup/bin:$PATH" tools/update-check/check.sh up /tmp/vaquita-update-check
+# within about 15 s the bar says "vaquita 0.0.2 is available."; click Update by hand,
+# the app relaunches as 0.0.2; quit it with Cmd+Q
+tools/update-check/check.sh down /tmp/vaquita-update-check   # PASS or FAIL
+rm -rf /tmp/vaquita-update-check
+```
+
+`down` prints `PASS: the bundle is 0.0.2` or `FAIL: the bundle is still <version>` (and exits 1), and stops the feed server and the old app if still running.
