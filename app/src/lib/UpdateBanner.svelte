@@ -1,15 +1,18 @@
 <script lang="ts">
 	import { Confirm } from './confirm.svelte';
 	import { shownBuild, type DaemonUpdate } from './daemon-update';
+	import Icon from './Icon.svelte';
 
 	let {
 		update,
 		running,
 		onrestart,
+		ondismiss,
 	}: {
 		update: DaemonUpdate;
 		running: number;
 		onrestart: () => void;
+		ondismiss: () => void;
 	} = $props();
 
 	// A restart ends the running sessions, so it takes a second click.
@@ -23,7 +26,12 @@
 </script>
 
 <div class="notice" role="status">
-	<span class="text">{text}</span>
+	<div class="head">
+		<span class="text">{text}</span>
+		<button class="icon-btn" title="Not now" aria-label="Not now" onclick={ondismiss}>
+			<Icon name="x-mark" />
+		</button>
+	</div>
 	<div class="actions">
 		<button
 			class="primary"

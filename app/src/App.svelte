@@ -52,6 +52,9 @@
 		),
 	);
 
+	// Closed for this app run: the restart can wait, and the notice covers the terminal.
+	let daemonNoticeClosed = $state(false);
+
 	const appUpdater = new AppUpdater({
 		check: checkAppUpdate,
 		install: installAppUpdate,
@@ -244,11 +247,12 @@
 				onnotes={() => openExternal(releaseUrl(version), (e) => manager.report(`opening the release notes failed: ${e instanceof Error ? e.message : String(e)}`))}
 			/>
 		{/if}
-		{#if $manager.update && $manager.status === 'connected'}
+		{#if $manager.update && $manager.status === 'connected' && !daemonNoticeClosed}
 			<UpdateBanner
 				update={$manager.update}
 				running={runningCount($manager.sessions.map((r) => r.info))}
 				onrestart={() => manager.restartDaemon()}
+				ondismiss={() => (daemonNoticeClosed = true)}
 			/>
 		{/if}
 	</div>

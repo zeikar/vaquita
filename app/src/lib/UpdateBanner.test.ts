@@ -6,10 +6,10 @@ import UpdateBanner from './UpdateBanner.svelte';
 let target: HTMLElement;
 let app: ReturnType<typeof mount> | undefined;
 
-function show(props: { update: { daemon?: string; app: string; note?: string }; running: number; onrestart?: () => void }) {
+function show(props: { update: { daemon?: string; app: string; note?: string }; running: number; onrestart?: () => void; ondismiss?: () => void }) {
 	target = document.createElement('div');
 	document.body.append(target);
-	app = mount(UpdateBanner, { target, props: { onrestart: () => {}, ...props } });
+	app = mount(UpdateBanner, { target, props: { onrestart: () => {}, ondismiss: () => {}, ...props } });
 	return target;
 }
 
@@ -40,7 +40,7 @@ describe('UpdateBanner', () => {
 		vi.spyOn(performance, 'now').mockImplementation(() => now);
 		const onrestart = vi.fn();
 		const el = show({ update: { daemon: '0.1.0', app: '0.2.0' }, running: 1, onrestart });
-		const button = el.querySelector('button')!;
+		const button = el.querySelector<HTMLButtonElement>('button.primary')!;
 		button.click();
 		flushSync();
 		expect(button.textContent?.trim()).toBe('Confirm restart?');
@@ -50,5 +50,15 @@ describe('UpdateBanner', () => {
 		flushSync();
 		expect(onrestart).toHaveBeenCalledTimes(1);
 		expect(button.textContent?.trim()).toBe('Restart daemon');
+	});
+
+	it('closes on Not now, leaving the daemon running', () => {
+		const onrestart = vi.fn();
+		const ondismiss = vi.fn();
+		const el = show({ update: { daemon: '0.1.0', app: '0.2.0' }, running: 1, onrestart, ondismiss });
+		el.querySelector<HTMLButtonElement>('button[title="Not now"]')!.click();
+		flushSync();
+		expect(ondismiss).toHaveBeenCalledTimes(1);
+		expect(onrestart).not.toHaveBeenCalled();
 	});
 });
