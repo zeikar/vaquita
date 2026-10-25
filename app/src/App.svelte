@@ -8,7 +8,7 @@
 	import { AppUpdater, releaseUrl } from './lib/app-update';
 	import { DaemonConnection } from './lib/connection';
 	import { runningCount } from './lib/daemon-update';
-	import { appBuild, checkAppUpdate, checkRestart, installAppUpdate, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
+	import { appBuild, checkAppUpdate, checkRestart, installAppUpdate, onUpdateCheckAsked, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
 	import { watchFocus } from './lib/focus';
 	import { repoOf } from './lib/groups';
 	import Icon from './lib/Icon.svelte';
@@ -52,9 +52,17 @@
 		),
 	);
 
-	const appUpdater = new AppUpdater({ check: checkAppUpdate, install: installAppUpdate, warn: (m) => console.warn(m) });
+	const appUpdater = new AppUpdater({
+		check: checkAppUpdate,
+		install: installAppUpdate,
+		warn: (m) => console.warn(m),
+		report: (m) => manager.report(m),
+	});
 	appUpdater.start();
 	onDestroy(() => appUpdater.stop());
+	const unlistenCheck = onUpdateCheckAsked(() => void appUpdater.checkNow());
+	unlistenCheck.catch((e) => manager.report(`Check for Updates unavailable: ${e instanceof Error ? e.message : String(e)}`));
+	onDestroy(() => void unlistenCheck.then((f) => f(), () => {}));
 
 	// A click brings the window up whatever the notification was about; the
 	// manager selects its session only if that very session is still there.

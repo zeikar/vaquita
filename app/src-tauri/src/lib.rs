@@ -114,6 +114,10 @@ pub fn run() {
         .manage(update::Pending::default())
         .setup(|app| {
             notify::setup(app.handle());
+            // Without the item the app still updates on its timed checks.
+            if let Err(e) = update::add_menu_item(app.handle()) {
+                eprintln!("vaquita: adding Check for Updates to the menu failed: {e}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

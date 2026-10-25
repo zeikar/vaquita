@@ -22,6 +22,8 @@ export interface AppUpdateDeps {
 	check: () => Promise<AppUpdate | null>;
 	install: () => Promise<void>;
 	warn: (message: string) => void;
+	// Shows what a check the user asked for found, in the status line.
+	report: (message: string) => void;
 }
 
 export class AppUpdater {
@@ -67,6 +69,17 @@ export class AppUpdater {
 		// On success the app is restarting, so installing stays set.
 	}
 
+	// For the app menu's Check for Updates. Unlike the timed checks it says
+	// what it found, and shows again a version the bar was closed for.
+	async checkNow(): Promise<void> {
+		await this.checking;
+		if (this.state.installing) return;
+		this.dismissed = undefined;
+		this.checking = this.check(true);
+		await this.checking;
+		this.checking = undefined;
+	}
+
 	dismiss(): void {
 		if (this.state.version === undefined || this.state.installing) return;
 		this.dismissed = this.state.version;
@@ -84,17 +97,20 @@ export class AppUpdater {
 		if (this.running) this.schedule(CHECK_INTERVAL_MS);
 	}
 
-	private async check(): Promise<void> {
+	private async check(asked = false): Promise<void> {
 		if (this.state.installing) return;
 		let found: AppUpdate | null;
 		try {
 			found = await this.deps.check();
 		} catch (e) {
-			// Offline is normal, so a failed check shows nothing; the next one tries again.
-			this.deps.warn(`update check failed: ${e instanceof Error ? e.message : String(e)}`);
+			const message = `update check failed: ${e instanceof Error ? e.message : String(e)}`;
+			// Offline is normal, so a timed check that fails shows nothing; the next one tries again.
+			if (asked) this.deps.report(message);
+			else this.deps.warn(message);
 			return;
 		}
 		if (found === null) {
+			if (asked) this.deps.report('vaquita is up to date');
 			if (this.state.version !== undefined) this.set({ installing: false });
 		} else if (found.version !== this.dismissed && found.version !== this.state.version) {
 			// An earlier version's failure is not shown against this one; the same

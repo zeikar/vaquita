@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type { AppUpdate } from './app-update';
 import { isTauri } from './tauri';
 
@@ -103,4 +104,11 @@ export async function installAppUpdate(): Promise<void> {
 	} catch (e) {
 		throw new Error(String(e));
 	}
+}
+
+// Runs ask on each click of the app menu's Check for Updates, which only a
+// release build has; resolves to a function that stops listening.
+export async function onUpdateCheckAsked(ask: () => void): Promise<() => void> {
+	if (!isTauri()) return () => {};
+	return listen('check-app-update', ask);
 }

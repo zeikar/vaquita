@@ -9,10 +9,11 @@ function setup(results: Array<AppUpdate | null | Error> = []) {
 	});
 	const install = vi.fn(async () => {});
 	const warn = vi.fn();
-	const updater = new AppUpdater({ check, install, warn });
+	const report = vi.fn();
+	const updater = new AppUpdater({ check, install, warn, report });
 	let state: AppUpdateState = { installing: false };
 	updater.subscribe((s) => (state = s));
-	return { updater, check, install, warn, state: () => state };
+	return { updater, check, install, warn, report, state: () => state };
 }
 
 const at = (ms: number) => vi.advanceTimersByTimeAsync(ms);
@@ -164,6 +165,48 @@ describe('AppUpdater install', () => {
 		await installing;
 		expect(t.install).not.toHaveBeenCalled();
 		expect(t.state()).toEqual({ installing: false });
+	});
+});
+
+describe('AppUpdater checkNow', () => {
+	it('checks at once and says when there is nothing newer, keeping the timed chain', async () => {
+		const t = setup([null]);
+		t.updater.start();
+		await t.updater.checkNow();
+		expect(t.check).toHaveBeenCalledTimes(1);
+		expect(t.report).toHaveBeenCalledWith('vaquita is up to date');
+		await at(FIRST_CHECK_MS);
+		expect(t.check).toHaveBeenCalledTimes(2);
+		expect(t.report).toHaveBeenCalledTimes(1);
+	});
+
+	it('reports a failed check instead of only warning', async () => {
+		const t = setup([new Error('offline')]);
+		await t.updater.checkNow();
+		expect(t.report).toHaveBeenCalledWith('update check failed: offline');
+		expect(t.warn).not.toHaveBeenCalled();
+	});
+
+	it('shows again a version the bar was closed for', async () => {
+		const t = setup([{ version: '0.2.0' }, { version: '0.2.0' }]);
+		t.updater.start();
+		await at(FIRST_CHECK_MS);
+		t.updater.dismiss();
+		expect(t.state().version).toBeUndefined();
+		await t.updater.checkNow();
+		expect(t.state()).toEqual({ version: '0.2.0', installing: false });
+		expect(t.report).not.toHaveBeenCalled();
+	});
+
+	it('does nothing while installing', async () => {
+		const t = setup([{ version: '0.2.0' }]);
+		t.updater.start();
+		await at(FIRST_CHECK_MS);
+		t.install.mockImplementationOnce(() => new Promise(() => {}));
+		void t.updater.install();
+		await at(0);
+		await t.updater.checkNow();
+		expect(t.check).toHaveBeenCalledTimes(1);
 	});
 });
 
