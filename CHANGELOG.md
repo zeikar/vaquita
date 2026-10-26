@@ -2,6 +2,11 @@
 
 Each release's notes open with its section here.
 
+## 0.1.9
+
+- A folder path Claude Code writes in backticks, which ends in a `/`, links only as far as its colour goes too, so a word written right after it, or plain text on the next line, is no longer taken into the link.
+- After an update the app comes back in the tile you keep in the Dock, not in a second one beside it. This takes effect from the next update on, since the version being replaced is the one that relaunches.
+
 ## 0.1.8
 
 - A message in the status line no longer stays until the next one. A failure shows in red for a minute; anything else, such as a path revealed in Finder or "vaquita is up to date", shows in grey for eight seconds. A click takes a message away, and hovering shows all of a long one.
