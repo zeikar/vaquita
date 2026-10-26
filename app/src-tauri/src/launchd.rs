@@ -7,6 +7,9 @@ const UNLOAD_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub const TRANSLOCATED: &str =
     "vaquita is running from a temporary location: move vaquita.app to Applications and open it again";
+// The daemon lives in a helper app that carries the app's bundle identifier, so
+// macOS privacy counts it as the same app. Relative to the bundle's Contents.
+const EMBEDDED: &str = "Helpers/vaquitad.app/Contents/MacOS/vaquitad";
 const NOT_INSTALLED: &str = "LaunchAgent not installed: run `vaquitad install --bootstrap`";
 
 /// What one command run produced.
@@ -54,7 +57,7 @@ impl Runner for RealRunner {
 }
 
 /// Starts the daemon's LaunchAgent: kickstart when the job is loaded, else
-/// bootstrap from the plist, first writing it with the `vaquitad` beside `exe`.
+/// bootstrap from the plist, first writing it with the `vaquitad` in the app's helper app.
 /// A loaded job that runs another `vaquitad`, or one that is gone, is replaced
 /// when no daemon runs, so the daemon started is always this app's.
 pub fn start(r: &dyn Runner, label: &str, plist: &Path, lock: &Path, exe: &Path) -> Result<(), String> {
@@ -88,7 +91,7 @@ pub fn start(r: &dyn Runner, label: &str, plist: &Path, lock: &Path, exe: &Path)
     bootstrap()
 }
 
-/// The `vaquitad` beside the app's resolved executable `exe`, if there is one;
+/// The `vaquitad` in the helper app of the app whose executable is `exe`, if there is one;
 /// an error for an app that `start` refuses to run a daemon from.
 pub fn embedded(exe: &Path) -> Result<Option<PathBuf>, String> {
     // Gatekeeper runs a quarantined app from a randomized copy that goes away
@@ -98,7 +101,8 @@ pub fn embedded(exe: &Path) -> Result<Option<PathBuf>, String> {
     }
     // The app may have been launched through a symlink to its executable.
     let exe = std::fs::canonicalize(exe).map_err(|e| format!("resolve {}: {e}", exe.display()))?;
-    Ok(exe.parent().map(|d| d.join("vaquitad")).filter(|p| p.exists()))
+    let contents = exe.parent().and_then(Path::parent);
+    Ok(contents.map(|c| c.join(EMBEDDED)).filter(|p| p.exists()))
 }
 
 fn launchctl(r: &dyn Runner, args: &[&str]) -> Result<(), String> {
@@ -234,19 +238,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let macos = dir.join("vaquita.app/Contents/MacOS");
         std::fs::create_dir_all(&macos).unwrap();
+        std::fs::create_dir_all(dir.join("vaquita.app/Contents").join(EMBEDDED).parent().unwrap()).unwrap();
         // temp_dir sits behind the /var -> /private/var symlink, and start
         // resolves the exe.
         let dir = std::fs::canonicalize(&dir).unwrap();
         let macos = dir.join("vaquita.app/Contents/MacOS");
         std::fs::write(macos.join("vaquita"), "").unwrap();
+        let embedded = dir.join("vaquita.app/Contents").join(EMBEDDED);
         if with_daemon {
-            std::fs::write(macos.join("vaquitad"), "").unwrap();
+            std::fs::write(&embedded, "").unwrap();
         }
         let plist = dir.join("lbl.plist");
         if with_plist {
             std::fs::write(&plist, "").unwrap();
         }
-        Bundle { exe: macos.join("vaquita"), embedded: macos.join("vaquitad"), plist, lock: dir.join("vaquitad.lock"), dir }
+        Bundle { exe: macos.join("vaquita"), embedded, plist, lock: dir.join("vaquitad.lock"), dir }
     }
 
     impl Bundle {
@@ -323,7 +329,8 @@ mod tests {
         );
     }
 
-    // Another copy of the app, an older one say, wrote the plist.
+    // An older app's job points beside its executable, not into a helper app;
+    // moving such a job to this app's helper is the migration.
     fn other_vaquitad(b: &Bundle) -> PathBuf {
         let other = b.dir.join("other/vaquita.app/Contents/MacOS/vaquitad");
         std::fs::create_dir_all(other.parent().unwrap()).unwrap();

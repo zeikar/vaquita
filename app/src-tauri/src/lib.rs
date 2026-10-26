@@ -160,15 +160,26 @@ mod tests {
     use super::*;
     use crate::stop::tests::{dir, is_running_vaquitad, stand_in, write_endpoint};
 
+    /// An app with no daemon in it: vaquita.app/Contents/MacOS/vaquita.
+    fn stand_in_app(d: &Path) -> PathBuf {
+        let exe = d.join("vaquita.app/Contents/MacOS/vaquita");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, "").unwrap();
+        exe
+    }
+
+    fn helper_daemon(d: &Path) -> PathBuf {
+        d.join("vaquita.app/Contents/Helpers/vaquitad.app/Contents/MacOS/vaquitad")
+    }
+
     #[test]
-    fn the_shipped_build_is_what_the_vaquitad_beside_the_app_prints() {
+    fn the_shipped_build_is_what_the_vaquitad_in_the_app_helper_prints() {
         use std::os::unix::fs::PermissionsExt;
         let d = dir("shipped");
-        std::fs::create_dir_all(d.join("app")).unwrap();
-        let exe = d.join("app/vaquita");
-        std::fs::write(&exe, "").unwrap();
+        let exe = stand_in_app(&d);
         assert_eq!(shipped_build(&exe), Ok(None));
-        let daemon = d.join("app/vaquitad");
+        let daemon = helper_daemon(&d);
+        std::fs::create_dir_all(daemon.parent().unwrap()).unwrap();
         std::fs::write(&daemon, "#!/bin/sh\n[ \"$1\" = version ] && echo 0.1.6+3b9cdd54fa29\n").unwrap();
         std::fs::set_permissions(&daemon, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(shipped_build(&exe), Ok(Some("0.1.6+3b9cdd54fa29".to_string())));
@@ -184,9 +195,7 @@ mod tests {
         let translocated = Path::new("/private/var/folders/xy/abc/T/AppTranslocation/1234/d/vaquita.app/Contents/MacOS/vaquita");
         let r1 = restart(translocated, &ep, child.id(), "t", true, never);
         // An app without a vaquitad inside it; d holds the stand-in's.
-        std::fs::create_dir_all(d.join("app")).unwrap();
-        let exe = d.join("app/vaquita");
-        std::fs::write(&exe, "").unwrap();
+        let exe = stand_in_app(&d);
         let r2 = restart(&exe, &ep, child.id(), "t", true, never);
         let alive = is_running_vaquitad(&child);
         let _ = child.kill();
@@ -199,8 +208,10 @@ mod tests {
     #[test]
     fn an_app_with_its_own_vaquitad_can_restart() {
         let d = dir("canrestart");
-        std::fs::write(d.join("vaquita"), "").unwrap();
-        std::fs::write(d.join("vaquitad"), "").unwrap();
-        check_restart_at(&d.join("vaquita")).unwrap();
+        let exe = stand_in_app(&d);
+        let daemon = helper_daemon(&d);
+        std::fs::create_dir_all(daemon.parent().unwrap()).unwrap();
+        std::fs::write(&daemon, "").unwrap();
+        check_restart_at(&exe).unwrap();
     }
 }
