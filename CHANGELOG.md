@@ -2,6 +2,10 @@
 
 Each release's notes open with its section here.
 
+## 0.1.8
+
+- A message in the status line no longer stays until the next one. A failure shows in red for a minute; anything else, such as a path revealed in Finder or "vaquita is up to date", shows in grey for eight seconds. A click takes a message away, and hovering shows all of a long one.
+
 ## 0.1.7
 
 - A file path Claude Code writes in backticks links only as far as its colour goes, also when Claude Code wraps it onto the next line, so text written right onto it, as Korean and Japanese often do, is no longer taken into the link and ⌘-click opens the file.
