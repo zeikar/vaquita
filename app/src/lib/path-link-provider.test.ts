@@ -406,14 +406,26 @@ describe('pathLinkProvider across a line break', () => {
 		const t = await term(24, `out: /tmp/example/aaaaa/\r\n    ${b}\r\n    c.png`);
 		const want = [{ start: { x: 6, y: 1 }, end: { x: 9, y: 3 }, text: `/tmp/example/aaaaa/${b}c.png` }];
 		for (const y of [1, 2, 3]) expect(spans(links(t, y)), `row ${y}`).toEqual(want);
-		// Row 2's path takes b.ts only, so the path ends there, and the path that
-		// ends row 2 starts nothing.
+	});
+
+	it('joins a second path that ends the row the first goes on into', async () => {
+		// How Claude Code wraps a before-and-after summary: row 2 is the rest of
+		// row 1's path, then a path of its own that goes on into row 3.
+		const t = await term(30, '  - new: /tmp/example/scratch/\r\n    icon/a.png, old: /tmp/exam\r\n    ple/scratch/icon/b.png');
+		const a = { start: { x: 10, y: 1 }, end: { x: 14, y: 2 }, text: '/tmp/example/scratch/icon/a.png' };
+		const b = { start: { x: 22, y: 2 }, end: { x: 26, y: 3 }, text: '/tmp/example/scratch/icon/b.png' };
+		expect(spans(links(t, 1, '/tmp/repo'))).toEqual([a]);
+		expect(spans(links(t, 2, '/tmp/repo'))).toEqual([a, b]);
+		expect(spans(links(t, 3, '/tmp/repo'))).toEqual([b]);
+		// Row 3's own text, a relative path, is only what a click falls back to.
+		expect(clicked(t, 3, '/tmp/repo')).toEqual([[b.text, '/tmp/repo/ple/scratch/icon/b.png']]);
+		// The first path ends at the comma; the second's rest does not go on with it.
 		const u = await term(24, 'out: /tmp/example/aaaaa/\r\n    b.ts and /tmp/cc/dd/\r\n    e.ts');
-		expect(spans(links(u, 2))).toEqual([
-			{ start: { x: 6, y: 1 }, end: { x: 8, y: 2 }, text: '/tmp/example/aaaaa/b.ts' },
-			{ start: { x: 14, y: 2 }, end: { x: 24, y: 2 }, text: '/tmp/cc/dd/' },
-		]);
-		expect(links(u, 3)).toBeUndefined();
+		const first = { start: { x: 6, y: 1 }, end: { x: 8, y: 2 }, text: '/tmp/example/aaaaa/b.ts' };
+		const second = { start: { x: 14, y: 2 }, end: { x: 8, y: 3 }, text: '/tmp/cc/dd/e.ts' };
+		expect(spans(links(u, 1))).toEqual([first]);
+		expect(spans(links(u, 2))).toEqual([first, second]);
+		expect(spans(links(u, 3))).toEqual([second]);
 	});
 
 	it('stops a chain at a part that already ends in a file name', async () => {

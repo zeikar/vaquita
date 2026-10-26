@@ -5,6 +5,7 @@ Each release's notes open with its section here.
 ## 0.1.8
 
 - A message in the status line no longer stays until the next one. A failure shows in red for a minute; anything else, such as a path revealed in Finder or "vaquita is up to date", shows in grey for eight seconds. A click takes a message away, and hovering shows all of a long one.
+- A second long path on a line Claude Code wraps, as in a before-and-after summary of two files, is one ⌘-clickable link too. It used to be split in two, the second half pointing at a file that does not exist.
 
 ## 0.1.7
 
