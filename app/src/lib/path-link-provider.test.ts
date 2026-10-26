@@ -219,6 +219,10 @@ describe('pathLinkProvider across a line break', () => {
 		expect(spans(links(apart, 1))?.map((l) => l.text)).toEqual(['/tmp/aaaaaaaaaa']);
 		expect(spans(links(apart, 2))?.map((l) => l.text)).toEqual(['~/src/abcdefghijklm.ts']);
 		expect(spans(links(apart, 3))?.map((l) => l.text)).toEqual(['~/src/abcdefghijklm.ts']);
+		// A path whose colour ends before the row does leaves the next lines theirs.
+		const ended = await term(20, `out: ${code('/tmp/aaaa')}뿐이야\r\n    src/abcdefghijkl\r\n    m.ts`);
+		expect(spans(links(ended, 1))?.map((l) => l.text)).toEqual(['/tmp/aaaa']);
+		expect(spans(links(ended, 2))?.map((l) => l.text)).toEqual(['~/src/abcdefghijklm.ts']);
 		// A colour that ends with the first line joins nothing, and throws nothing.
 		const own = await term(20, `out: ${code('/tmp/aaaaaaaaaa')}\r\n    가가가가가가가가\r\n    나`);
 		expect(spans(links(own, 1))?.map((l) => l.text)).toEqual(['/tmp/aaaaaaaaaa']);

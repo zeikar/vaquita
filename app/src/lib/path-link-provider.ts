@@ -176,10 +176,19 @@ function leadingRun(line: LineText): Piece | undefined {
 // with a / that ends it.
 function opening(line: LineText): Opening | undefined {
 	const end = line.text.trimEnd().length;
-	const last = findPaths(line.text, colourBounds(line)).at(-1);
+	const bounds = colourBounds(line);
+	const last = findPaths(line.text, bounds).at(-1);
 	if (last?.end === end) return last;
-	const start = pathRunBefore(line.text, end);
-	return start < 0 ? undefined : { start, end };
+	let start = pathRunBefore(line.text, end);
+	if (start < 0) return undefined;
+	// A colour that ends or begins in the run ends what came before it there.
+	for (let i = end - 1; i > start; i--) {
+		if (bounds.endsAt(i) || bounds.startsAt(i)) {
+			start = i;
+			break;
+		}
+	}
+	return line.text.slice(start, end).includes('/') && pathRun(line.text, start) === end ? { start, end } : undefined;
 }
 
 // What of a line may go on into the next: its opening; or, when the line is
