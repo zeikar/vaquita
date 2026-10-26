@@ -4,7 +4,7 @@ Each release's notes open with its section here.
 
 ## 0.1.7
 
-- A file path Claude Code writes in backticks links only as far as its colour goes, also when Claude Code wraps it onto the next line, so a word written right onto it, such as `~/.zshrc을` or `~/a.ts(이제`, is no longer taken into the link and ⌘-click opens the file.
+- A file path Claude Code writes in backticks links only as far as its colour goes, also when Claude Code wraps it onto the next line, so text written right onto it, as Korean and Japanese often do, is no longer taken into the link and ⌘-click opens the file.
 
 ## 0.1.6
 
