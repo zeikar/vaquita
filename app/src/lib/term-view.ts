@@ -27,6 +27,15 @@ export function createTerminal(cols: number, rows: number): Terminal {
 	});
 }
 
+// While the sidebar's edge is dragged no terminal takes the new size, so the
+// session is resized, and its agent redraws, once when it is let go rather
+// than at every step; the caller refits the shown view then.
+let fitHeld = false;
+
+export function holdFit(held: boolean): void {
+	fitHeld = held;
+}
+
 // TermView is a session terminal's DOM side. The terminal is opened the first
 // time its session is shown and stays open, as xterm cannot un-open; while
 // hidden it has no WebGL context (xterm draws with its DOM renderer) and no
@@ -100,6 +109,7 @@ export class TermView implements ViewLike {
 	// fit() is never called: it would resize the terminal itself, hiding the
 	// change from the core, which resizes the terminal and the session.
 	refit(): void {
+		if (fitHeld) return;
 		const d = this.proposed();
 		if (d) this.core.fitted(d.cols, d.rows);
 	}

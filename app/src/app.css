@@ -19,17 +19,27 @@ body {
 	font: 13px system-ui, sans-serif;
 }
 
-/* Sidebar left, terminal pane right, the status bar along the bottom. */
+/* Sidebar left, terminal pane right, the status bar along the bottom. The
+   sidebar's width is set from App, where it is dragged and remembered. */
 main {
 	display: grid;
-	grid-template-columns: 280px minmax(0, 1fr);
+	grid-template-columns: var(--sidebar-width, 280px) minmax(0, 1fr);
 	grid-template-rows: minmax(0, 1fr) auto;
 	height: 100%;
 }
 
 /* No text selection, as in a native sidebar: WebKit selects the word under a
    right-click or a double-click, which would light up in the rows. */
+main.sidebar-hidden {
+	grid-template-columns: minmax(0, 1fr);
+}
+
+main.sidebar-hidden > aside {
+	display: none;
+}
+
 aside {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
@@ -179,6 +189,13 @@ footer .dot.wait {
 
 footer .dot.bad {
 	background: #f14c4c;
+}
+
+/* Kept from making the status bar taller, its hover clear of the window's
+   bottom edge. */
+footer .sidebar-toggle {
+	height: 18px;
+	margin: -2px -10px -2px -4px;
 }
 
 /* Every message reports something that failed. */

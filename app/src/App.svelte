@@ -12,18 +12,20 @@
 	import { watchFocus } from './lib/focus';
 	import { repoOf } from './lib/groups';
 	import Icon from './lib/Icon.svelte';
-	import { isNewSessionShortcut } from './lib/keys';
+	import { isNewSessionShortcut, isSidebarShortcut } from './lib/keys';
 	import { openExternal } from './lib/links';
 	import { SessionManager } from './lib/manager';
 	import NewSessionDialog, { LAST_CWD } from './lib/NewSessionDialog.svelte';
 	import type { Notifier, Target } from './lib/notify';
 	import SessionList from './lib/SessionList.svelte';
-	import { load } from './lib/storage';
+	import { loadWidth, SIDEBAR_HIDDEN, SIDEBAR_WIDTH } from './lib/sidebar';
+	import SidebarEdge from './lib/SidebarEdge.svelte';
+	import { load, save } from './lib/storage';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
 	import { isTauri } from './lib/tauri';
 	import { createTauriNotifier } from './lib/tauri-notify';
-	import { createTerminal, TermView } from './lib/term-view';
+	import { createTerminal, holdFit, TermView } from './lib/term-view';
 	import UpdateBanner from './lib/UpdateBanner.svelte';
 
 	// Replaced by the Tauri notifier once it is ready; the console one stays in
@@ -117,10 +119,33 @@
 	// On the window in the capture phase, so it runs before xterm's handler on
 	// its textarea and the terminal never sees the key.
 	function shortcut(e: KeyboardEvent) {
-		if (!isNewSessionShortcut(e)) return;
+		if (isNewSessionShortcut(e)) newSession();
+		else if (isSidebarShortcut(e)) toggleSidebar();
+		else return;
 		e.preventDefault();
 		e.stopPropagation();
-		newSession();
+	}
+
+	let sidebarWidth = $state(loadWidth());
+	let sidebarHidden = $state(load(SIDEBAR_HIDDEN) === 'true');
+
+	function selectedView(): TermView | undefined {
+		const { sessions, selected } = $manager;
+		return sessions.find((r) => r.info.sid === selected)?.view;
+	}
+
+	// The terminal takes the focus, which would otherwise be lost in a hidden
+	// sidebar or left on the status line's button.
+	function toggleSidebar() {
+		sidebarHidden = !sidebarHidden;
+		save(SIDEBAR_HIDDEN, String(sidebarHidden));
+		if (!dialogOpen) selectedView()?.focus();
+	}
+
+	function sidebarResized() {
+		holdFit(false);
+		selectedView()?.refit();
+		save(SIDEBAR_WIDTH, String(sidebarWidth));
 	}
 
 	// The OS file drop only exists inside Tauri. Paths dropped on the sidebar
@@ -135,8 +160,7 @@
 				for (const p of e.payload.paths) manager.addRepo(p);
 				return;
 			}
-			const { sessions, selected } = $manager;
-			const view = sessions.find((r) => r.info.sid === selected)?.view;
+			const view = selectedView();
 			if (!view) return;
 			try {
 				view.sendInput(shellQuoteAll(e.payload.paths));
@@ -192,7 +216,7 @@
 
 <svelte:window onkeydowncapture={shortcut} />
 
-<main>
+<main class:sidebar-hidden={sidebarHidden} style:--sidebar-width="{sidebarWidth}px">
 	<aside bind:this={aside}>
 		<header>
 			<span class="title">Repos</span>
@@ -223,6 +247,7 @@
 				<kbd>⌘T</kbd>
 			</button>
 		</div>
+		<SidebarEdge width={sidebarWidth} onstart={() => holdFit(true)} onresize={(w) => (sidebarWidth = w)} onend={sidebarResized} />
 	</aside>
 	<NewSessionDialog
 		open={dialogOpen}
@@ -231,7 +256,7 @@
 		disabled={$manager.creating || $manager.status !== 'connected'}
 		oncreate={(cwd, cmd, name) => manager.create(cwd, cmd, name)}
 		onclose={() => (dialogOpen = false)}
-		fallbackFocus={() => $manager.sessions.find((r) => r.info.sid === $manager.selected)?.view?.focus()}
+		fallbackFocus={() => selectedView()?.focus()}
 	/>
 	<TerminalPane sessions={$manager.sessions} selected={$manager.selected} />
 	<div class="notices">
@@ -256,6 +281,9 @@
 		{/if}
 	</div>
 	<footer>
+		<button class="icon-btn sidebar-toggle" title="{sidebarHidden ? 'Show' : 'Hide'} sidebar (⌘B)" onclick={toggleSidebar}>
+			<Icon name="sidebar" />
+		</button>
 		<span class="state"><span class="dot {statusTone}"></span>{statusText}</span>
 		<span>{$manager.sessions.length} sessions</span>
 		{#if $manager.message}<span class="message" title={$manager.message}>{$manager.message}</span>{/if}

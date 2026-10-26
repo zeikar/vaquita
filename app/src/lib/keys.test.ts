@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isNewSessionShortcut, keyHandler, swallowsKeypress, translateKey } from './keys';
+import { isNewSessionShortcut, isSidebarShortcut, keyHandler, swallowsKeypress, translateKey } from './keys';
 
 function key(type: string, init: Partial<KeyboardEvent>): KeyboardEvent {
 	return { type, key: 'Enter', keyCode: 13, isComposing: false, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, ...init } as KeyboardEvent;
@@ -71,5 +71,18 @@ describe('isNewSessionShortcut', () => {
 	it('leaves a key that belongs to an IME alone', () => {
 		expect(isNewSessionShortcut(t({ metaKey: true, isComposing: true }))).toBe(false);
 		expect(isNewSessionShortcut(t({ metaKey: true, keyCode: 229 }))).toBe(false);
+	});
+});
+
+describe('isSidebarShortcut', () => {
+	const b = (init: Partial<KeyboardEvent>) => key('keydown', { key: 'b', keyCode: 66, ...init });
+
+	it('is Cmd+B alone', () => {
+		expect(isSidebarShortcut(b({ metaKey: true }))).toBe(true);
+		expect(isSidebarShortcut(b({ metaKey: true, key: 'B' }))).toBe(true);
+		expect(isSidebarShortcut(b({}))).toBe(false);
+		expect(isSidebarShortcut(b({ metaKey: true, shiftKey: true, key: 'B' }))).toBe(false);
+		expect(isSidebarShortcut(b({ metaKey: true, key: 't' }))).toBe(false);
+		expect(isSidebarShortcut(b({ metaKey: true, keyCode: 229 }))).toBe(false);
 	});
 });

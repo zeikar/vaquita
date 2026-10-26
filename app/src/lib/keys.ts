@@ -34,8 +34,18 @@ export function keyHandler(send: (text: string) => void): (ev: KeyboardEvent) =>
 	};
 }
 
-// Cmd+T, the new-session shortcut. Lower-cased for Caps Lock; Shift, Ctrl and
-// Option make it another shortcut, left to whoever has it.
+// Cmd and a letter alone. Lower-cased for Caps Lock; Shift, Ctrl and Option
+// make it another shortcut, left to whoever has it.
+function isCmd(ev: KeyboardEvent, letter: string): boolean {
+	return ev.key.toLowerCase() === letter && ev.metaKey && !ev.ctrlKey && !ev.altKey && !ev.shiftKey && !belongsToIME(ev);
+}
+
+// Cmd+T, the new-session shortcut.
 export function isNewSessionShortcut(ev: KeyboardEvent): boolean {
-	return ev.key.toLowerCase() === 't' && ev.metaKey && !ev.ctrlKey && !ev.altKey && !ev.shiftKey && !belongsToIME(ev);
+	return isCmd(ev, 't');
+}
+
+// Cmd+B, which hides and shows the sidebar, as in VS Code.
+export function isSidebarShortcut(ev: KeyboardEvent): boolean {
+	return isCmd(ev, 'b');
 }
