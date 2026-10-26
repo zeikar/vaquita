@@ -16,7 +16,17 @@ fi
 rm -rf "$out"
 mkdir -p "$out/Contents/MacOS" "$out/Contents/Resources"
 cp "$bin" "$out/Contents/MacOS/vaquitad"
-cp "src-tauri/${VAQUITA_HELPER_ICON:-icons-dev/icon.icns}" "$out/Contents/Resources/icon.icns"
+
+# The icon only shows in small rows, such as System Settings' privacy lists;
+# its sizes up to 256 pixels keep the download over 1 MB smaller.
+icons="$(mktemp -d)"
+trap 'rm -rf "$icons"' EXIT
+iconutil -c iconset -o "$icons/full.iconset" "src-tauri/${VAQUITA_HELPER_ICON:-icons-dev/icon.icns}"
+mkdir "$icons/small.iconset"
+for size in 16x16 16x16@2x 32x32 32x32@2x 128x128 128x128@2x; do
+	cp "$icons/full.iconset/icon_$size.png" "$icons/small.iconset/"
+done
+iconutil -c icns -o "$out/Contents/Resources/icon.icns" "$icons/small.iconset"
 
 # CFBundleVersion 0 is below the app's, so LaunchServices prefers vaquita.app
 # over this helper, which shares its identifier.

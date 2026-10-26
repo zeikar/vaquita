@@ -206,13 +206,18 @@ jobs:
       # A release that took tauri.conf.json's icon would show the dev badge,
       # and so would a helper app built without VAQUITA_HELPER_ICON.
       - name: Verify icon
+        # The helper keeps only the icon's small sizes, so its 256-pixel image
+        # is compared, which the dev icon's badge changes.
         run: |
+          iconutil -c iconset -o "$RUNNER_TEMP/release.iconset" app/src-tauri/icons/icon.icns
           for APP in app/src-tauri/target/release/bundle/macos/vaquita.app "$UPDATER_APP"; do
             if ! cmp -s "$APP/Contents/Resources/icon.icns" app/src-tauri/icons/icon.icns; then
               echo "::error::$APP does not have the release icon."
               exit 1
             fi
-            if ! cmp -s "$APP/Contents/Helpers/vaquitad.app/Contents/Resources/icon.icns" app/src-tauri/icons/icon.icns; then
+            rm -rf "$RUNNER_TEMP/helper.iconset"
+            iconutil -c iconset -o "$RUNNER_TEMP/helper.iconset" "$APP/Contents/Helpers/vaquitad.app/Contents/Resources/icon.icns"
+            if ! cmp -s "$RUNNER_TEMP/helper.iconset/icon_128x128@2x.png" "$RUNNER_TEMP/release.iconset/icon_128x128@2x.png"; then
               echo "::error::The helper in $APP does not have the release icon."
               exit 1
             fi
