@@ -209,6 +209,16 @@ describe('pathLinkProvider across a line break', () => {
 		const want = [{ start: { x: 6, y: 1 }, end: { x: 10, y: 2 }, text: '/tmp/example/aaaaaaaaaaa/src/a.ts' }];
 		expect(spans(links(t, 1))).toEqual(want);
 		expect(spans(links(t, 2))).toEqual(want);
+		// A path in another colour after the joined one links on its own.
+		const two = await term(30, `out: ${code('/tmp/example/aaaaaaaaaaa/')}\r\n  ${code('src/a.ts')}\x1b[32m~/b.ts\x1b[39m`);
+		expect(spans(links(two, 2))?.map((l) => l.text)).toEqual(['/tmp/example/aaaaaaaaaaa/src/a.ts', '~/b.ts']);
+		// Lines in two colours are two paths: the second joins with the line after it.
+		const red = (s: string) => `\x1b[31m${s}\x1b[39m`;
+		const green = (s: string) => `\x1b[32m${s}\x1b[39m`;
+		const apart = await term(20, `${red('out: /tmp/aaaaaaaaaa')}\r\n${green('    src/abcdefghijkl')}\r\n${green('    m.ts')}`);
+		expect(spans(links(apart, 1))?.map((l) => l.text)).toEqual(['/tmp/aaaaaaaaaa']);
+		expect(spans(links(apart, 2))?.map((l) => l.text)).toEqual(['~/src/abcdefghijklm.ts']);
+		expect(spans(links(apart, 3))?.map((l) => l.text)).toEqual(['~/src/abcdefghijklm.ts']);
 		// A colour that ends with the first line joins nothing, and throws nothing.
 		const own = await term(20, `out: ${code('/tmp/aaaaaaaaaa')}\r\n    가가가가가가가가\r\n    나`);
 		expect(spans(links(own, 1))?.map((l) => l.text)).toEqual(['/tmp/aaaaaaaaaa']);

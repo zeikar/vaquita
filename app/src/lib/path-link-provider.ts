@@ -116,8 +116,8 @@ type Opening = { start: number; end: number; target?: string };
 type Span = { first: CellPos; last: CellPos; path: string };
 
 // A joined path also has the paths it replaces, for a click to fall back to, and
-// lead among them when the first line's part is one; taken is the last cell of
-// the runs it took.
+// lead among them when the first line's part is one; taken is its last cell,
+// after which the lines' own paths link.
 type Found = Span & { parts?: Span[]; lead?: Span; taken?: CellPos };
 
 // Claude Code draws inline code, such as a path in backticks, in a colour of
@@ -131,6 +131,14 @@ function colourBounds({ text, cells }: LineText): Bounds {
 		endsAt: (i) => apart(i) && cells[i - 1].fg !== DEFAULT_FG,
 		startsAt: (i) => apart(i) && cells[i].fg !== DEFAULT_FG,
 	};
+}
+
+// Whether a colour ends or begins between the last code unit of one piece of
+// text and the first of the next, as at a line break.
+function colourBreak(a: LineText, i: number, b: LineText, j: number): boolean {
+	const pair = { text: a.text[i] + b.text[j], cells: [a.cells[i], b.cells[j]] };
+	const bounds = colourBounds(pair);
+	return bounds.endsAt(1) || bounds.startsAt(1);
 }
 
 function span(line: LineText, hit: PathHit, cwd: string): Span {
@@ -152,15 +160,23 @@ function atEdge(buffer: BufferLike, { line, end }: Piece): boolean {
 function leadingRun(line: LineText): Piece | undefined {
 	const start = line.text.search(/\S/);
 	if (start <= 0) return undefined;
-	const end = pathRun(line.text, start);
-	return end > start ? { line, start, end } : undefined;
+	let end = pathRun(line.text, start);
+	// A colour that ends ends the run, as it ends a path.
+	const bounds = colourBounds(line);
+	for (let i = start + 1; i < end; i++) {
+		if (bounds.endsAt(i)) {
+			end = i;
+			break;
+		}
+	}
+	return end > start && /[\p{L}\p{N}]/u.test(line.text.slice(start, end)) ? { line, start, end } : undefined;
 }
 
 // The line's last path when it ends the line, else the run of path characters
 // with a / that ends it.
 function opening(line: LineText): Opening | undefined {
 	const end = line.text.trimEnd().length;
-	const last = findPaths(line.text).at(-1);
+	const last = findPaths(line.text, colourBounds(line)).at(-1);
 	if (last?.end === end) return last;
 	const start = pathRunBefore(line.text, end);
 	return start < 0 ? undefined : { start, end };
@@ -183,7 +199,8 @@ function runsOn(buffer: BufferLike, line: LineText, rest: boolean): [Opening, Pi
 	const text = t.target ?? line.text.slice(t.start, t.end);
 	if (text.startsWith('file:') || hasExtension(text) || !atEdge(buffer, { line, ...t })) return undefined;
 	const run = leadingRun(lineText(buffer, line.cells[t.end - 1].row + 1));
-	return run && [t, run];
+	// A colour that ends with the line, or begins the next, ends the path there.
+	return run && !colourBreak(line, t.end - 1, run.line, run.start) ? [t, run] : undefined;
 }
 
 // Whether lines[k] is the rest of the line above, worked out down from at most
@@ -208,16 +225,14 @@ function join(buffer: BufferLike, line: LineText, cwd: string): Found | undefine
 	};
 	const got = findPaths(joined.text, colourBounds(joined))[0];
 	if (got?.start !== 0) return undefined;
-	// The path may end before the last run, where its colour does: the runs after
-	// the one it ends in are not its. When that is the first, nothing is joined,
-	// and the line's own path stands.
+	// The run the path ends in: the last, as runsOn bounds runs by colour as
+	// findPaths does, but found rather than assumed.
 	let k = 0;
 	let at = 0;
 	while (at + pieces[k].end - pieces[k].start < got.end) {
 		at += pieces[k].end - pieces[k].start;
 		k++;
 	}
-	if (k === 0) return undefined;
 	const lead = target === undefined ? undefined : span(line, { start, end, target }, cwd);
 	const parts = lead ? [lead] : [];
 	for (const p of pieces.slice(1, k + 1)) {
@@ -226,15 +241,8 @@ function join(buffer: BufferLike, line: LineText, cwd: string): Found | undefine
 			parts.push(span(p.line, h, cwd));
 		}
 	}
-	const last = pieces[k];
-	return {
-		first: line.cells[start],
-		last: last.line.cells[last.start + got.end - at - 1],
-		path: resolvePath(got.target, cwd),
-		parts,
-		lead,
-		taken: last.line.cells[last.end - 1],
-	};
+	const last = pieces[k].line.cells[pieces[k].start + got.end - at - 1];
+	return { first: line.cells[start], last, path: resolvePath(got.target, cwd), parts, lead, taken: last };
 }
 
 // here and the lines above it, in order, while each begins with a run after an
