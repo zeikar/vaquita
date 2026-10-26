@@ -123,11 +123,12 @@ type Found = Span & { parts?: Span[]; lead?: Span; taken?: CellPos };
 
 // Claude Code draws inline code, such as a path in backticks, in a colour of
 // its own. Where a colour ends, a path ends (~/.zshrc을 links ~/.zshrc), and
-// where one begins, a path may (see~/a.ts links ~/a.ts). A change next to a /
-// is inside one path, as where a prompt colours its parts apart. The default
+// where one begins, a path may (see~/a.ts links ~/a.ts). That holds beside a
+// / too, so a folder (~/src/을) ends at its own; a prompt that colours the
+// parts of one path apart has it cut, and is rarely clicked. The default
 // colour begins and ends nothing, so plain text reads as before.
-function colourBounds({ text, cells }: LineText): Bounds {
-	const apart = (i: number) => i > 0 && i < cells.length && cells[i].fg !== cells[i - 1].fg && text[i] !== '/' && text[i - 1] !== '/';
+function colourBounds({ cells }: LineText): Bounds {
+	const apart = (i: number) => i > 0 && i < cells.length && cells[i].fg !== cells[i - 1].fg;
 	return {
 		endsAt: (i) => apart(i) && cells[i - 1].fg !== DEFAULT_FG,
 		startsAt: (i) => apart(i) && cells[i].fg !== DEFAULT_FG,

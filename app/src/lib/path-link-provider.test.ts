@@ -192,8 +192,12 @@ describe('pathLinkProvider across a line break', () => {
 		// A command in backticks: the path in it ends with it too.
 		expect(await at(`${code('cat ~/a.ts')}를 실행`)).toEqual(['~/a.ts']);
 		expect(await at(`파일은${code('~/a.ts')}입니다`)).toEqual(['~/a.ts']);
-		// A prompt colours the parts of one path apart; its end still counts.
-		expect(await at(`\x1b[34m~\x1b[36m/src/a.ts\x1b[39m을 $`)).toEqual(['~/src/a.ts']);
+		// A folder's closing / ends nothing more than any other character does.
+		expect(await at(`${code('~/src/app/')}을 보세요`)).toEqual(['~/src/app/']);
+		expect(await at(`${code('~/src/app/')}foo bar`)).toEqual(['~/src/app/']);
+		// Colour comes first, also beside a /: a prompt that colours the parts of
+		// one path apart has it cut there.
+		expect(await at(`\x1b[34m~/src\x1b[36m/a.ts\x1b[39m을 $`)).toEqual(['~/src', '/a.ts']);
 		// A part that is no path by itself makes no link.
 		expect(await at(`${code('src/a')}b.ts`)).toBeUndefined();
 		// The default colour ends nothing: plain text, and a colour that only
@@ -209,6 +213,10 @@ describe('pathLinkProvider across a line break', () => {
 		const want = [{ start: { x: 6, y: 1 }, end: { x: 10, y: 2 }, text: '/tmp/example/aaaaaaaaaaa/src/a.ts' }];
 		expect(spans(links(t, 1))).toEqual(want);
 		expect(spans(links(t, 2))).toEqual(want);
+		// A folder in its colour at the edge does not take plain text on the next line.
+		const folder = await term(30, `out: ${code('/tmp/example/aaaaaaaaaaa/')}\r\n  src/b.ts here`);
+		expect(spans(links(folder, 1))?.map((l) => l.text)).toEqual(['/tmp/example/aaaaaaaaaaa/']);
+		expect(spans(links(folder, 2))?.map((l) => l.text)).toEqual(['~/src/b.ts']);
 		// A path in another colour after the joined one links on its own.
 		const two = await term(30, `out: ${code('/tmp/example/aaaaaaaaaaa/')}\r\n  ${code('src/a.ts')}\x1b[32m~/b.ts\x1b[39m`);
 		expect(spans(links(two, 2))?.map((l) => l.text)).toEqual(['/tmp/example/aaaaaaaaaaa/src/a.ts', '~/b.ts']);
