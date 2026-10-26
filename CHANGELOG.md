@@ -2,6 +2,11 @@
 
 Each release's notes open with its section here.
 
+## 0.1.11
+
+- ⌘B, or the button at the left of the status line, hides the sidebar and brings it back. Drag the sidebar's right edge to make it wider or narrower, and double-click the edge to set it back. Both are kept across restarts. The terminal takes its new width once you let go, so an agent in it redraws once rather than all through the drag.
+- The download is smaller again. The daemon's helper app, new in 0.1.10, carried the app icon at every size; it now keeps only the small ones it is shown at.
+
 ## 0.1.10
 
 - macOS lists vaquita once in Privacy & Security, as "vaquita" with its icon, instead of a second "vaquitad" row with a blank terminal icon. The daemon now ships as a helper inside the app that macOS counts as vaquita itself. Updating to this release restarts the daemon once (on its own when no session is running, otherwise when you choose), and macOS may ask again, now for vaquita, about a folder only the daemon had been allowed into. The old "vaquitad" row stays until you remove it in System Settings.
