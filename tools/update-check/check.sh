@@ -65,7 +65,7 @@ if lsof -nP -iTCP:1421 -sTCP:LISTEN >/dev/null 2>&1; then
 	exit 1
 fi
 
-# The relaunch after the update goes through /usr/bin/open -n. If that drops
+# The relaunch after the update goes through /usr/bin/open. If that drops
 # VAQUITA_HOME, the 0.0.2 build would use the default home and the stable
 # daemon, so find out first, with a bundle that only writes the variable down.
 mkdir -p "$dir/probe.app/Contents/MacOS"
@@ -82,7 +82,7 @@ cat >"$dir/probe.app/Contents/MacOS/probe" <<EOS
 echo "\$VAQUITA_HOME" >"$dir/probe.out"
 EOS
 chmod +x "$dir/probe.app/Contents/MacOS/probe"
-VAQUITA_HOME=$vh /usr/bin/open -n "$dir/probe.app"
+VAQUITA_HOME=$vh /usr/bin/open "$dir/probe.app"
 i=0
 until [ -s "$dir/probe.out" ]; do
 	i=$((i + 1))
@@ -90,7 +90,7 @@ until [ -s "$dir/probe.out" ]; do
 	sleep 0.1
 done
 if [ "$(cat "$dir/probe.out" 2>/dev/null)" != "$vh" ]; then
-	echo "open -n drops VAQUITA_HOME on this Mac, so the update would relaunch into the default home; not going on" >&2
+	echo "open drops VAQUITA_HOME on this Mac, so the update would relaunch into the default home; not going on" >&2
 	exit 1
 fi
 

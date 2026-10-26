@@ -94,7 +94,34 @@ pub async fn install_app_update(app: AppHandle, pending: State<'_, Pending>) -> 
     // An update from check has no timeout of its own.
     update.timeout = Some(INSTALL_TIMEOUT);
     update.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
-    // Not exit(): the new bundle is at the same path, and the relaunch keeps
-    // this process's environment, so a VAQUITA_HOME run stays in its home.
-    app.restart()
+    relaunch_when_gone(&app)?;
+    app.exit(0);
+    Ok(())
+}
+
+/// Opens the bundle again once this process has ended. AppHandle::restart
+/// runs `open -n` while this process still runs, and the Dock shows that
+/// second instance in a tile of its own beside the one kept in the Dock. The
+/// new bundle is at the same path, and open keeps this process's environment,
+/// so a VAQUITA_HOME run stays in its home.
+fn relaunch_when_gone(app: &AppHandle) -> Result<(), String> {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    use tauri::Manager;
+
+    let exe = tauri::process::current_binary(&app.env()).map_err(|e| e.to_string())?;
+    // vaquita.app/Contents/MacOS/vaquita
+    let bundle = exe.ancestors().nth(3).filter(|b| b.extension().is_some_and(|e| e == "app")).ok_or("the app is not in a bundle")?;
+    Command::new("/bin/sh")
+        .args(["-c", r#"while kill -0 "$1" 2>/dev/null; do sleep 0.1; done; exec /usr/bin/open "$2""#, "relaunch"])
+        .arg(std::process::id().to_string())
+        .arg(bundle)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        // Out of this process's group, so nothing sent to the app reaches it.
+        .process_group(0)
+        .spawn()
+        .map_err(|e| format!("relaunch: {e}"))?;
+    Ok(())
 }
