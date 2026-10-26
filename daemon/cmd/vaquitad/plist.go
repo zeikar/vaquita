@@ -7,9 +7,15 @@ import (
 	"text/template"
 )
 
+// appBundleID is the app the daemon belongs to; the daemon has no other
+// source for it.
+const appBundleID = "io.github.zeikar.vaquita"
+
 // ProcessType=Interactive keeps launchd from throttling CPU/IO of the agents
 // and builds running inside sessions. AbandonProcessGroup stops launchd from
 // killing the daemon's children when it stops the daemon.
+// AssociatedBundleIdentifiers is how a launchd job not installed through
+// SMAppService names the app it belongs to.
 var plistTmpl = template.Must(template.New("plist").Funcs(template.FuncMap{
 	"esc": func(s string) (string, error) {
 		var b bytes.Buffer
@@ -34,6 +40,10 @@ var plistTmpl = template.Must(template.New("plist").Funcs(template.FuncMap{
 		<key>VAQUITA_HOME</key>
 		<string>{{esc .Home}}</string>
 	</dict>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>{{esc .BundleID}}</string>
+	</array>
 	<key>ProcessType</key>
 	<string>Interactive</string>
 	<key>AbandonProcessGroup</key>
@@ -50,8 +60,8 @@ var plistTmpl = template.Must(template.New("plist").Funcs(template.FuncMap{
 
 func renderPlist(label, exe, home string) []byte {
 	var b bytes.Buffer
-	err := plistTmpl.Execute(&b, struct{ Label, Exe, Home, Stderr string }{
-		label, exe, home, filepath.Join(home, "launchd.stderr.log"),
+	err := plistTmpl.Execute(&b, struct{ Label, Exe, Home, Stderr, BundleID string }{
+		label, exe, home, filepath.Join(home, "launchd.stderr.log"), appBundleID,
 	})
 	if err != nil {
 		// The template and its inputs are fixed strings; failure is a bug.

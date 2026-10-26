@@ -38,6 +38,7 @@ func TestLabelsDiffer(t *testing.T) {
 func TestLaunchdKeys(t *testing.T) {
 	s := string(renderPlist("l", "/e", "/h"))
 	for _, want := range []string{
+		"<key>AssociatedBundleIdentifiers</key>\n\t<array>\n\t\t<string>io.github.zeikar.vaquita</string>\n\t</array>",
 		"<key>ProcessType</key>\n\t<string>Interactive</string>",
 		"<key>AbandonProcessGroup</key>\n\t<true/>",
 		"<key>KeepAlive</key>\n\t<false/>",
