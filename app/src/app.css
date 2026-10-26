@@ -1,5 +1,9 @@
 html, body, #app { margin: 0; height: 100%; }
 
+/* WebKit rubber-bands the whole page past its edges, even one that fits the
+   window, which slides the app off a gap and back like a web page. */
+html, body { overscroll-behavior: none; }
+
 /* The icon's neon cyan, for focus rings and unread marks, and a deeper cyan
    that white text reads on (4.6:1), for primary buttons and the highlighted
    menu item; hovered, they darken, so the text never reads worse. */
