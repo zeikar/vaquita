@@ -6,6 +6,7 @@ import {
 	pathRunBefore,
 	resolvePath,
 	type LinkText,
+	type Bounds,
 	type PathHit,
 } from './file-links';
 
@@ -15,9 +16,11 @@ export interface BufferLike {
 }
 
 // Where one UTF-16 code unit of a logical line sits: 0-based row and column,
-// the width of its cell, and its foreground colour (mode and value, 0 for the
-// default).
+// the width of its cell, and its foreground colour (mode and value).
 type CellPos = { row: number; x: number; width: number; fg: number };
+
+// No colour mode is 0, so no other colour is this.
+const DEFAULT_FG = 0;
 
 type LineText = { text: string; cells: CellPos[] };
 
@@ -54,7 +57,7 @@ function readRow(buffer: BufferLike, r: number, line: IBufferLine): LineText {
 		if (width === 0) continue;
 		const chars = cell.getChars() || ' ';
 		text += chars;
-		const fg = cell.getFgColorMode() | cell.getFgColor();
+		const fg = cell.isFgDefault() ? DEFAULT_FG : cell.getFgColorMode() | cell.getFgColor();
 		// An astral character or a combining mark gives one cell several code units.
 		for (let i = 0; i < chars.length; i++) cells.push({ row: r, x, width, fg });
 	}
@@ -118,20 +121,16 @@ type Span = { first: CellPos; last: CellPos; path: string };
 type Found = Span & { parts?: Span[]; lead?: Span; taken?: CellPos };
 
 // Claude Code draws inline code, such as a path in backticks, in a colour of
-// its own, so where a path's colour ends inside it, the path ends: ~/.zshrc을
-// with the path in backticks links ~/.zshrc. Where the colour changes next to
-// a /, it changes inside one path, as where a prompt colours its parts apart.
-// A part that is no path by itself is no link.
-function byColour(line: LineText, hit: PathHit): PathHit | undefined {
-	const { cells, text } = line;
-	const fg = cells[hit.start].fg;
-	if (fg === 0) return hit;
-	let end = hit.start;
-	while (end < hit.end && cells[end].fg === fg) end++;
-	if (end === hit.end || text[end] === '/' || text[end - 1] === '/') return hit;
-	const part = text.slice(hit.start, end);
-	const got = findPaths(part)[0];
-	return got?.start === 0 && got.end === part.length ? { start: hit.start, end, target: got.target } : undefined;
+// its own. Where a colour ends, a path ends (~/.zshrc을 links ~/.zshrc), and
+// where one begins, a path may (see~/a.ts links ~/a.ts). A change next to a /
+// is inside one path, as where a prompt colours its parts apart. The default
+// colour begins and ends nothing, so plain text reads as before.
+function colourBounds({ text, cells }: LineText): Bounds {
+	const apart = (i: number) => i > 0 && i < cells.length && cells[i].fg !== cells[i - 1].fg && text[i] !== '/' && text[i - 1] !== '/';
+	return {
+		endsAt: (i) => apart(i) && cells[i - 1].fg !== DEFAULT_FG,
+		startsAt: (i) => apart(i) && cells[i].fg !== DEFAULT_FG,
+	};
 }
 
 function span(line: LineText, hit: PathHit, cwd: string): Span {
@@ -203,23 +202,34 @@ function join(buffer: BufferLike, line: LineText, cwd: string): Found | undefine
 	const { start, end, target } = on[0];
 	const pieces: Piece[] = [{ line, start, end }];
 	for (; on && pieces.length < MAX_LINES; on = runsOn(buffer, on[1].line, true)) pieces.push(on[1]);
-	const text = pieces.map((p) => p.line.text.slice(p.start, p.end)).join('');
-	const got = findPaths(text)[0];
+	const joined = {
+		text: pieces.map((p) => p.line.text.slice(p.start, p.end)).join(''),
+		cells: pieces.flatMap((p) => p.line.cells.slice(p.start, p.end)),
+	};
+	const got = findPaths(joined.text, colourBounds(joined))[0];
 	if (got?.start !== 0) return undefined;
+	// The path may end before the last run, where its colour does: the runs after
+	// the one it ends in are not its. When that is the first, nothing is joined,
+	// and the line's own path stands.
+	let k = 0;
+	let at = 0;
+	while (at + pieces[k].end - pieces[k].start < got.end) {
+		at += pieces[k].end - pieces[k].start;
+		k++;
+	}
+	if (k === 0) return undefined;
 	const lead = target === undefined ? undefined : span(line, { start, end, target }, cwd);
 	const parts = lead ? [lead] : [];
-	for (const p of pieces.slice(1)) {
-		for (const h of findPaths(p.line.text)) {
+	for (const p of pieces.slice(1, k + 1)) {
+		for (const h of findPaths(p.line.text, colourBounds(p.line))) {
 			if (h.start >= p.end) break;
 			parts.push(span(p.line, h, cwd));
 		}
 	}
-	// What findPaths trims off the end, punctuation, is all in the last run, which
-	// has a letter or a digit.
-	const last = pieces[pieces.length - 1];
+	const last = pieces[k];
 	return {
 		first: line.cells[start],
-		last: last.line.cells[last.end - (text.length - got.end) - 1],
+		last: last.line.cells[last.start + got.end - at - 1],
 		path: resolvePath(got.target, cwd),
 		parts,
 		lead,
@@ -259,10 +269,7 @@ export function pathLinkProvider(buffer: BufferLike, cwd: string, handlers: Link
 				// the one here's own path starts from.
 				if (k === lines.length - 1) {
 					const own = (hit: PathHit) => free(here.cells[hit.start]) && f?.first !== here.cells[hit.start];
-					for (const hit of findPaths(here.text)) {
-						const got = byColour(here, hit);
-						if (got && own(got)) found.push(span(here, got, cwd));
-					}
+					found.push(...findPaths(here.text, colourBounds(here)).filter(own).map((hit) => span(here, hit, cwd)));
 				}
 				if (f) {
 					found.push(f);

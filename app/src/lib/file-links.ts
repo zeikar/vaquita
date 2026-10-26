@@ -71,7 +71,12 @@ function isPath(text: string): boolean {
 	return RELATIVE.test(text) && EXTENSION.test(text);
 }
 
-export function findPaths(line: string): PathHit[] {
+// Boundaries the text does not show, as colour in a terminal: endsAt(i) ends
+// a path before i, and startsAt(i) lets one begin at i.
+export type Bounds = { endsAt(i: number): boolean; startsAt(i: number): boolean };
+const NO_BOUNDS: Bounds = { endsAt: () => false, startsAt: () => false };
+
+export function findPaths(line: string, bounds: Bounds = NO_BOUNDS): PathHit[] {
 	const hits: PathHit[] = [];
 	// Every start inside one run of non-TOKEN_END characters shares the run's end,
 	// its trimmed stop and its line suffix, so they are found once per run: terminal
@@ -81,13 +86,13 @@ export function findPaths(line: string): PathHit[] {
 	let suffixAt = 0;
 	let i = 0;
 	while (i < line.length) {
-		if ((i > 0 && !TOKEN_START.test(line[i - 1])) || !PATH_START.test(line[i])) {
+		if ((i > 0 && !TOKEN_START.test(line[i - 1]) && !bounds.startsAt(i)) || !PATH_START.test(line[i])) {
 			i++;
 			continue;
 		}
 		if (i >= runEnd) {
 			runEnd = i;
-			while (runEnd < line.length && !TOKEN_END.test(line[runEnd])) runEnd++;
+			while (runEnd < line.length && !TOKEN_END.test(line[runEnd]) && !(runEnd > i && bounds.endsAt(runEnd))) runEnd++;
 			// Sentence punctuation goes first so that "a.ts:12." still ends in a line suffix.
 			stopRun = runEnd;
 			while (stopRun > i && '.,;:!?'.includes(line[stopRun - 1])) stopRun--;
