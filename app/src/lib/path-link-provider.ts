@@ -181,9 +181,9 @@ function opening(line: LineText): Opening | undefined {
 	if (last?.end === end) return last;
 	let start = pathRunBefore(line.text, end);
 	if (start < 0) return undefined;
-	// A colour that ends or begins in the run ends what came before it there.
+	// A colour that ends in the run ends what came before it there.
 	for (let i = end - 1; i > start; i--) {
-		if (bounds.endsAt(i) || bounds.startsAt(i)) {
+		if (bounds.endsAt(i)) {
 			start = i;
 			break;
 		}
@@ -234,23 +234,15 @@ function join(buffer: BufferLike, line: LineText, cwd: string): Found | undefine
 	};
 	const got = findPaths(joined.text, colourBounds(joined))[0];
 	if (got?.start !== 0) return undefined;
-	// The run the path ends in: the last, as runsOn bounds runs by colour as
-	// findPaths does, but found rather than assumed.
-	let k = 0;
-	let at = 0;
-	while (at + pieces[k].end - pieces[k].start < got.end) {
-		at += pieces[k].end - pieces[k].start;
-		k++;
-	}
 	const lead = target === undefined ? undefined : span(line, { start, end, target }, cwd);
 	const parts = lead ? [lead] : [];
-	for (const p of pieces.slice(1, k + 1)) {
+	for (const p of pieces.slice(1)) {
 		for (const h of findPaths(p.line.text, colourBounds(p.line))) {
 			if (h.start >= p.end) break;
 			parts.push(span(p.line, h, cwd));
 		}
 	}
-	const last = pieces[k].line.cells[pieces[k].start + got.end - at - 1];
+	const last = joined.cells[got.end - 1];
 	return { first: line.cells[start], last, path: resolvePath(got.target, cwd), parts, lead, taken: last };
 }
 

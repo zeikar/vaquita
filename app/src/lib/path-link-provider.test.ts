@@ -223,6 +223,9 @@ describe('pathLinkProvider across a line break', () => {
 		const ended = await term(20, `out: ${code('/tmp/aaaa')}뿐이야\r\n    src/abcdefghijkl\r\n    m.ts`);
 		expect(spans(links(ended, 1))?.map((l) => l.text)).toEqual(['/tmp/aaaa']);
 		expect(spans(links(ended, 2))?.map((l) => l.text)).toEqual(['~/src/abcdefghijklm.ts']);
+		// A colour that only begins inside a wrapped path leaves it whole.
+		const begins = await term(20, `    src/abcdef${red('ghijkl')}\r\n${red('    m.ts')}`);
+		expect(spans(links(begins, 1))?.map((l) => l.text)).toEqual(['~/src/abcdefghijklm.ts']);
 		// A colour that ends with the first line joins nothing, and throws nothing.
 		const own = await term(20, `out: ${code('/tmp/aaaaaaaaaa')}\r\n    가가가가가가가가\r\n    나`);
 		expect(spans(links(own, 1))?.map((l) => l.text)).toEqual(['/tmp/aaaaaaaaaa']);
