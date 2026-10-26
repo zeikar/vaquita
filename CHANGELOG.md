@@ -2,6 +2,11 @@
 
 Each release's notes open with its section here.
 
+## 0.1.10
+
+- macOS lists vaquita once in Privacy & Security, as "vaquita" with its icon, instead of a second "vaquitad" row with a blank terminal icon. The daemon now ships as a helper inside the app that macOS counts as vaquita itself. Updating to this release restarts the daemon once (on its own when no session is running, otherwise when you choose), and macOS may ask again, now for vaquita, about a folder only the daemon had been allowed into. The old "vaquitad" row stays until you remove it in System Settings.
+- The window no longer rubber-bands when you scroll past its edges; it used to slide away from a gap and spring back like a web page.
+
 ## 0.1.9
 
 - A folder path Claude Code writes in backticks, which ends in a `/`, links only as far as its colour goes too, so a word written right after it, or plain text on the next line, is no longer taken into the link.
