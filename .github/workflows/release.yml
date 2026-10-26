@@ -97,9 +97,9 @@ jobs:
           npm test
           npm run check
 
-      # The build signs vaquitad (beforeBuildCommand, through the Makefile)
-      # before Tauri's bundler runs, so the certificate must already be in a
-      # keychain on the search list.
+      # The build signs the vaquitad helper app (beforeBuildCommand, through
+      # build:daemon) before Tauri's bundler runs, so the certificate must
+      # already be in a keychain on the search list.
       - name: Import signing certificate
         env:
           P12: ${{ secrets.VAQUITA_SIGN_P12 }}
@@ -128,11 +128,13 @@ jobs:
       # a fingerprint of the daemon's code into vaquitad as its build. Only release builds update, which is why the
       # updater endpoint is set here and not in tauri.conf.json; GitHub's
       # /releases/latest/ skips prereleases, so an rc never reaches users.
-      # tauri.conf.json's icon has a D badge, for any build but a release.
+      # tauri.conf.json's icon has a D badge, for any build but a release; the
+      # helper app takes the release icon from VAQUITA_HELPER_ICON.
       - name: Build
         working-directory: app
         env:
           VAQUITA_SIGN_IDENTITY: ${{ secrets.VAQUITA_SIGN_IDENTITY }}
+          VAQUITA_HELPER_ICON: icons/icon.icns
           APPLE_SIGNING_IDENTITY: ${{ secrets.VAQUITA_SIGN_IDENTITY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.VAQUITA_UPDATER_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.VAQUITA_UPDATER_KEY_PASSWORD }}
@@ -184,17 +186,34 @@ jobs:
             fi
           }
           for APP in app/src-tauri/target/release/bundle/macos/vaquita.app "$UPDATER_APP"; do
-            check "$APP/Contents/MacOS/vaquitad" io.github.zeikar.vaquitad
+            check "$APP/Contents/Helpers/vaquitad.app" io.github.zeikar.vaquita
             check "$APP" ""
             codesign --verify --deep --strict --verbose=2 "$APP"
+            # macOS shares privacy grants between the app and the helper only
+            # if the helper satisfies the app's designated requirement. codesign
+            # prefixes an implicit requirement with "# ".
+            dr="$(codesign -d -r- "$APP" 2>/dev/null | sed -n 's/^#* *designated => //p')"
+            if [ -z "$dr" ]; then
+              echo "::error::Could not read the designated requirement of $APP."
+              exit 1
+            fi
+            if ! codesign --verify --strict --verbose=2 -R "=$dr" "$APP/Contents/Helpers/vaquitad.app"; then
+              echo "::error::The helper in $APP does not satisfy the app's designated requirement, so macOS would not share privacy grants with it."
+              exit 1
+            fi
           done
 
-      # A release that took tauri.conf.json's icon would show the dev badge.
+      # A release that took tauri.conf.json's icon would show the dev badge,
+      # and so would a helper app built without VAQUITA_HELPER_ICON.
       - name: Verify icon
         run: |
           for APP in app/src-tauri/target/release/bundle/macos/vaquita.app "$UPDATER_APP"; do
             if ! cmp -s "$APP/Contents/Resources/icon.icns" app/src-tauri/icons/icon.icns; then
               echo "::error::$APP does not have the release icon."
+              exit 1
+            fi
+            if ! cmp -s "$APP/Contents/Helpers/vaquitad.app/Contents/Resources/icon.icns" app/src-tauri/icons/icon.icns; then
+              echo "::error::The helper in $APP does not have the release icon."
               exit 1
             fi
           done
@@ -207,7 +226,7 @@ jobs:
           fingerprint="$(git -C daemon ls-tree -r HEAD . | grep -v '_test\.go$' | git hash-object --stdin | cut -c1-12)"
           want="$VERSION+$fingerprint"
           for APP in app/src-tauri/target/release/bundle/macos/vaquita.app "$UPDATER_APP"; do
-            got="$("$APP/Contents/MacOS/vaquitad" version)"
+            got="$("$APP/Contents/Helpers/vaquitad.app/Contents/MacOS/vaquitad" version)"
             if [ "$got" != "$want" ]; then
               echo "::error::The vaquitad in $APP reports build $got, not $want."
               exit 1
