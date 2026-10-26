@@ -62,6 +62,8 @@ Measured on 2026-10-24 with a release build on an Apple Silicon Mac: 10 shell se
 
 `app/app-icon.png` is the source of the app icon. Its body must be Apple's rounded square exactly, 824 × 824 at 100, 100 on the 1024 canvas, and fully opaque: macOS 26 and later checks each size in the icon on its own, and one that is a few pixels off or slightly see-through is drawn small on a gray plate, as the Dock did on a non-Retina display. After changing it, run `npx tauri icon app-icon.png` in `app/` and delete the `android/`, `ios/` and `64x64.png` it also writes into `src-tauri/icons/`, which the app does not use.
 
+Any build but a release, `tauri dev` included, has `app/app-icon-dev.png` as its icon: the same with an orange D in the top right, inside the body, so a dev build is told apart from the installed app in the Dock and the app switcher. `tauri.conf.json` names `src-tauri/icons-dev/`, and the release workflow names `src-tauri/icons/` instead and checks that the app it built has that icon. After changing the icon, draw the badge again in the same place, run `npx tauri icon app-icon-dev.png -o <a temp folder>` and copy the five files `tauri.conf.json` lists from there into `src-tauri/icons-dev/`.
+
 ## Screenshot
 
 The README's screenshot is of a demo that `tools/screenshot/demo.sh` sets up in a new folder: a daemon and a HOME of its own, three repos, sessions (seeded by `sessions.mjs`) in which `fake-agent.sh` reports states the way Claude Code and Codex do, and one real Claude Code session that answers a short question with your login. To take it again, with port 1420 free and claude logged in:

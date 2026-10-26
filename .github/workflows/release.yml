@@ -128,6 +128,7 @@ jobs:
       # a fingerprint of the daemon's code into vaquitad as its build. Only release builds update, which is why the
       # updater endpoint is set here and not in tauri.conf.json; GitHub's
       # /releases/latest/ skips prereleases, so an rc never reaches users.
+      # tauri.conf.json's icon has a D badge, for any build but a release.
       - name: Build
         working-directory: app
         env:
@@ -138,7 +139,10 @@ jobs:
         run: |
           config="$(jq -nc --arg version "$VERSION" '{
             version: $version,
-            bundle: { createUpdaterArtifacts: true },
+            bundle: {
+              createUpdaterArtifacts: true,
+              icon: ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+            },
             plugins: { updater: { endpoints: [
               "https://github.com/zeikar/vaquita/releases/latest/download/latest.json"
             ] } }
@@ -183,6 +187,16 @@ jobs:
             check "$APP/Contents/MacOS/vaquitad" io.github.zeikar.vaquitad
             check "$APP" ""
             codesign --verify --deep --strict --verbose=2 "$APP"
+          done
+
+      # A release that took tauri.conf.json's icon would show the dev badge.
+      - name: Verify icon
+        run: |
+          for APP in app/src-tauri/target/release/bundle/macos/vaquita.app "$UPDATER_APP"; do
+            if ! cmp -s "$APP/Contents/Resources/icon.icns" app/src-tauri/icons/icon.icns; then
+              echo "::error::$APP does not have the release icon."
+              exit 1
+            fi
           done
 
       # The app replaces a running daemon whose build names other daemon code
