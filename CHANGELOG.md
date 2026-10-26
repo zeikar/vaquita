@@ -2,6 +2,10 @@
 
 Each release's notes open with its section here.
 
+## 0.1.7
+
+- A file path Claude Code writes in backticks links only as far as its colour goes, so a word written right onto it, such as `~/.zshrc을` or `~/a.ts(이제`, is no longer taken into the link and ⌘-click opens the file.
+
 ## 0.1.6
 
 - An update no longer asks to restart the daemon unless the daemon itself changed. A daemon's build now names its code, and releases that leave the daemon alone ship the same one. Updating to this release still asks once, as the running daemon's build is from before.

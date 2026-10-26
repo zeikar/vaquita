@@ -15,8 +15,9 @@ export interface BufferLike {
 }
 
 // Where one UTF-16 code unit of a logical line sits: 0-based row and column,
-// and the width of its cell.
-type CellPos = { row: number; x: number; width: number };
+// the width of its cell, and its foreground colour (mode and value, 0 for the
+// default).
+type CellPos = { row: number; x: number; width: number; fg: number };
 
 type LineText = { text: string; cells: CellPos[] };
 
@@ -53,8 +54,9 @@ function readRow(buffer: BufferLike, r: number, line: IBufferLine): LineText {
 		if (width === 0) continue;
 		const chars = cell.getChars() || ' ';
 		text += chars;
+		const fg = cell.getFgColorMode() | cell.getFgColor();
 		// An astral character or a combining mark gives one cell several code units.
-		for (let i = 0; i < chars.length; i++) cells.push({ row: r, x, width });
+		for (let i = 0; i < chars.length; i++) cells.push({ row: r, x, width, fg });
 	}
 	return { text, cells };
 }
@@ -114,6 +116,23 @@ type Span = { first: CellPos; last: CellPos; path: string };
 // lead among them when the first line's part is one; taken is the last cell of
 // the runs it took.
 type Found = Span & { parts?: Span[]; lead?: Span; taken?: CellPos };
+
+// Claude Code draws inline code, such as a path in backticks, in a colour of
+// its own, so where a path's colour ends inside it, the path ends: ~/.zshrc을
+// with the path in backticks links ~/.zshrc. Where the colour changes next to
+// a /, it changes inside one path, as where a prompt colours its parts apart.
+// A part that is no path by itself is no link.
+function byColour(line: LineText, hit: PathHit): PathHit | undefined {
+	const { cells, text } = line;
+	const fg = cells[hit.start].fg;
+	if (fg === 0) return hit;
+	let end = hit.start;
+	while (end < hit.end && cells[end].fg === fg) end++;
+	if (end === hit.end || text[end] === '/' || text[end - 1] === '/') return hit;
+	const part = text.slice(hit.start, end);
+	const got = findPaths(part)[0];
+	return got?.start === 0 && got.end === part.length ? { start: hit.start, end, target: got.target } : undefined;
+}
 
 function span(line: LineText, hit: PathHit, cwd: string): Span {
 	return { first: line.cells[hit.start], last: line.cells[hit.end - 1], path: resolvePath(hit.target, cwd) };
@@ -240,7 +259,10 @@ export function pathLinkProvider(buffer: BufferLike, cwd: string, handlers: Link
 				// the one here's own path starts from.
 				if (k === lines.length - 1) {
 					const own = (hit: PathHit) => free(here.cells[hit.start]) && f?.first !== here.cells[hit.start];
-					found.push(...findPaths(here.text).filter(own).map((hit) => span(here, hit, cwd)));
+					for (const hit of findPaths(here.text)) {
+						const got = byColour(here, hit);
+						if (got && own(got)) found.push(span(here, got, cwd));
+					}
 				}
 				if (f) {
 					found.push(f);

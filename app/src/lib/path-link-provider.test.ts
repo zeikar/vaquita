@@ -179,6 +179,22 @@ describe('pathLinkProvider across a line break', () => {
 		}
 	});
 
+	it('ends a path where its colour ends, as inline code does', async () => {
+		// Claude Code's inline code colour in its dark theme.
+		const code = (s: string) => `\x1b[38;2;177;185;249m${s}\x1b[39m`;
+		const at = async (line: string) => spans(links(await term(80, line), 1));
+		expect(await at(`${code('~/.zshrc')}을 만듭니다`)).toEqual([{ start: { x: 1, y: 1 }, end: { x: 8, y: 1 }, text: '~/.zshrc' }]);
+		expect(await at(`${code('~/a.ts')}(이제 고침)`)).toEqual([{ start: { x: 1, y: 1 }, end: { x: 6, y: 1 }, text: '~/a.ts' }]);
+		// A path inside a longer run, as a command in backticks, ends with it too.
+		expect(await at(`${code('cat ~/a.ts')}를 실행`)).toEqual([{ start: { x: 5, y: 1 }, end: { x: 10, y: 1 }, text: '~/a.ts' }]);
+		// A prompt colours the parts of one path apart.
+		expect(await at(`\x1b[34m~\x1b[36m/src/a.ts\x1b[39m $`)).toEqual([{ start: { x: 1, y: 1 }, end: { x: 10, y: 1 }, text: '~/src/a.ts' }]);
+		// A part that is no path by itself makes no link.
+		expect(await at(`${code('src/a')}b.ts`)).toBeUndefined();
+		// Uncoloured text is left as it was.
+		expect(await at('~/.zshrc을 만듭니다')).toEqual([{ start: { x: 1, y: 1 }, end: { x: 10, y: 1 }, text: '~/.zshrc을' }]);
+	});
+
 	it('does not join a line that starts at column 0, as in a listing', async () => {
 		for (const [next, own] of [
 			['/tmp/other.txt', '/tmp/other.txt'],
