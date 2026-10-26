@@ -88,7 +88,7 @@ describe('SessionManager sessions', () => {
 		t.m.create('/nope', '', '');
 		expect(t.c.requests).toEqual([['create', '/nope', '', '', 120, 40]]);
 		t.c.emit.error({ t: 'error', code: 'bad-request' });
-		expect(t.state().message).toBe('create failed (bad-request)');
+		expect(t.state().report).toEqual({ text: 'create failed (bad-request)', tone: 'error' });
 		expect(t.state().creating).toBe(false);
 		t.m.create('/tmp/repo', '', '');
 		expect(t.c.requests).toEqual([
@@ -141,7 +141,7 @@ describe('SessionManager sessions', () => {
 		t.c.emit.error({ t: 'error', code: 'no-session', sid: 9 });
 		expect(t.c.subscribes).toEqual([2]);
 		t.c.emit.error({ t: 'error', code: 'bad-request', sid: 2 });
-		expect(t.state().message).toBe('subscribe to session "sh" failed (bad-request)');
+		expect(t.state().report?.text).toBe('subscribe to session "sh" failed (bad-request)');
 		expect(t.c.subscribes).toEqual([2, 3]);
 		t.m.stop();
 	});
@@ -150,7 +150,7 @@ describe('SessionManager sessions', () => {
 		const t = await connected([info(1), info(3, 'i', 'exited')], 3);
 		expect(t.c.subscribes).toEqual([3]);
 		t.c.emit.error({ t: 'error', code: 'no-session', sid: 3 });
-		expect(t.state().message).toBeUndefined();
+		expect(t.state().report).toBeUndefined();
 		expect(t.c.subscribes).toEqual([3, 1]);
 		t.m.stop();
 	});
@@ -262,7 +262,7 @@ describe('SessionManager sessions', () => {
 		t.m.kill(1);
 		expect(t.c.requests.at(-1)).toEqual(['kill', 1]);
 		t.c.emit.error({ t: 'error', code: 'orphans', sid: 1, pids: [9] });
-		expect(t.state().message).toBe('session "sh" left processes behind: 9');
+		expect(t.state().report?.text).toBe('session "sh" left processes behind: 9');
 		t.m.stop();
 	});
 

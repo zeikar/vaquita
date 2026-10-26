@@ -184,6 +184,31 @@ footer .message {
 	color: #f48771;
 }
 
+/* A report reads as plain text, which a click takes away. */
+footer .report {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	padding: 0;
+	border: none;
+	background: none;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+footer .report:hover {
+	color: #d4d4d4;
+}
+
+footer .report.error {
+	color: #f48771;
+}
+
+footer .report:focus-visible {
+	outline: 1px solid var(--neon);
+	outline-offset: 1px;
+}
+
 /* Sidebar header row; RepoHeader's look. */
 aside > header {
 	display: flex;

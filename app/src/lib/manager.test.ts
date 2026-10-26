@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { NotRunningError, type Endpoint } from './endpoint';
-import { ep, fakeTimersAndStorage, info, setup } from './manager-harness';
+import { connected, ep, fakeTimersAndStorage, info, setup } from './manager-harness';
 
 fakeTimersAndStorage();
 
@@ -272,5 +272,46 @@ describe('SessionManager', () => {
 		await vi.advanceTimersByTimeAsync(1000);
 		expect(t.conns).toHaveLength(2);
 		t.m.stop();
+	});
+
+	describe('reports', () => {
+		it('go after 8s, or a minute for a failure', async () => {
+			const t = await connected([]);
+			t.m.report('revealed', 'info');
+			expect(t.state().report).toEqual({ text: 'revealed', tone: 'info' });
+			await vi.advanceTimersByTimeAsync(7999);
+			expect(t.state().report).toBeDefined();
+			await vi.advanceTimersByTimeAsync(1);
+			expect(t.state().report).toBeUndefined();
+			t.m.report('open failed');
+			await vi.advanceTimersByTimeAsync(59_999);
+			expect(t.state().report).toEqual({ text: 'open failed', tone: 'error' });
+			await vi.advanceTimersByTimeAsync(1);
+			expect(t.state().report).toBeUndefined();
+			t.m.stop();
+		});
+
+		it('replace an earlier one and its time, and go when clicked', async () => {
+			const t = await connected([]);
+			t.m.report('first', 'info');
+			await vi.advanceTimersByTimeAsync(5000);
+			t.m.report('second');
+			await vi.advanceTimersByTimeAsync(5000);
+			expect(t.state().report?.text).toBe('second');
+			t.m.dismissReport();
+			expect(t.state().report).toBeUndefined();
+			t.m.stop();
+		});
+
+		it('leave the status message alone', async () => {
+			const t = setup();
+			t.m.start();
+			await vi.advanceTimersByTimeAsync(0);
+			t.conns[0].emit.closed({ kind: 'closed', detail: 'code 1006' });
+			t.m.report('open failed');
+			t.m.dismissReport();
+			expect(t.state()).toMatchObject({ status: 'disconnected', message: 'code 1006' });
+			t.m.stop();
+		});
 	});
 });

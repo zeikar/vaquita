@@ -54,7 +54,22 @@ export interface ManagerState<V = ViewLike> extends LinkState {
 	// Whether the window has focus: the selected session is only looked at
 	// while it has.
 	focused: boolean;
+	// What came of something the user did, or a failure the connection's
+	// status does not explain. It goes after a while or when clicked, where
+	// message lasts as long as the status it explains.
+	report?: Report;
 }
+
+// Only a failure is shown red.
+export type Tone = 'info' | 'error';
+
+export interface Report {
+	text: string;
+	tone: Tone;
+}
+
+// A failure stays longer, for someone who looked away.
+const REPORT_MS: Record<Tone, number> = { info: 8_000, error: 60_000 };
 
 export interface ManagerDeps<T extends ManagedTerm, V extends ViewLike> extends LinkDeps {
 	createTerminal: (cols: number, rows: number) => T;
@@ -96,6 +111,7 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 	// Whether a session list has been applied yet, and the click that came before.
 	private listed = false;
 	private pendingClick?: Target;
+	private reportTimer?: ReturnType<typeof setTimeout>;
 
 	constructor(private readonly deps: ManagerDeps<T, V>) {
 		this.link = new DaemonLink(deps, {
@@ -130,6 +146,7 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 
 	stop(): void {
 		this.link.stop();
+		clearTimeout(this.reportTimer);
 	}
 
 	select(sid: number): void {
@@ -212,9 +229,16 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		this.link.ready?.rename(sid, name);
 	}
 
-	// Shows a message from outside the manager in the status line.
-	report(message: string): void {
-		this.set({ message });
+	// Shows text in the status line for a while, in place of any earlier report.
+	report(text: string, tone: Tone = 'error'): void {
+		clearTimeout(this.reportTimer);
+		this.reportTimer = setTimeout(() => this.dismissReport(), REPORT_MS[tone]);
+		this.set({ report: { text, tone } });
+	}
+
+	dismissReport(): void {
+		clearTimeout(this.reportTimer);
+		this.set({ report: undefined });
 	}
 
 	private set(patch: Partial<ManagerState<V>>): void {
@@ -360,7 +384,8 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 			message = m.sid === undefined ? `daemon error (${m.code})` : `${who}: daemon error (${m.code})`;
 		}
 		this.pump();
-		this.publish(message === undefined ? {} : { message });
+		this.publish();
+		if (message !== undefined) this.report(message);
 	}
 
 	private onStatus(m: StatusMessage): void {

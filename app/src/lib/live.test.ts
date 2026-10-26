@@ -210,7 +210,7 @@ describe.skipIf(process.env.VAQUITA_LIVE !== '1')('live daemon', () => {
 			await until(() => a.state().status === 'connected', 'A to connect');
 			a.m.create('/tmp', SHELL, 'live-test');
 			await until(() => !a.state().creating, 'the create to resolve');
-			expect(a.state().message).toBeUndefined();
+			expect(a.state().report).toBeUndefined();
 			sid = a.state().selected!;
 			const s = sid;
 			const core = a.view(s).core;
@@ -281,7 +281,7 @@ describe.skipIf(process.env.VAQUITA_LIVE !== '1')('live daemon', () => {
 			// The shell runs the report, then turns interactive.
 			a.m.create('/tmp', "printf '\\033]7501;state=error:app=x\\033\\\\'", 'status-test');
 			await until(() => !a.state().creating, 'the create to resolve');
-			expect(a.state().message).toBeUndefined();
+			expect(a.state().report).toBeUndefined();
 			sid = a.state().selected!;
 			const s = sid;
 			await until(() => a.row(s)?.info.status?.state === 'error' && a.row(s)?.info.unread === true, 'the unread error row');
@@ -292,7 +292,7 @@ describe.skipIf(process.env.VAQUITA_LIVE !== '1')('live daemon', () => {
 			a.m.setFocused(true);
 			await until(() => a.row(s)?.info.unread === false, 'unread to clear');
 			expect(a.row(s)?.info.status?.state).toBe('error');
-			expect(a.state().message).toBeUndefined();
+			expect(a.state().report).toBeUndefined();
 
 			const before = a.log.length;
 			a.m.kill(s);

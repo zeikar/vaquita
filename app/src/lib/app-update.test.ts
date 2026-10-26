@@ -174,7 +174,7 @@ describe('AppUpdater checkNow', () => {
 		t.updater.start();
 		await t.updater.checkNow();
 		expect(t.check).toHaveBeenCalledTimes(1);
-		expect(t.report).toHaveBeenCalledWith('vaquita is up to date');
+		expect(t.report).toHaveBeenCalledWith('vaquita is up to date', 'info');
 		await at(FIRST_CHECK_MS);
 		expect(t.check).toHaveBeenCalledTimes(2);
 		expect(t.report).toHaveBeenCalledTimes(1);

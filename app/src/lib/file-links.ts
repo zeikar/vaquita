@@ -1,5 +1,6 @@
 import { isTauri } from './tauri';
 import { openExternal, type Opener } from './links';
+import type { Tone } from './manager';
 
 export type OpenResult = { action: 'opened' } | { action: 'revealed'; why: string };
 export type Invoker = (path: string, host: string) => Promise<OpenResult>;
@@ -149,19 +150,19 @@ export function hasExtension(path: string): boolean {
 export async function openPath(
 	path: string,
 	host: string,
-	report: (m: string) => void,
+	report: (m: string, tone?: Tone) => void,
 	invoker: Invoker = defaultInvoker,
 	fallback?: string,
 ): Promise<void> {
 	try {
 		const r = await invoker(path, host);
-		if (r.action === 'revealed') report(`revealed in Finder, not opened: ${path} (${r.why})`);
+		if (r.action === 'revealed') report(`revealed in Finder, not opened: ${path} (${r.why})`, 'info');
 	} catch (e) {
 		// open_path's word for a path that does not exist, the one failure that
 		// says a joined path was a wrong guess. The fallback may be another file
 		// than the one the hover named, so the switch is told.
 		if (fallback !== undefined && errText(e) === 'no such file') {
-			report(`${path}: no such file, opening ${fallback}`);
+			report(`${path}: no such file, opening ${fallback}`, 'info');
 			return openPath(fallback, host, report, invoker);
 		}
 		report(`open ${path}: ${errText(e)}`);
@@ -172,7 +173,7 @@ export async function openPath(
 export function activateUri(
 	e: MouseEvent,
 	text: LinkText,
-	report: (m: string) => void,
+	report: (m: string, tone?: Tone) => void,
 	invoker: Invoker = defaultInvoker,
 	opener?: Opener,
 ): void {

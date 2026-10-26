@@ -77,6 +77,7 @@ describe('SessionManager daemon update', () => {
 		expect(t.state()).toMatchObject({ status: 'connected', update: { daemon: '0.1.0', app: '0.2.0' } });
 		expect(t.state().update?.note).toBeUndefined();
 		expect(t.state().message).toBeUndefined();
+		expect(t.state().report).toBeUndefined();
 		expect(t.restart).not.toHaveBeenCalled();
 		const c = await reconnect({ ...t, c: t.conns[0] }, [], '0.1.0');
 		expect(c.shutdowns).toEqual([]);

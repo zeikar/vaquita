@@ -72,7 +72,7 @@ describe('SessionManager repos and records', () => {
 			expect(t.state().creating).toBe(true);
 			t.c.emit.error({ t: 'error', code, sid: 7, ...(pids ? { pids } : {}) });
 			expect(t.state().creating).toBe(false);
-			return t.state().message;
+			return t.state().report?.text;
 		};
 		expect(fail('orphans', [11, 12])).toBe('session "w" left processes behind: 11, 12');
 		expect(fail('bad-request')).toBe('reopen of session "w" failed (bad-request)');
@@ -91,7 +91,7 @@ describe('SessionManager repos and records', () => {
 		const t = await connected([]);
 		t.m.create('/tmp/repo', '', '');
 		t.c.emit.error({ t: 'error', code: 'bad-path' });
-		expect(t.state().message).toBe('repo path must be an absolute path to an existing folder');
+		expect(t.state().report?.text).toBe('repo path must be an absolute path to an existing folder');
 		expect(t.state().creating).toBe(true);
 		t.c.emit.replay(replay(3));
 		expect(t.state().creating).toBe(false);
@@ -103,7 +103,7 @@ describe('SessionManager repos and records', () => {
 		const t = await connected([record(7)]);
 		t.m.create('/tmp/repo', '', '');
 		t.c.emit.error({ t: 'error', code: 'bad-request' });
-		expect(t.state().message).toBe('create failed (bad-request)');
+		expect(t.state().report?.text).toBe('create failed (bad-request)');
 		expect(t.state().creating).toBe(false);
 		t.m.stop();
 	});

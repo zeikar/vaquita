@@ -1,3 +1,5 @@
+import type { Tone } from './manager';
+
 export interface AppUpdate {
 	version: string;
 }
@@ -23,7 +25,7 @@ export interface AppUpdateDeps {
 	install: () => Promise<void>;
 	warn: (message: string) => void;
 	// Shows what a check the user asked for found, in the status line.
-	report: (message: string) => void;
+	report: (message: string, tone?: Tone) => void;
 }
 
 export class AppUpdater {
@@ -114,7 +116,7 @@ export class AppUpdater {
 			return;
 		}
 		if (found === null) {
-			if (asked) this.deps.report('vaquita is up to date');
+			if (asked) this.deps.report('vaquita is up to date', 'info');
 			if (this.state.version !== undefined) this.set({ installing: false });
 		} else if (found.version !== this.dismissed && found.version !== this.state.version) {
 			// An earlier version's failure is not shown against this one; the same

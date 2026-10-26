@@ -151,11 +151,11 @@ describe('openPath', () => {
 		expect(said).toEqual([]);
 	});
 
-	it('reports a reveal', async () => {
+	it('reports a reveal, as no failure', async () => {
 		const { invoker } = fakeInvoker({ action: 'revealed', why: 'it is a script' });
-		const said: string[] = [];
-		await openPath('/tmp/a.sh', '', (m) => said.push(m), invoker);
-		expect(said).toEqual(['revealed in Finder, not opened: /tmp/a.sh (it is a script)']);
+		const said: [string, string?][] = [];
+		await openPath('/tmp/a.sh', '', (m, tone) => said.push([m, tone]), invoker);
+		expect(said).toEqual([['revealed in Finder, not opened: /tmp/a.sh (it is a script)', 'info']]);
 	});
 
 	it('reports a rejection, string or Error', async () => {
@@ -209,8 +209,9 @@ describe('activateUri with a fallback', () => {
 
 	async function click(metaKey: boolean, ...results: Parameters<typeof fakeInvoker>) {
 		const { invoker, calls } = fakeInvoker(...results);
+		// Only a report that is no failure passes a tone.
 		const said: string[] = [];
-		activateUri({ metaKey } as MouseEvent, pair, (m) => said.push(m), invoker);
+		activateUri({ metaKey } as MouseEvent, pair, (m, tone) => said.push(tone ? `${tone}: ${m}` : m), invoker);
 		// The invoker settles in microtasks, all run before a timer.
 		await new Promise((r) => setTimeout(r));
 		return { tried: calls.map((c) => c.path), said };
@@ -224,7 +225,7 @@ describe('activateUri with a fallback', () => {
 		expect(await click(true, { action: 'opened' })).toEqual({ tried: [pair[0]], said: [] });
 	});
 
-	const switched = `${pair[0]}: no such file, opening ${pair[1]}`;
+	const switched = `info: ${pair[0]}: no such file, opening ${pair[1]}`;
 
 	it('opens the fallback, saying so, when the joined path does not exist', async () => {
 		expect(await click(true, 'no such file', { action: 'opened' })).toEqual({ tried: [...pair], said: [switched] });
@@ -251,7 +252,7 @@ describe('activateUri with a fallback', () => {
 	it('does not try again after a reveal', async () => {
 		expect(await click(true, { action: 'revealed', why: 'it is a script' })).toEqual({
 			tried: [pair[0]],
-			said: [`revealed in Finder, not opened: ${pair[0]} (it is a script)`],
+			said: [`info: revealed in Finder, not opened: ${pair[0]} (it is a script)`],
 		});
 	});
 });

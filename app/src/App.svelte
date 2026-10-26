@@ -37,7 +37,7 @@
 		restartDaemon,
 		connect: (endpoint, handlers) => new DaemonConnection(endpoint, handlers),
 		createTerminal: (cols, rows) => createTerminal(cols, rows),
-		createView: (term, core, cwd) => new TermView(term, core, (m) => manager.report(m), cwd),
+		createView: (term, core, cwd) => new TermView(term, core, (m, tone) => manager.report(m, tone), cwd),
 		notifier: { show: (n) => notifier.show(n) },
 	});
 	let destroyed = false;
@@ -59,7 +59,7 @@
 		check: checkAppUpdate,
 		install: installAppUpdate,
 		warn: (m) => console.warn(m),
-		report: (m) => manager.report(m),
+		report: (m, tone) => manager.report(m, tone),
 	});
 	appUpdater.start();
 	onDestroy(() => appUpdater.stop());
@@ -95,7 +95,6 @@
 		.then((failure) => {
 			if (destroyed) return;
 			manager.start();
-			// After the start, which clears the status line.
 			if (failure) manager.report(failure);
 		});
 
@@ -260,5 +259,9 @@
 		<span class="state"><span class="dot {statusTone}"></span>{statusText}</span>
 		<span>{$manager.sessions.length} sessions</span>
 		{#if $manager.message}<span class="message" title={$manager.message}>{$manager.message}</span>{/if}
+		{#if $manager.report}
+			{@const report = $manager.report}
+			<button class="report {report.tone}" title={report.text} onclick={() => manager.dismissReport()}>{report.text}</button>
+		{/if}
 	</footer>
 </main>

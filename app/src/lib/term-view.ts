@@ -7,7 +7,7 @@ import { clipboardProvider } from './clipboard-provider';
 import { installHangulFix, type HangulFix } from './hangul-fix';
 import { keyHandler } from './keys';
 import { activateUri, type LinkText } from './file-links';
-import type { ViewLike } from './manager';
+import type { Tone, ViewLike } from './manager';
 import { pathLinkProvider } from './path-link-provider';
 import type { SessionCore, Size } from './session-core';
 import { theme } from './theme';
@@ -42,7 +42,7 @@ export class TermView implements ViewLike {
 	constructor(
 		private readonly term: Terminal,
 		private readonly core: SessionCore,
-		private readonly report: (message: string) => void,
+		private readonly report: (message: string, tone?: Tone) => void,
 		private readonly cwd: string,
 	) {}
 
