@@ -7,6 +7,7 @@
 
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
+	import { documents } from './documents';
 	import { fileUrl, viewPath, type FileKind } from './files';
 	import MarkdownView from './MarkdownView.svelte';
 	import { fileName } from './tabs';
@@ -16,10 +17,12 @@
 		path,
 		onclose,
 		report,
+		readOnly = false,
 	}: {
 		path: string;
 		onclose: () => void;
 		report: (message: string) => void;
+		readOnly?: boolean;
 	} = $props();
 
 	// A view keeps the path it was judged for: the path prop changes before the
@@ -27,7 +30,7 @@
 	type Shown =
 		| { state: 'loading' }
 		| { state: 'error'; message: string }
-		| { state: 'view'; path: string; kind: FileKind; src?: string };
+		| { state: 'view'; path: string; kind: FileKind; src?: string; note?: string };
 
 	let shown = $state<Shown>({ state: 'loading' });
 	let root: HTMLElement;
@@ -95,8 +98,18 @@
 	// view_path judges the file again, as a restored tab's may have changed;
 	// text is read by its editor or preview, the rest is loaded from the URL
 	// it allowed.
+	// A document with unsaved edits stays in the editor when the file no longer
+	// qualifies, as an agent may have deleted, renamed or grown it: the error
+	// is shown beside the text, which is all that is left of the edits.
 	async function load(asked: string): Promise<Shown> {
-		const { path: canonical, kind } = await viewPath(asked);
+		let viewable;
+		try {
+			viewable = await viewPath(asked);
+		} catch (e) {
+			if (!documents.isDirty(asked)) throw e;
+			return { state: 'view', path: asked, kind: 'text', note: `The file cannot be shown from disk: ${e instanceof Error ? e.message : String(e)}` };
+		}
+		const { path: canonical, kind } = viewable;
 		if (kind === 'text' || kind === 'markdown') return { state: 'view', path: asked, kind };
 		return { state: 'view', path: asked, kind, src: await fileUrl(canonical) };
 	}
@@ -111,9 +124,12 @@
 			<button aria-pressed={source} onclick={() => void setSource(true)}>Source</button>
 		</div>
 	{/if}
+	{#if shown.state === 'view' && shown.note}
+		<p class="note">{shown.note}</p>
+	{/if}
 	{#if textPath !== undefined}
 		<div class="text" hidden={!showsEditor}>
-			<TextEditor bind:this={editor} path={textPath} shown={textShown} {report} />
+			<TextEditor bind:this={editor} path={textPath} shown={textShown} {report} {readOnly} />
 		</div>
 	{/if}
 	{#if markdown !== undefined && !source}
@@ -188,6 +204,13 @@
 	.toolbar button:focus-visible {
 		outline: 1px solid var(--neon);
 		outline-offset: -1px;
+	}
+	.file > .note {
+		grid-area: 1 / 1;
+		justify-self: start;
+		margin: 6px 12px;
+		color: #d7ba7d;
+		font-size: 12px;
 	}
 	.text {
 		place-self: stretch;

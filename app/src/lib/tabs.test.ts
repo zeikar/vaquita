@@ -51,9 +51,20 @@ describe('neighbour', () => {
 });
 
 describe('prune', () => {
-	it('drops an unregistered repo and keeps other', () => {
-		const g = { '/tmp/gone': ['/x'], '/tmp/repo': ['/y'], [OTHER]: ['/z'] };
-		expect(prune(g, ['/tmp/repo'])).toEqual({ '/tmp/repo': ['/y'], [OTHER]: ['/z'] });
+	it('moves the tabs of an unregistered repo to other', () => {
+		const g = { '/tmp/gone': ['/x', '/z'], '/tmp/repo': ['/y'], [OTHER]: ['/z'] };
+		expect(prune(g, ['/tmp/repo'])).toEqual({ '/tmp/repo': ['/y'], [OTHER]: ['/z', '/x'] });
+		expect(prune({ '/tmp/gone': ['/x'] }, [])).toEqual({ [OTHER]: ['/x'] });
+	});
+
+	it('moves the tabs to a registered parent repo when there is one', () => {
+		const g = { '/tmp/repo/nested': ['/x'], '/tmp/repo': ['/y'] };
+		expect(prune(g, ['/tmp/repo'])).toEqual({ '/tmp/repo': ['/y', '/x'] });
+	});
+
+	it('returns the same object when no repo went', () => {
+		const g = { '/tmp/repo': ['/y'] };
+		expect(prune(g, ['/tmp/repo'])).toBe(g);
 	});
 });
 

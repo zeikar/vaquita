@@ -13,7 +13,10 @@ class StubModel {
 		readonly language: string,
 		readonly uri: string,
 	) {}
-	getValue = () => this.text;
+	// Like Monaco's: a leading BOM is kept off the text unless asked for.
+	getValue = (_eol?: unknown, preserveBOM?: boolean) =>
+		preserveBOM && this.bom ? '\uFEFF' + this.text : this.text;
+	bom = false;
 	getAlternativeVersionId = () => this.version;
 	onDidChangeContent = (l: () => void) => void this.listeners.push(l);
 	dispose = () => void (this.disposed = true);
@@ -162,6 +165,15 @@ describe('saveDocument', () => {
 		expect(deps.writeText).toHaveBeenCalledWith(path, 'two', stamp(1));
 		expect(docs.isDirty(path)).toBe(false);
 		expect(doc.stamp).toEqual(stamp(2));
+	});
+
+	it('writes the BOM a file was read with', async () => {
+		const { docs, deps, model, report } = setup();
+		await docs.openDocument(path);
+		model().bom = true;
+		model().edit('two');
+		await docs.saveDocument(path, report);
+		expect(deps.writeText).toHaveBeenCalledWith(path, '\uFEFFtwo', stamp(1));
 	});
 
 	it('marks only the written version saved when typing goes on during the write', async () => {

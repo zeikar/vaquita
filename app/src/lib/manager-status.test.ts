@@ -130,6 +130,20 @@ describe('SessionManager status', () => {
 		t.m.stop();
 	});
 
+	it('treats the selected session as unseen while a file covers its terminal', async () => {
+		const t = await connected([unread(1), info(2)], 1);
+		t.m.setCovered(true);
+		t.c.emit.notify({ t: 'notify', sid: 1, kind: 'done', msg: 'ok' });
+		expect(t.notes.length).toBe(1);
+		t.c.seens.length = 0;
+		t.m.setFocused(false);
+		t.m.setFocused(true);
+		expect(t.c.seens).toEqual([]);
+		t.m.setCovered(false);
+		expect(t.c.seens).toEqual([1]);
+		t.m.stop();
+	});
+
 	it('always shows the missed summary', async () => {
 		const t = await connected([info(1)], 1);
 		t.c.emit.notify({ t: 'notify', kind: 'missed', count: 2 });

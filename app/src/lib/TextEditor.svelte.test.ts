@@ -25,6 +25,7 @@ function setup() {
 		getModel: () => model,
 		focus: vi.fn(),
 		dispose: vi.fn(),
+		updateOptions: vi.fn(),
 	};
 	const monaco = { editor: { create: vi.fn(() => editor) } } as unknown as Monaco;
 	const loader = vi.fn(async () => monaco);
@@ -43,7 +44,7 @@ function setup() {
 type Setup = ReturnType<typeof setup>;
 
 function show(s: Setup, path: string) {
-	const props = $state({ path, shown: 1, report: vi.fn(), loader: s.loader, documents: s.documents });
+	const props = $state({ path, shown: 1, readOnly: false, report: vi.fn(), loader: s.loader, documents: s.documents });
 	target = document.createElement('div');
 	document.body.append(target);
 	shown = mount(TextEditor, { target, props });
@@ -66,6 +67,18 @@ afterEach(() => {
 const models = (s: Setup) => s.editor.setModel.mock.calls.map(([m]) => (m as { name: string } | null)?.name ?? null);
 
 describe('TextEditor', () => {
+	it('follows readOnly, so editing can be frozen', async () => {
+		const s = setup();
+		const props = show(s, '/tmp/repo/a.ts');
+		await settle();
+		props.readOnly = true;
+		flushSync();
+		expect(s.editor.updateOptions).toHaveBeenLastCalledWith({ readOnly: true });
+		props.readOnly = false;
+		flushSync();
+		expect(s.editor.updateOptions).toHaveBeenLastCalledWith({ readOnly: false });
+	});
+
 	it('loads Monaco on mount, once across paths, and makes one editor', async () => {
 		const s = setup();
 		expect(s.loader).not.toHaveBeenCalled();

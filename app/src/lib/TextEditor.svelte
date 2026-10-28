@@ -11,6 +11,7 @@
 		path,
 		shown,
 		report,
+		readOnly = false,
 		loader = loadMonaco,
 		documents = shared,
 	}: {
@@ -19,6 +20,7 @@
 		// document may have been dropped, or its file changed, while hidden.
 		shown: number;
 		report: (message: string) => void;
+		readOnly?: boolean;
 		loader?: () => Promise<Monaco>;
 		documents?: Pick<Documents, 'openDocument' | 'refresh'>;
 	} = $props();
@@ -38,6 +40,8 @@
 		editor.focus();
 		return true;
 	}
+
+	$effect(() => editor?.updateOptions({ readOnly }));
 
 	onMount(() => {
 		let mounted = true;

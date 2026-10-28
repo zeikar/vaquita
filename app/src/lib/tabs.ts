@@ -38,9 +38,21 @@ export function neighbour(tabs: string[], active: string | undefined, step: numb
 	return next === 0 ? undefined : tabs[next - 1];
 }
 
-// Tabs of a repo that is no longer registered would never be shown again.
+// Tabs of a repo that is no longer registered would never be shown again, so
+// they move to the group its sessions fall into now (a registered parent repo,
+// else OTHER), where an unsaved edit in one is still reachable. The same object
+// comes back when no repo went.
 export function prune(groups: TabGroups, repos: string[]): TabGroups {
-	return Object.fromEntries(Object.entries(groups).filter(([key]) => key === OTHER || repos.includes(key)));
+	const gone = Object.keys(groups).filter((key) => key !== OTHER && !repos.includes(key));
+	if (gone.length === 0) return groups;
+	const kept: TabGroups = Object.fromEntries(Object.entries(groups).filter(([key]) => !gone.includes(key)));
+	for (const key of gone) {
+		const to = groupKey(key, repos);
+		let tabs = kept[to] ?? [];
+		for (const p of groups[key]) if (!tabs.includes(p)) tabs = [...tabs, p];
+		kept[to] = tabs;
+	}
+	return kept;
 }
 
 // Anything that is not an object of string arrays leaves no tabs open; stray

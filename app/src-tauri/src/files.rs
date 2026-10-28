@@ -182,6 +182,19 @@ fn read(path: &Path) -> Result<Contents, String> {
     Ok(Contents { text, stamp })
 }
 
+/// Gives f what the original has beyond its content: mode, owner, flags, ACLs
+/// and extended attributes such as Finder tags, which a plain new file lacks.
+fn copy_metadata(original: &Path, f: &File) -> Result<(), String> {
+    use std::os::fd::AsRawFd;
+    let src = File::open(original).map_err(open_path::io_error)?;
+    // SAFETY: both descriptors are open for the call; a null state is allowed.
+    let rc = unsafe { libc::fcopyfile(src.as_raw_fd(), f.as_raw_fd(), std::ptr::null_mut(), libc::COPYFILE_METADATA) };
+    if rc != 0 {
+        return Err(open_path::io_error(io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
 /// Puts text in place of the file at canonical and returns its new stamp;
 /// with expect, only while the file's stamp is still expect, else
 /// CHANGED_ON_DISK. The text goes to a temporary file beside it that is then
@@ -190,8 +203,9 @@ fn read(path: &Path) -> Result<Contents, String> {
 /// already at its name is never truncated or followed. The stamp is compared
 /// again just before the rename, so a change made while the text was being
 /// written is not silently lost; one in the instant between that check and the
-/// rename still is. Only the permission bits carry over, not the owner or
-/// extended attributes, and another hard link to the file keeps the old text.
+/// rename still is. The mode, owner, flags, ACLs and extended attributes carry
+/// over (a failure to copy them stops the save), and another hard link to the
+/// file keeps the old text.
 fn replace(canonical: &Path, text: &str, expect: Option<Stamp>) -> Result<Stamp, String> {
     let meta = std::fs::metadata(canonical).map_err(open_path::io_error)?;
     if !meta.is_file() {
@@ -224,7 +238,7 @@ fn replace(canonical: &Path, text: &str, expect: Option<Stamp>) -> Result<Stamp,
         Err(e) => return Err(open_path::io_error(e)),
     };
     let written = (|| {
-        f.set_permissions(meta.permissions()).map_err(open_path::io_error)?;
+        copy_metadata(canonical, &f)?;
         f.write_all(text.as_bytes()).map_err(open_path::io_error)?;
         f.sync_all().map_err(open_path::io_error)?;
         // The rename keeps the inode, so this is the saved file's stamp.
@@ -372,6 +386,21 @@ mod tests {
         let p = file(&dir("text-mode"), "notes.txt", 0o640);
         replace(&p, "longer text\n", None).unwrap();
         assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o640);
+    }
+
+    #[test]
+    fn a_write_keeps_extended_attributes() {
+        let p = text_file("xattr", "one\n");
+        let name = CString::new("user.vaquita-test").unwrap();
+        let c = CString::new(p.as_os_str().as_bytes()).unwrap();
+        // SAFETY: both strings end in NUL and the value is 3 bytes.
+        let rc = unsafe { libc::setxattr(c.as_ptr(), name.as_ptr(), b"abc".as_ptr().cast(), 3, 0, 0) };
+        assert_eq!(rc, 0, "{}", io::Error::last_os_error());
+        replace(&p, "one two\n", None).unwrap();
+        let mut buf = [0u8; 8];
+        // SAFETY: buf has room for the 8 bytes asked.
+        let n = unsafe { libc::getxattr(c.as_ptr(), name.as_ptr(), buf.as_mut_ptr().cast(), 8, 0, 0) };
+        assert_eq!(&buf[..n.max(0) as usize], b"abc");
     }
 
     #[test]

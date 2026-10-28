@@ -106,6 +106,7 @@ function newEntry<T, V>(info: SessionInfo): Entry<T, V> {
 export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewLike = ViewLike> {
 	private state: ManagerState<V> = { status: 'connecting', sessions: [], repos: [], reposListed: false, creating: false, focused: true };
 	private readonly subscribers = new Set<(s: ManagerState<V>) => void>();
+	private covered = false;
 	// Requests go only through its ready connection.
 	private readonly link: DaemonLink;
 	private entries = new Map<number, Entry<T, V>>();
@@ -161,6 +162,14 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 			this.pump();
 		}
 		this.publish({ selected: sid });
+		this.seeSelected();
+	}
+
+	// A file tab covers the terminal: the selected session is then not looked
+	// at, though the window has focus. Not state: nothing renders it.
+	setCovered(covered: boolean): void {
+		if (covered === this.covered) return;
+		this.covered = covered;
 		this.seeSelected();
 	}
 
@@ -408,7 +417,7 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 	}
 
 	private onNotify(m: Notify): void {
-		if (!shouldShow(m, this.state.selected, this.state.focused)) return;
+		if (!shouldShow(m, this.state.selected, this.state.focused && !this.covered)) return;
 		const info = m.sid === undefined ? undefined : this.entries.get(m.sid)?.info;
 		this.deps.notifier.show(notificationFor(info, m));
 	}
@@ -419,7 +428,7 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 	private seeSelected(): void {
 		const sid = this.state.selected;
 		const info = sid === undefined ? undefined : this.entries.get(sid)?.info;
-		if (sid !== undefined && this.state.focused && (info?.unread || info?.status)) this.link.ready?.seen(sid);
+		if (sid !== undefined && this.state.focused && !this.covered && (info?.unread || info?.status)) this.link.ready?.seen(sid);
 	}
 
 	// Sends the next request unless one is in flight. A queued sid that is

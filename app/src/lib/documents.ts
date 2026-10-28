@@ -134,7 +134,8 @@ export class Documents {
 	private async write(path: string, doc: Document, report: (message: string) => void): Promise<void> {
 		// Taken before the write awaits: typing during it changes the model, and
 		// only the version that was written may count as saved.
-		const text = doc.model.getValue();
+		// Monaco drops a leading BOM from the text it holds; the file keeps it.
+		const text = doc.model.getValue(undefined, true);
 		const version = doc.model.getAlternativeVersionId();
 		const name = fileName(path);
 		try {

@@ -63,15 +63,18 @@
 	const groupTabs = $derived((group !== undefined && groups[group]) || []);
 
 	// Not before the daemon has sent its list: the empty one the app starts
-	// with would drop every repo's tabs. Their documents are kept: no one was
-	// asked about the unsaved edits they may hold.
+	// with would drop every repo's tabs. Those of a repo removed move to Other,
+	// so that no one is left without a way to save the edits they may hold.
 	$effect(() => {
 		if (!$manager.reposListed) return;
 		const kept = prune(groups, $manager.repos);
-		if (Object.keys(kept).length === Object.keys(groups).length) return;
+		if (kept === groups) return;
 		groups = kept;
 		saveTabs(kept);
 	});
+
+	// A file covers the terminal, whose session is then not being looked at.
+	$effect(() => manager.setCovered(active !== undefined));
 
 	let shownSid: number | undefined;
 	$effect(() => {
@@ -113,11 +116,11 @@
 
 	// Asked before unsaved edits are lost; false when the user keeps them or
 	// the question could not be asked.
-	async function mayLose(message: string): Promise<boolean> {
+	async function mayLose(message: string, okLabel: string): Promise<boolean> {
 		try {
-			return await ask(message, 'Close');
+			return await ask(message, okLabel);
 		} catch (e) {
-			manager.report(`asking before closing failed: ${e instanceof Error ? e.message : String(e)}`);
+			manager.report(`asking about unsaved changes failed: ${e instanceof Error ? e.message : String(e)}`);
 			return false;
 		}
 	}
@@ -125,7 +128,7 @@
 	async function closeFileTab(path: string): Promise<void> {
 		const key = group;
 		if (key === undefined) return;
-		if (documents.isDirty(path) && !(await mayLose(`${fileName(path)} has unsaved changes. Close it?`))) return;
+		if (documents.isDirty(path) && !(await mayLose(`${fileName(path)} has unsaved changes. Close it?`, 'Close'))) return;
 		documents.dropDocument(path);
 		groups = closeTab(groups, key, path);
 		saveTabs(groups);
@@ -138,12 +141,29 @@
 		else getCurrentWindow().close().catch((e) => manager.report(`closing the window failed: ${e instanceof Error ? e.message : String(e)}`));
 	}
 
+	// For what ends the app run: true at once when nothing is unsaved.
+	async function mayLoseAll(question: string, okLabel: string): Promise<boolean> {
+		const n = dirty.size;
+		return n === 0 || (await mayLose(`${n === 1 ? '1 file has' : `${n} files have`} unsaved changes. ${question}`, okLabel));
+	}
+
+	// The install ends in an exit, which no close request precedes. Editing is
+	// frozen before the question and until the install fails or is declined, so
+	// that nothing typed meanwhile is lost to the exit.
+	let updating = $state(false);
+	async function installUpdate(): Promise<void> {
+		if (updating) return;
+		updating = true;
+		if (await mayLoseAll('Update and relaunch?', 'Update')) await appUpdater.install();
+		// A successful install leaves the app on its way out, still installing.
+		updating = $appUpdater.installing;
+	}
+
 	// Every way of closing the window but ⌘Q comes here: its close button, ⌘W
 	// and the menu. With a listener, Tauri leaves the closing to it.
 	if (isTauri()) {
 		const unlisten = getCurrentWindow().onCloseRequested(async (e) => {
-			const n = dirty.size;
-			if (n > 0 && !(await mayLose(`${n === 1 ? '1 file has' : `${n} files have`} unsaved changes. Close the window?`))) e.preventDefault();
+			if (!(await mayLoseAll('Close the window?', 'Close'))) e.preventDefault();
 		});
 		unlisten.catch((e) => manager.report(`asking before closing unavailable: ${e instanceof Error ? e.message : String(e)}`));
 		onDestroy(() => void unlisten.then((f) => f(), () => {}));
@@ -197,6 +217,8 @@
 	// manager selects its session only if that very session is still there.
 	function openNotified(target?: Target): void {
 		manager.openNotified(target);
+		// The same session stays selected, so nothing else uncovers its terminal.
+		if (target && selectedRow?.info.sid === target.sid && selectedRow.info.inc === target.inc) void showTab(undefined);
 		const win = getCurrentWindow();
 		win.show()
 			.then(() => win.unminimize())
@@ -399,7 +421,7 @@
 			<TerminalPane sessions={$manager.sessions} selected={$manager.selected} />
 			{#if active !== undefined}
 				{@const path = active}
-				<FilePane bind:this={filePane} {path} onclose={() => void closeFileTab(path)} report={(m) => manager.report(m)} />
+				<FilePane bind:this={filePane} {path} readOnly={updating} onclose={() => void closeFileTab(path)} report={(m) => manager.report(m)} />
 			{/if}
 		</div>
 	</section>
@@ -410,7 +432,7 @@
 				{version}
 				installing={$appUpdater.installing}
 				error={$appUpdater.error}
-				oninstall={() => appUpdater.install()}
+				oninstall={() => void installUpdate()}
 				ondismiss={() => appUpdater.dismiss()}
 				onnotes={() => openExternal(releaseUrl(version), (e) => manager.report(`opening the release notes failed: ${e instanceof Error ? e.message : String(e)}`))}
 			/>

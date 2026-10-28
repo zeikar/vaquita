@@ -3,10 +3,11 @@
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import FilePane from './FilePane.svelte';
-import { readText } from './files';
+import { documents } from './documents';
+import { readText, viewPath } from './files';
 
 const hoisted = vi.hoisted(() => {
-	const editor = { setModel: () => {}, getModel: () => null, focus: () => {}, dispose: () => {} };
+	const editor = { setModel: () => {}, getModel: () => null, focus: () => {}, dispose: () => {}, updateOptions: () => {} };
 	const model = (text: string) => ({
 		getValue: () => text,
 		getAlternativeVersionId: () => 1,
@@ -112,5 +113,25 @@ describe('FilePane markdown', () => {
 		await settle();
 		expect(vi.mocked(readText).mock.calls.map(([p]) => p)).toEqual(['/tmp/repo/four.md', '/tmp/repo/six.md']);
 		expect(target.querySelector('.markdown .body')?.innerHTML).toBe('<p>/tmp/repo/six.md</p>');
+	});
+});
+
+describe('FilePane with unsaved edits', () => {
+	it('keeps the edited text in the editor when the file can no longer be shown, with the reason', async () => {
+		vi.spyOn(documents, 'isDirty').mockReturnValue(true);
+		vi.mocked(viewPath).mockRejectedValueOnce(new Error('no such file'));
+		show('/tmp/repo/gone.txt');
+		await settle();
+		expect(editorShown()).toBe(true);
+		expect(target.querySelector('.note')?.textContent).toContain('no such file');
+		expect(target.querySelector('.error')).toBeNull();
+		vi.restoreAllMocks();
+	});
+
+	it('shows the error alone when nothing is unsaved', async () => {
+		vi.mocked(viewPath).mockRejectedValueOnce(new Error('no such file'));
+		show('/tmp/repo/gone2.txt');
+		await settle();
+		expect(target.querySelector('.error')?.textContent).toContain('no such file');
 	});
 });
