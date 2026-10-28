@@ -39,9 +39,14 @@
 		restartDaemon,
 		connect: (endpoint, handlers) => new DaemonConnection(endpoint, handlers),
 		createTerminal: (cols, rows) => createTerminal(cols, rows),
-		createView: (term, core, cwd) => new TermView(term, core, (m, tone) => manager.report(m, tone), cwd),
+		createView: (term, core, cwd) =>
+			new TermView(term, core, (m, tone) => manager.report(m, tone), cwd, (path) => openFile(cwd, path)),
 		notifier: { show: (n) => notifier.show(n) },
 	});
+	// Stands in until files open in tabs; cwd is the session's starting folder.
+	function openFile(_cwd: string, path: string): void {
+		manager.report(`view: ${path}`, 'info');
+	}
 	let destroyed = false;
 	onDestroy(() => {
 		destroyed = true;

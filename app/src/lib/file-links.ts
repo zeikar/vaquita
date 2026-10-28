@@ -2,7 +2,9 @@ import { isTauri } from './tauri';
 import { openExternal, type Opener } from './links';
 import type { Tone } from './manager';
 
-export type OpenResult = { action: 'opened' } | { action: 'revealed'; why: string };
+// opened: handed to the default app. revealed: shown in Finder, not opened.
+// view: a file the app shows in a tab itself; path is the canonical one.
+export type OpenResult = { action: 'opened' } | { action: 'revealed'; why: string } | { action: 'view'; path: string };
 export type Invoker = (path: string, host: string) => Promise<OpenResult>;
 
 // start and end are string indices into the line; the link provider maps them to
@@ -151,19 +153,21 @@ export async function openPath(
 	path: string,
 	host: string,
 	report: (m: string, tone?: Tone) => void,
+	onView: (path: string) => void,
 	invoker: Invoker = defaultInvoker,
 	fallback?: string,
 ): Promise<void> {
 	try {
 		const r = await invoker(path, host);
 		if (r.action === 'revealed') report(`revealed in Finder, not opened: ${path} (${r.why})`, 'info');
+		else if (r.action === 'view') onView(r.path);
 	} catch (e) {
 		// open_path's word for a path that does not exist, the one failure that
 		// says a joined path was a wrong guess. The fallback may be another file
 		// than the one the hover named, so the switch is told.
 		if (fallback !== undefined && errText(e) === 'no such file') {
 			report(`${path}: no such file, opening ${fallback}`, 'info');
-			return openPath(fallback, host, report, invoker);
+			return openPath(fallback, host, report, onView, invoker);
 		}
 		report(`open ${path}: ${errText(e)}`);
 	}
@@ -174,18 +178,19 @@ export function activateUri(
 	e: MouseEvent,
 	text: LinkText,
 	report: (m: string, tone?: Tone) => void,
+	onView: (path: string) => void,
 	invoker: Invoker = defaultInvoker,
 	opener?: Opener,
 ): void {
 	if (!e.metaKey) return;
 	const [uri, fallback] = typeof text === 'string' ? [text, undefined] : text;
 	if (uri.startsWith('/') || uri === '~' || uri.startsWith('~/')) {
-		void openPath(uri, '', report, invoker, fallback);
+		void openPath(uri, '', report, onView, invoker, fallback);
 		return;
 	}
 	const file = fileUrlToPath(uri);
 	if (file) {
-		void openPath(file.path, file.host, report, invoker);
+		void openPath(file.path, file.host, report, onView, invoker);
 		return;
 	}
 	openExternal(uri, (err) => report(`open ${uri}: ${errText(err)}`), opener);

@@ -44,7 +44,7 @@ async function cmdClick(t: Terminal, y: number, cwd: string, missing: string) {
 		if (path === missing) throw 'no such file';
 		return { action: 'opened' };
 	};
-	const handlers: LinkHandlers = { ...noop, activate: (e, text) => activateUri(e, text, (m) => said.push(m), invoker) };
+	const handlers: LinkHandlers = { ...noop, activate: (e, text) => activateUri(e, text, (m) => said.push(m), () => {}, invoker) };
 	links(t, y, cwd, handlers)![0].activate({ metaKey: true } as MouseEvent, '');
 	// The invoker settles in microtasks, all run before a timer.
 	await new Promise((r) => setTimeout(r));

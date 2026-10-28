@@ -53,6 +53,7 @@ export class TermView implements ViewLike {
 		private readonly core: SessionCore,
 		private readonly report: (message: string, tone?: Tone) => void,
 		private readonly cwd: string,
+		private readonly onView: (path: string) => void,
 	) {}
 
 	// Types text into the session, e.g. dropped file paths.
@@ -75,7 +76,7 @@ export class TermView implements ViewLike {
 		// hyperlinks xterm passes the link's URI to linkHandler, not the visible text.
 		// Without allowNonHttpProtocols xterm would drop file: links; activateUri is
 		// the one gate that decides what a click opens.
-		const activate = (e: MouseEvent, uri: LinkText) => activateUri(e, uri, this.report);
+		const activate = (e: MouseEvent, uri: LinkText) => activateUri(e, uri, this.report, this.onView);
 		const hover = (_e: MouseEvent, uri: string) => {
 			container.title = uri;
 		};

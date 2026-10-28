@@ -146,7 +146,7 @@ describe('openPath', () => {
 	it('reports nothing when opened', async () => {
 		const { invoker, calls } = fakeInvoker({ action: 'opened' });
 		const said: string[] = [];
-		await openPath('/tmp/a', '', (m) => said.push(m), invoker);
+		await openPath('/tmp/a', '', (m) => said.push(m), () => {}, invoker);
 		expect(calls).toEqual([{ path: '/tmp/a', host: '' }]);
 		expect(said).toEqual([]);
 	});
@@ -154,14 +154,23 @@ describe('openPath', () => {
 	it('reports a reveal, as no failure', async () => {
 		const { invoker } = fakeInvoker({ action: 'revealed', why: 'it is a script' });
 		const said: [string, string?][] = [];
-		await openPath('/tmp/a.sh', '', (m, tone) => said.push([m, tone]), invoker);
+		await openPath('/tmp/a.sh', '', (m, tone) => said.push([m, tone]), () => {}, invoker);
 		expect(said).toEqual([['revealed in Finder, not opened: /tmp/a.sh (it is a script)', 'info']]);
+	});
+
+	it('hands a viewable file to onView and reports nothing', async () => {
+		const { invoker } = fakeInvoker({ action: 'view', path: '/tmp/real/a.md' });
+		const said: string[] = [];
+		const viewed: string[] = [];
+		await openPath('/tmp/a.md', '', (m) => said.push(m), (p) => viewed.push(p), invoker);
+		expect(viewed).toEqual(['/tmp/real/a.md']);
+		expect(said).toEqual([]);
 	});
 
 	it('reports a rejection, string or Error', async () => {
 		const said: string[] = [];
-		await openPath('/tmp/a', '', (m) => said.push(m), fakeInvoker('no such file').invoker);
-		await openPath('/tmp/b', '', (m) => said.push(m), fakeInvoker(new Error('boom')).invoker);
+		await openPath('/tmp/a', '', (m) => said.push(m), () => {}, fakeInvoker('no such file').invoker);
+		await openPath('/tmp/b', '', (m) => said.push(m), () => {}, fakeInvoker(new Error('boom')).invoker);
 		expect(said).toEqual(['open /tmp/a: no such file', 'open /tmp/b: boom']);
 	});
 });
@@ -170,7 +179,7 @@ describe('activateUri', () => {
 	function click(text: string, metaKey: boolean) {
 		const { invoker, calls } = fakeInvoker({ action: 'opened' });
 		const opened: string[] = [];
-		activateUri({ metaKey } as MouseEvent, text, () => {}, invoker, (u) => void opened.push(u));
+		activateUri({ metaKey } as MouseEvent, text, () => {}, () => {}, invoker, (u) => void opened.push(u));
 		return { calls, opened };
 	}
 
@@ -211,7 +220,7 @@ describe('activateUri with a fallback', () => {
 		const { invoker, calls } = fakeInvoker(...results);
 		// Only a report that is no failure passes a tone.
 		const said: string[] = [];
-		activateUri({ metaKey } as MouseEvent, pair, (m, tone) => said.push(tone ? `${tone}: ${m}` : m), invoker);
+		activateUri({ metaKey } as MouseEvent, pair, (m, tone) => said.push(tone ? `${tone}: ${m}` : m), () => {}, invoker);
 		// The invoker settles in microtasks, all run before a timer.
 		await new Promise((r) => setTimeout(r));
 		return { tried: calls.map((c) => c.path), said };
