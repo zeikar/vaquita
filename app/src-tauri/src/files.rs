@@ -12,12 +12,15 @@
 //! can be swapped after view_path: the empty sandbox on the PDF frame does,
 //! and no asset URL but a PDF's is ever framed or navigated to.
 
+use std::ffi::{CString, OsString};
 use std::fs::{File, Metadata, OpenOptions};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use crate::open_path::{self, Action};
@@ -118,6 +121,144 @@ pub async fn view_path(app: AppHandle, path: String) -> Result<Viewable, String>
     .map_err(|e| e.to_string())?
 }
 
+/// A file's modification time and length, which a save compares to tell
+/// whether the file is still the one the text was read from.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Stamp {
+    secs: u64,
+    nanos: u32,
+    len: u64,
+}
+
+impl Stamp {
+    fn of(meta: &Metadata) -> io::Result<Stamp> {
+        let modified = meta.modified()?.duration_since(UNIX_EPOCH).map_err(|_| io::Error::other("modified before 1970"))?;
+        Ok(Stamp { secs: modified.as_secs(), nanos: modified.subsec_nanos(), len: meta.len() })
+    }
+}
+
+pub const CHANGED_ON_DISK: &str = "changed on disk";
+const NOT_REGULAR: &str = "not a regular file";
+const READ_ONLY: &str = "read-only";
+const TOO_LARGE: &str = "larger than 2 MiB";
+
+/// The stamp of the file at canonical itself; a symlink put in its place is
+/// not followed, as the rename would replace the link.
+fn stamp(canonical: &Path) -> Result<Stamp, String> {
+    let meta = std::fs::symlink_metadata(canonical).map_err(open_path::io_error)?;
+    if !meta.is_file() {
+        return Err(NOT_REGULAR.to_string());
+    }
+    Stamp::of(&meta).map_err(open_path::io_error)
+}
+
+#[derive(Debug, Serialize)]
+pub struct Contents {
+    text: String,
+    stamp: Stamp,
+}
+
+fn read(path: &Path) -> Result<Contents, String> {
+    let canonical = std::fs::canonicalize(path).map_err(open_path::io_error)?;
+    // Nonblocking, so a FIFO cannot hang the open; the stamp is the handle's,
+    // taken before the read, so a change during the read shows on save.
+    let f = OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(canonical).map_err(open_path::io_error)?;
+    let meta = f.metadata().map_err(open_path::io_error)?;
+    if !meta.is_file() {
+        return Err(NOT_REGULAR.to_string());
+    }
+    if meta.len() > TEXT_MAX {
+        return Err(TOO_LARGE.to_string());
+    }
+    let stamp = Stamp::of(&meta).map_err(open_path::io_error)?;
+    let mut bytes = Vec::new();
+    // Bounded, as the file can grow after its length was taken.
+    (&f).take(TEXT_MAX + 1).read_to_end(&mut bytes).map_err(open_path::io_error)?;
+    if bytes.len() as u64 > TEXT_MAX {
+        return Err(TOO_LARGE.to_string());
+    }
+    // Strict: a lossy read would be saved back lossy.
+    let text = String::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_string())?;
+    Ok(Contents { text, stamp })
+}
+
+/// Puts text in place of the file at canonical and returns its new stamp;
+/// with expect, only while the file's stamp is still expect, else
+/// CHANGED_ON_DISK. The text goes to a temporary file beside it that is then
+/// renamed over it, so a failed write, a full disk say, leaves the original
+/// whole. The temporary file is made with create_new, so a file or symlink
+/// already at its name is never truncated or followed. The stamp is compared
+/// again just before the rename, so a change made while the text was being
+/// written is not silently lost; one in the instant between that check and the
+/// rename still is. Only the permission bits carry over, not the owner or
+/// extended attributes, and another hard link to the file keeps the old text.
+fn replace(canonical: &Path, text: &str, expect: Option<Stamp>) -> Result<Stamp, String> {
+    let meta = std::fs::metadata(canonical).map_err(open_path::io_error)?;
+    if !meta.is_file() {
+        return Err(NOT_REGULAR.to_string());
+    }
+    let before = Stamp::of(&meta).map_err(open_path::io_error)?;
+    if expect.is_some_and(|e| e != before) {
+        return Err(CHANGED_ON_DISK.to_string());
+    }
+    // The rename needs only the folder to be writable, so it would replace a
+    // file the user cannot write.
+    let c = CString::new(canonical.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
+    // SAFETY: c ends in NUL.
+    if unsafe { libc::access(c.as_ptr(), libc::W_OK) } != 0 {
+        let e = io::Error::last_os_error();
+        return Err(match e.raw_os_error() {
+            Some(libc::EACCES | libc::EPERM | libc::EROFS) => READ_ONLY.to_string(),
+            _ => open_path::io_error(e),
+        });
+    }
+    let mut name = OsString::from(".");
+    name.push(canonical.file_name().ok_or(NOT_REGULAR)?);
+    name.push(format!(".vaquita-{}.tmp", std::process::id()));
+    let tmp = canonical.with_file_name(&name);
+    let mut f = match OpenOptions::new().write(true).create_new(true).open(&tmp) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            return Err(format!("a temporary file is in the way: {}", name.to_string_lossy()));
+        }
+        Err(e) => return Err(open_path::io_error(e)),
+    };
+    let written = (|| {
+        f.set_permissions(meta.permissions()).map_err(open_path::io_error)?;
+        f.write_all(text.as_bytes()).map_err(open_path::io_error)?;
+        f.sync_all().map_err(open_path::io_error)?;
+        // The rename keeps the inode, so this is the saved file's stamp.
+        let after = Stamp::of(&f.metadata().map_err(open_path::io_error)?).map_err(open_path::io_error)?;
+        if stamp(canonical)? != before {
+            return Err(CHANGED_ON_DISK.to_string());
+        }
+        std::fs::rename(&tmp, canonical).map_err(open_path::io_error)?;
+        Ok(after)
+    })();
+    if written.is_err() {
+        // This call made tmp, so nobody else's file is removed.
+        if let Err(e) = std::fs::remove_file(&tmp) {
+            eprintln!("vaquita: remove {}: {e}", tmp.display());
+        }
+    }
+    written
+}
+
+#[tauri::command]
+pub async fn read_text(path: String) -> Result<Contents, String> {
+    tauri::async_runtime::spawn_blocking(move || read(Path::new(&path))).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn write_text(path: String, text: String, expect: Option<Stamp>) -> Result<Stamp, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let canonical = std::fs::canonicalize(&path).map_err(open_path::io_error)?;
+        replace(&canonical, &text, expect)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,5 +320,98 @@ mod tests {
     fn a_folder_is_not_shown() {
         let d = dir("kind-folder");
         assert_eq!(kind_of(&d, &std::fs::metadata(&d).unwrap()).unwrap(), None);
+    }
+
+    use std::os::unix::fs::PermissionsExt;
+
+    fn text_file(name: &str, text: &str) -> PathBuf {
+        let p = file(&dir(&format!("text-{name}")), "notes.txt", 0o644);
+        std::fs::write(&p, text).unwrap();
+        p
+    }
+
+    fn content(p: &Path) -> String {
+        std::fs::read_to_string(p).unwrap()
+    }
+
+    // Every write below changes the length, so a stamp differs even where the
+    // clock is too coarse to tell two writes apart.
+
+    #[test]
+    fn a_read_gives_the_text_and_its_stamp() {
+        let p = text_file("read", "héllo\n");
+        let r = read(&p).unwrap();
+        assert_eq!(r.text, "héllo\n");
+        assert_eq!(r.stamp, stamp(&p).unwrap());
+    }
+
+    #[test]
+    fn a_write_with_the_read_stamp_saves_and_gives_a_new_one() {
+        let p = text_file("write", "one\n");
+        let old = read(&p).unwrap().stamp;
+        let new = replace(&p, "one two\n", Some(old)).unwrap();
+        assert_ne!(new, old);
+        assert_eq!(new, stamp(&p).unwrap());
+        assert_eq!(content(&p), "one two\n");
+    }
+
+    #[test]
+    fn a_write_with_a_stale_stamp_leaves_the_file() {
+        let p = text_file("stale", "one\n");
+        let old = read(&p).unwrap().stamp;
+        std::fs::write(&p, "changed elsewhere\n").unwrap();
+        assert_eq!(replace(&p, "mine\n", Some(old)).unwrap_err(), CHANGED_ON_DISK);
+        assert_eq!(content(&p), "changed elsewhere\n");
+        // Without a stamp it writes whatever is there.
+        replace(&p, "mine\n", None).unwrap();
+        assert_eq!(content(&p), "mine\n");
+    }
+
+    #[test]
+    fn a_write_keeps_the_mode() {
+        let p = file(&dir("text-mode"), "notes.txt", 0o640);
+        replace(&p, "longer text\n", None).unwrap();
+        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o640);
+    }
+
+    #[test]
+    fn a_read_only_file_is_not_replaced() {
+        let p = file(&dir("text-ro"), "notes.txt", 0o444);
+        assert_eq!(replace(&p, "longer text\n", None).unwrap_err(), READ_ONLY);
+        assert_eq!(content(&p), "x");
+        let names: Vec<_> = std::fs::read_dir(p.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names, ["notes.txt"]);
+    }
+
+    #[test]
+    fn a_write_into_a_folder_it_cannot_write_leaves_everything() {
+        let p = text_file("readonly", "one\n");
+        let d = p.parent().unwrap();
+        std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let r = replace(&p, "one two\n", None);
+        let names: Vec<_> = std::fs::read_dir(d).unwrap().map(|e| e.unwrap().file_name()).collect();
+        std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(r.unwrap_err(), "Permission denied (os error 13)");
+        assert_eq!(content(&p), "one\n");
+        assert_eq!(names, ["notes.txt"]);
+    }
+
+    #[test]
+    fn a_file_at_the_temporary_name_is_left_alone() {
+        let p = text_file("inway", "one\n");
+        let name = format!(".notes.txt.vaquita-{}.tmp", std::process::id());
+        let tmp = p.with_file_name(&name);
+        std::fs::write(&tmp, "someone else's\n").unwrap();
+        assert_eq!(replace(&p, "one two\n", None).unwrap_err(), format!("a temporary file is in the way: {name}"));
+        assert_eq!(content(&p), "one\n");
+        assert_eq!(content(&tmp), "someone else's\n");
+    }
+
+    #[test]
+    fn a_missing_or_binary_file_is_not_read() {
+        let p = text_file("bad", "");
+        assert_eq!(read(&p.with_file_name("missing.txt")).unwrap_err(), "no such file");
+        std::fs::write(&p, b"caf\xe9").unwrap();
+        assert_eq!(read(&p).unwrap_err(), "not UTF-8 text");
     }
 }

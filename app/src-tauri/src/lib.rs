@@ -150,6 +150,8 @@ pub fn run() {
             notify::take_notification_click,
             open_path::open_path,
             files::view_path,
+            files::read_text,
+            files::write_text,
             update::check_app_update,
             update::install_app_update
         ])

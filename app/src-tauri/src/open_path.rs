@@ -189,7 +189,7 @@ fn judge(canonical: &Path, meta: &Metadata, handler: &dyn Fn(&Path) -> Option<St
     }
 }
 
-fn io_error(e: std::io::Error) -> String {
+pub(crate) fn io_error(e: std::io::Error) -> String {
     match e.kind() {
         // A path that runs through a file (a.txt/b) names nothing either, and the
         // webview takes this word as a miss.
