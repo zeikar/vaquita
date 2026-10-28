@@ -8,7 +8,7 @@
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
 	import { documents } from './documents';
-	import { fileUrl, viewPath, type FileKind } from './files';
+	import { fileUrl, pdfUrl, viewPath, type FileKind } from './files';
 	import MarkdownView from './MarkdownView.svelte';
 	import { fileName } from './tabs';
 	import TextEditor from './TextEditor.svelte';
@@ -111,7 +111,7 @@
 		}
 		const { path: canonical, kind } = viewable;
 		if (kind === 'text' || kind === 'markdown') return { state: 'view', path: asked, kind };
-		return { state: 'view', path: asked, kind, src: await fileUrl(canonical) };
+		return { state: 'view', path: asked, kind, src: await (kind === 'pdf' ? pdfUrl : fileUrl)(canonical) };
 	}
 
 	const failed = () => report(`${fileName(path)} could not be shown`);
@@ -144,9 +144,10 @@
 		{#if shown.kind === 'image'}
 			<img src={shown.src} alt={fileName(path)} onerror={failed} />
 		{:else if shown.kind === 'pdf'}
-			<!-- An empty sandbox: whatever the frame shows runs no script and
-			     cannot navigate the app. Only a file judged a PDF gets here. -->
-			<iframe src={shown.src} sandbox="" title={fileName(path)}></iframe>
+			<!-- No sandbox, as WebKit's PDF viewer does not run in one. The
+			     scheme forces the type and re-checks the PDF magic on every
+			     request, so the frame can only ever be a PDF. -->
+			<iframe src={shown.src} title={fileName(path)}></iframe>
 		{:else if shown.kind === 'audio'}
 			<audio src={shown.src} controls onerror={failed}></audio>
 		{:else if shown.kind === 'video'}

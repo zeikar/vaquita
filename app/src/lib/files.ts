@@ -42,6 +42,13 @@ export async function fileUrl(path: string): Promise<string> {
 	return convertFileSrc(path);
 }
 
+// A PDF comes through its own scheme, which serves only a path view_path
+// judged a PDF and forces its type; WebKit shows no PDF in a sandboxed frame.
+export async function pdfUrl(path: string): Promise<string> {
+	const { convertFileSrc } = await import('@tauri-apps/api/core');
+	return convertFileSrc(path, 'vqpdf');
+}
+
 export type TabAction = 'close' | 'terminal' | 'prev' | 'next';
 
 function isTabAction(v: unknown): v is TabAction {

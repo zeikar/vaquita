@@ -26,6 +26,7 @@ vi.mock('./files', () => ({
 	viewPath: vi.fn(async (path: string) => ({ path, kind: path.endsWith('.md') ? 'markdown' : path.endsWith('.png') ? 'image' : 'text' })),
 	readText: vi.fn(async (path: string) => ({ text: `<p>${path}</p>`, stamp: { secs: 1, nanos: 0, len: 1 } })),
 	writeText: vi.fn(),
+	pdfUrl: vi.fn(async (path: string) => `vqpdf://localhost${path}`),
 	fileUrl: vi.fn(async (path: string) => `asset://localhost${path}`),
 }));
 vi.mock('./monaco', () => ({ loadMonaco: async () => hoisted.monaco, languageFor: () => 'markdown' }));
