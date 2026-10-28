@@ -1,3 +1,4 @@
+mod files;
 mod home;
 mod launchd;
 mod notify;
@@ -148,6 +149,7 @@ pub fn run() {
             notify::notify,
             notify::take_notification_click,
             open_path::open_path,
+            files::view_path,
             update::check_app_update,
             update::install_app_update
         ])

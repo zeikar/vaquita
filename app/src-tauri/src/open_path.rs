@@ -6,8 +6,9 @@
 //! read; its name has an extension on BUNDLES or FILES, or a folder above it
 //! one on BUNDLES; or the app macOS would open it with is on HANDLERS, or is
 //! Finder for something that is not a folder. A path no app opens is revealed
-//! too. Everything else opens with its default app. The lists are all the
-//! guard knows.
+//! too. Everything else opens with its default app, but for the text,
+//! markdown and media files that the webview shows itself, by the rule in
+//! files.rs. The lists are all the guard knows.
 
 use std::ffi::{CStr, CString};
 use std::fs::Metadata;
@@ -19,6 +20,8 @@ use objc2::rc::autoreleasepool;
 use objc2_app_kit::NSWorkspace;
 use objc2_foundation::{NSBundle, NSString, NSURL};
 use serde::Serialize;
+
+use crate::files::{self, Kind};
 
 // Lowercase extensions of kinds that run or install when opened, or open a
 // stored target. Bundles count on any component, which covers a file inside one.
@@ -60,12 +63,25 @@ const FINDER: &str = "com.apple.finder";
 const ITSELF: &str = "(itself)";
 
 /// What a click did, as openPath in src/lib/file-links.ts receives it; the
-/// webview shows the why of a reveal in its status line.
+/// webview shows the why of a reveal in its status line, and opens a tab for a
+/// view.
 #[derive(Debug, PartialEq, Serialize)]
-#[serde(tag = "action", content = "why", rename_all = "lowercase")]
+#[serde(tag = "action", rename_all = "lowercase")]
 pub enum Action {
     Opened,
-    Revealed(String),
+    Revealed {
+        why: String,
+    },
+    View {
+        path: PathBuf,
+        // For view_path; the tab asks it, so that a restored tab is judged afresh.
+        #[serde(skip)]
+        kind: Kind,
+    },
+}
+
+fn revealed(why: impl Into<String>) -> Action {
+    Action::Revealed { why: why.into() }
 }
 
 /// `~` and `~/rest` under home; any other path as it is.
@@ -97,7 +113,7 @@ fn is_local_host(host: &str) -> bool {
 
 /// The bundle identifier of the app macOS would open path with; None when no
 /// app would, or that app has none; ITSELF when that app is path itself.
-fn handler_id(path: &Path) -> Option<String> {
+pub(crate) fn handler_id(path: &Path) -> Option<String> {
     // A blocking thread has no autorelease pool of its own.
     autoreleasepool(|_| {
         let url = NSURL::fileURLWithPath(&NSString::from_str(path.to_str()?));
@@ -139,37 +155,37 @@ fn listed(path: &Path, lists: &[&[&str]]) -> Option<String> {
 /// Whether a click opens canonical or only reveals it, by the rule above.
 fn judge(canonical: &Path, meta: &Metadata, handler: &dyn Fn(&Path) -> Option<String>) -> Action {
     if meta.is_file() && meta.permissions().mode() & 0o111 != 0 {
-        return Action::Revealed("it is executable".to_string());
+        return revealed("it is executable");
     }
     match is_alias(canonical) {
         Ok(false) => {}
-        Ok(true) => return Action::Revealed("it is a Finder alias".to_string()),
+        Ok(true) => return revealed("it is a Finder alias"),
         // A check that could not run must not let the file open.
         Err(e) => {
             eprintln!("vaquita: read Finder info of {}: {e}", canonical.display());
-            return Action::Revealed("its Finder info cannot be read".to_string());
+            return revealed("its Finder info cannot be read");
         }
     }
     if let Some(ext) = listed(canonical, &[BUNDLES, FILES]) {
-        return Action::Revealed(format!("it is a .{ext}, a kind that runs or installs when opened"));
+        return revealed(format!("it is a .{ext}, a kind that runs or installs when opened"));
     }
     if let Some(ext) = canonical.ancestors().skip(1).find_map(|a| listed(a, &[BUNDLES])) {
-        return Action::Revealed(format!("it is inside a .{ext}"));
+        return revealed(format!("it is inside a .{ext}"));
     }
     match handler(canonical) {
         // An extension off the lists does not make a folder safe: opening an
         // application bundle launches it.
-        Some(id) if id == ITSELF => Action::Revealed("it is an app".to_string()),
+        Some(id) if id == ITSELF => revealed("it is an app"),
         Some(id) if HANDLERS.iter().any(|h| h.eq_ignore_ascii_case(&id)) => {
-            Action::Revealed(format!("its default app {id} runs or installs what it opens"))
+            revealed(format!("its default app {id} runs or installs what it opens"))
         }
         // Finder is a file's default app when the file points elsewhere, as a
         // location file does, and opening it opens the target.
         Some(id) if !meta.is_dir() && id.eq_ignore_ascii_case(FINDER) => {
-            Action::Revealed("Finder opens what it points to".to_string())
+            revealed("Finder opens what it points to")
         }
         Some(_) => Action::Opened,
-        None => Action::Revealed("no app opens it".to_string()),
+        None => revealed("no app opens it"),
     }
 }
 
@@ -184,7 +200,7 @@ fn io_error(e: std::io::Error) -> String {
 
 /// The canonical path a file URL or a path in the output names, and what a
 /// click does with it. No error names the path: the webview adds it.
-fn resolve(path: &str, host: &str, home: &Path, handler: &dyn Fn(&Path) -> Option<String>) -> Result<(PathBuf, Action), String> {
+pub(crate) fn resolve(path: &str, host: &str, home: &Path, handler: &dyn Fn(&Path) -> Option<String>) -> Result<(PathBuf, Action), String> {
     if !is_local_host(host) {
         return Err(format!("not this Mac: {host}"));
     }
@@ -194,7 +210,18 @@ fn resolve(path: &str, host: &str, home: &Path, handler: &dyn Fn(&Path) -> Optio
     }
     let canonical = std::fs::canonicalize(&path).map_err(io_error)?;
     let meta = std::fs::metadata(&canonical).map_err(io_error)?;
-    let action = judge(&canonical, &meta, handler);
+    let action = match judge(&canonical, &meta, handler) {
+        Action::Opened => match files::kind_of(&canonical, &meta) {
+            Ok(None) => Action::Opened,
+            Ok(Some(kind)) => Action::View { path: canonical.clone(), kind },
+            // Its default app could not read it either, so Finder shows it.
+            Err(e) => {
+                eprintln!("vaquita: read {}: {e}", canonical.display());
+                revealed(format!("it cannot be read: {e}"))
+            }
+        },
+        action => action,
+    };
     Ok((canonical, action))
 }
 
@@ -209,7 +236,9 @@ pub async fn open_path(path: String, host: String) -> Result<Action, String> {
         // The canonical path, the one that was judged.
         let (done, failed) = match &action {
             Action::Opened => (tauri_plugin_opener::open_path(&canonical, None::<&str>), "macOS could not open it"),
-            Action::Revealed(_) => (tauri_plugin_opener::reveal_item_in_dir(&canonical), "Finder could not show it"),
+            Action::Revealed { .. } => (tauri_plugin_opener::reveal_item_in_dir(&canonical), "Finder could not show it"),
+            // The webview opens a tab, which asks view_path.
+            Action::View { .. } => return Ok(action),
         };
         if let Err(e) = done {
             // The opener's message names the path, which the webview adds itself.
@@ -223,20 +252,20 @@ pub async fn open_path(path: String, host: String) -> Result<Action, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
 
     const EDITOR: &str = "com.microsoft.VSCode";
 
-    fn dir(name: &str) -> PathBuf {
+    pub(crate) fn dir(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("vaquita-open-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
     }
 
-    fn file(d: &Path, name: &str, mode: u32) -> PathBuf {
+    pub(crate) fn file(d: &Path, name: &str, mode: u32) -> PathBuf {
         let p = d.join(name);
         std::fs::write(&p, "x").unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
@@ -255,8 +284,8 @@ mod tests {
         resolve_with(path, handler).unwrap().1
     }
 
-    fn revealed(why: &str) -> Action {
-        Action::Revealed(why.to_string())
+    fn viewed(path: &Path, kind: Kind) -> Action {
+        Action::View { path: std::fs::canonicalize(path).unwrap(), kind }
     }
 
     /// Gives p Finder info whose Finder flags, bytes 8-9, are flags.
@@ -275,11 +304,14 @@ mod tests {
     fn the_webview_gets_the_action_and_its_why() {
         assert_eq!(serde_json::to_string(&Action::Opened).unwrap(), r#"{"action":"opened"}"#);
         assert_eq!(serde_json::to_string(&revealed("w")).unwrap(), r#"{"action":"revealed","why":"w"}"#);
+        let view = Action::View { path: PathBuf::from("/tmp/repo/a.md"), kind: Kind::Markdown };
+        assert_eq!(serde_json::to_string(&view).unwrap(), r#"{"action":"view","path":"/tmp/repo/a.md"}"#);
     }
 
     #[test]
-    fn a_plain_file_opens() {
-        assert_eq!(act(&file(&dir("plain"), "notes.txt", 0o644), &editor), Action::Opened);
+    fn a_plain_file_is_shown_in_the_app() {
+        let p = file(&dir("plain"), "notes.txt", 0o644);
+        assert_eq!(act(&p, &editor), viewed(&p, Kind::Text));
     }
 
     #[test]
@@ -299,7 +331,7 @@ mod tests {
         let p = file(&dir("flags"), "notes.txt", 0o644);
         // Every flag but the alias one.
         set_finder_flags(&p, [0x7f, 0xff]);
-        assert_eq!(act(&p, &editor), Action::Opened);
+        assert_eq!(act(&p, &editor), viewed(&p, Kind::Text));
     }
 
     #[test]
@@ -312,16 +344,18 @@ mod tests {
     #[test]
     fn a_listed_extension_is_revealed_whatever_its_case() {
         let d = dir("ext");
-        assert_eq!(act(&file(&d, "run.command", 0o644), &editor), revealed(&format!("it is a .command, {KIND}")));
-        assert_eq!(act(&file(&d, "notes.term", 0o644), &editor), revealed(&format!("it is a .term, {KIND}")));
-        assert_eq!(act(&file(&d, "Thing.SH", 0o644), &editor), revealed(&format!("it is a .sh, {KIND}")));
+        assert_eq!(act(&file(&d, "run.command", 0o644), &editor), revealed(format!("it is a .command, {KIND}")));
+        assert_eq!(act(&file(&d, "notes.term", 0o644), &editor), revealed(format!("it is a .term, {KIND}")));
+        assert_eq!(act(&file(&d, "Thing.SH", 0o644), &editor), revealed(format!("it is a .sh, {KIND}")));
     }
 
     #[test]
-    fn a_script_off_the_list_opens_with_an_editor() {
+    fn a_script_off_the_list_is_shown_in_the_app() {
         let d = dir("script");
-        assert_eq!(act(&file(&d, "lib.rb", 0o644), &editor), Action::Opened);
-        assert_eq!(act(&file(&d, "tool.py", 0o644), &editor), Action::Opened);
+        for name in ["lib.rb", "tool.py"] {
+            let p = file(&d, name, 0o644);
+            assert_eq!(act(&p, &editor), viewed(&p, Kind::Text));
+        }
     }
 
     #[test]
@@ -388,7 +422,7 @@ mod tests {
     fn a_shortcut_or_input_method_app_is_revealed() {
         for id in ["com.apple.shortcuts", "com.apple.pluginIM.pluginIMRegistrator"] {
             let why = format!("its default app {id} runs or installs what it opens");
-            assert_eq!(handled_by("apple-apps", id), revealed(&why));
+            assert_eq!(handled_by("apple-apps", id), revealed(why));
         }
     }
 
@@ -413,7 +447,7 @@ mod tests {
         std::fs::write(&run, "#!/bin/sh\n").unwrap();
         std::fs::set_permissions(&run, std::fs::Permissions::from_mode(0o755)).unwrap();
         let (_, action) = resolve_with(&app, &handler_id).unwrap();
-        assert!(matches!(action, Action::Revealed(_)), "{action:?}");
+        assert!(matches!(action, Action::Revealed { .. }), "{action:?}");
     }
 
     #[test]
@@ -421,7 +455,7 @@ mod tests {
         let d = dir("bundle");
         let contents = d.join("Foo.app/Contents");
         std::fs::create_dir_all(&contents).unwrap();
-        assert_eq!(act(&d.join("Foo.app"), &editor), revealed(&format!("it is a .app, {KIND}")));
+        assert_eq!(act(&d.join("Foo.app"), &editor), revealed(format!("it is a .app, {KIND}")));
         assert_eq!(act(&file(&contents, "Info.plist", 0o644), &editor), revealed("it is inside a .app"));
     }
 
@@ -429,7 +463,8 @@ mod tests {
     fn a_folder_named_like_a_script_holds_ordinary_files() {
         let d = dir("clone").join("acme.sh");
         std::fs::create_dir_all(&d).unwrap();
-        assert_eq!(act(&file(&d, "README.md", 0o644), &editor), Action::Opened);
+        let p = file(&d, "README.md", 0o644);
+        assert_eq!(act(&p, &editor), viewed(&p, Kind::Markdown));
     }
 
     #[test]
@@ -452,6 +487,18 @@ mod tests {
     }
 
     #[test]
+    fn only_what_would_open_is_shown_in_the_app() {
+        let d = dir("inapp");
+        let sh = file(&d, "build.sh", 0o644);
+        std::fs::write(&sh, "echo hi\n").unwrap();
+        assert_eq!(act(&sh, &editor), revealed(format!("it is a .sh, {KIND}")));
+        assert_eq!(act(&d, &editor), Action::Opened);
+        let binary = file(&d, "data.bin", 0o644);
+        std::fs::write(&binary, b"a\0b").unwrap();
+        assert_eq!(act(&binary, &editor), Action::Opened);
+    }
+
+    #[test]
     fn a_tilde_is_home() {
         let home = Path::new("/tmp/home");
         assert_eq!(expand_home("~", home), home);
@@ -464,7 +511,7 @@ mod tests {
         file(&d, "x.txt", 0o644);
         let (canonical, action) = resolve("~/x.txt", "", &d, &editor).unwrap();
         assert_eq!(canonical, std::fs::canonicalize(&d).unwrap().join("x.txt"));
-        assert_eq!(action, Action::Opened);
+        assert_eq!(action, Action::View { path: canonical, kind: Kind::Text });
     }
 
     #[test]
@@ -478,11 +525,11 @@ mod tests {
 
     #[test]
     fn this_macs_hosts_are_local() {
-        let p = file(&dir("host"), "notes.txt", 0o644);
-        let p = p.to_str().unwrap();
+        let f = file(&dir("host"), "notes.txt", 0o644);
+        let p = f.to_str().unwrap();
         let home = Path::new("/nonexistent");
-        assert_eq!(resolve(p, "localhost", home, &editor).unwrap().1, Action::Opened);
-        assert_eq!(resolve(p, &hostname().unwrap(), home, &editor).unwrap().1, Action::Opened);
+        assert_eq!(resolve(p, "localhost", home, &editor).unwrap().1, viewed(&f, Kind::Text));
+        assert_eq!(resolve(p, &hostname().unwrap(), home, &editor).unwrap().1, viewed(&f, Kind::Text));
         assert_eq!(resolve(p, "other.example", home, &editor).unwrap_err(), "not this Mac: other.example");
     }
 }
