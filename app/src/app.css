@@ -19,13 +19,38 @@ body {
 	font: 13px system-ui, sans-serif;
 }
 
-/* Sidebar left, terminal pane right, the status bar along the bottom. The
-   sidebar's width is set from App, where it is dragged and remembered. */
+/* Sidebar left, the tabs and what they show right, the status bar along the
+   bottom. The sidebar's width is set from App, where it is dragged and
+   remembered. */
 main {
 	display: grid;
 	grid-template-columns: var(--sidebar-width, 280px) minmax(0, 1fr);
 	grid-template-rows: minmax(0, 1fr) auto;
 	height: 100%;
+}
+
+/* The tab bar over the terminal and the file shown. They share the stack's
+   one cell, so switching tabs never resizes the terminal; the bar is always
+   there while a session is selected, so the first file tab does not either.
+   Each layer is isolated so that xterm's z-indexed layers stay inside the
+   terminal's and the file, coming later, paints over all of them. */
+.content {
+	display: grid;
+	grid-template-rows: auto minmax(0, 1fr);
+	min-width: 0;
+	min-height: 0;
+}
+
+.stack {
+	grid-row: 2;
+	display: grid;
+	grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+	min-height: 0;
+}
+
+.stack > * {
+	grid-area: 1 / 1;
+	isolation: isolate;
 }
 
 /* No text selection, as in a native sidebar: WebKit selects the word under a

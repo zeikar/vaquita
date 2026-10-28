@@ -54,6 +54,9 @@ export class TermView implements ViewLike {
 		private readonly report: (message: string, tone?: Tone) => void,
 		private readonly cwd: string,
 		private readonly onView: (path: string) => void,
+		// False while something covers the terminal, such as a file tab, which
+		// typing must not pass through to it.
+		private readonly mayFocus: () => boolean,
 	) {}
 
 	// Types text into the session, e.g. dropped file paths.
@@ -165,7 +168,7 @@ export class TermView implements ViewLike {
 		this.refit();
 		this.observer = new ResizeObserver(() => this.refit());
 		this.observer.observe(container);
-		this.term.focus();
+		if (this.mayFocus()) this.term.focus();
 	}
 
 	private stop(): void {

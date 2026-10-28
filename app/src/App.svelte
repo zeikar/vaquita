@@ -2,25 +2,30 @@
 	import { homeDir } from '@tauri-apps/api/path';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { onDestroy } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import AddRepo from './lib/AddRepo.svelte';
 	import AppUpdateBanner from './lib/AppUpdateBanner.svelte';
 	import { AppUpdater, releaseUrl } from './lib/app-update';
 	import { DaemonConnection } from './lib/connection';
 	import { runningCount } from './lib/daemon-update';
 	import { appBuild, checkAppUpdate, checkRestart, installAppUpdate, onUpdateCheckAsked, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
+	import FilePane from './lib/FilePane.svelte';
+	import { onTabAsked } from './lib/files';
 	import { watchFocus } from './lib/focus';
 	import { repoOf } from './lib/groups';
 	import Icon from './lib/Icon.svelte';
-	import { isNewSessionShortcut, isSidebarShortcut } from './lib/keys';
+	import { isNewSessionShortcut, isNextTabShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut } from './lib/keys';
 	import { openExternal } from './lib/links';
 	import { SessionManager } from './lib/manager';
 	import NewSessionDialog, { LAST_CWD } from './lib/NewSessionDialog.svelte';
-	import type { Notifier, Target } from './lib/notify';
+	import { sessionTitle, type Notifier, type Target } from './lib/notify';
 	import SessionList from './lib/SessionList.svelte';
 	import { loadWidth, SIDEBAR_HIDDEN, SIDEBAR_WIDTH } from './lib/sidebar';
 	import SidebarEdge from './lib/SidebarEdge.svelte';
 	import { load, save } from './lib/storage';
+	import TabBar from './lib/TabBar.svelte';
+	import { closeTab, groupKey, loadTabs, neighbour, openTab, prune, saveTabs } from './lib/tabs';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
 	import { isTauri } from './lib/tauri';
@@ -40,12 +45,83 @@
 		connect: (endpoint, handlers) => new DaemonConnection(endpoint, handlers),
 		createTerminal: (cols, rows) => createTerminal(cols, rows),
 		createView: (term, core, cwd) =>
-			new TermView(term, core, (m, tone) => manager.report(m, tone), cwd, (path) => openFile(cwd, path)),
+			new TermView(term, core, (m, tone) => manager.report(m, tone), cwd, (path) => openFile(cwd, path), () => active === undefined),
 		notifier: { show: (n) => notifier.show(n) },
 	});
-	// Stands in until files open in tabs; cwd is the session's starting folder.
-	function openFile(_cwd: string, path: string): void {
-		manager.report(`view: ${path}`, 'info');
+	// The file tabs of every group, and the one shown; undefined is the
+	// terminal, as after a relaunch and whenever another session is selected.
+	let groups = $state(loadTabs());
+	let active = $state<string>();
+	const dirty = new SvelteSet<string>();
+	let filePane = $state<ReturnType<typeof FilePane>>();
+
+	const selectedRow = $derived($manager.sessions.find((r) => r.info.sid === $manager.selected));
+	const group = $derived(selectedRow && groupKey(selectedRow.info.cwd, $manager.repos));
+	const groupTabs = $derived((group !== undefined && groups[group]) || []);
+
+	// Not before the daemon has sent its list: the empty one the app starts
+	// with would drop every repo's tabs.
+	$effect(() => {
+		if (!$manager.reposListed) return;
+		const kept = prune(groups, $manager.repos);
+		if (Object.keys(kept).length === Object.keys(groups).length) return;
+		groups = kept;
+		saveTabs(kept);
+	});
+
+	let shownSid: number | undefined;
+	$effect(() => {
+		if ($manager.selected === shownSid) return;
+		shownSid = $manager.selected;
+		void showTab(undefined);
+	});
+	// A repo added or removed can move the session to another group, whose
+	// tabs do not include the one shown.
+	$effect(() => {
+		if (active !== undefined && !groupTabs.includes(active)) void showTab(undefined);
+	});
+
+	// A ⌘-clicked file in a session's terminal; cwd is its starting folder.
+	function openFile(cwd: string, path: string): void {
+		groups = openTab(groups, groupKey(cwd, $manager.repos), path);
+		saveTabs(groups);
+		void showTab(path);
+	}
+
+	// What shows takes the focus, so that typing never reaches a terminal
+	// covered by a file.
+	function focusContent(): void {
+		if (active !== undefined) filePane?.focus();
+		else selectedView()?.focus();
+	}
+
+	// No file under the new-session dialog: it gives the focus back to what had
+	// it when it opened, which may be the terminal the file would cover. The
+	// terminal can show, as when the session it creates is selected; the
+	// dialog keeps the focus then.
+	async function showTab(path: string | undefined): Promise<void> {
+		if (dialogOpen && path !== undefined) return;
+		active = path;
+		// The file pane is there to take the focus only once it has rendered.
+		await tick();
+		if (!dialogOpen) focusContent();
+	}
+
+	function closeFileTab(path: string): void {
+		if (group === undefined) return;
+		groups = closeTab(groups, group, path);
+		saveTabs(groups);
+		if (active === path) void showTab(undefined);
+	}
+
+	// ⌘W: the file tab shown, else the window, as the menu's Close Window did.
+	function closeActive(): void {
+		if (active !== undefined) closeFileTab(active);
+		else getCurrentWindow().close().catch((e) => manager.report(`closing the window failed: ${e instanceof Error ? e.message : String(e)}`));
+	}
+
+	function stepTab(step: number): void {
+		void showTab(neighbour(groupTabs, active, step));
 	}
 	let destroyed = false;
 	onDestroy(() => {
@@ -73,6 +149,20 @@
 	const unlistenCheck = onUpdateCheckAsked(() => void appUpdater.checkNow());
 	unlistenCheck.catch((e) => manager.report(`Check for Updates unavailable: ${e instanceof Error ? e.message : String(e)}`));
 	onDestroy(() => void unlistenCheck.then((f) => f(), () => {}));
+	const unlistenTabs = onTabAsked((a) => {
+		switch (a) {
+			case 'close':
+				return closeActive();
+			case 'terminal':
+				return void showTab(undefined);
+			case 'prev':
+				return stepTab(-1);
+			case 'next':
+				return stepTab(1);
+		}
+	});
+	unlistenTabs.catch((e) => manager.report(`tab shortcuts unavailable: ${e instanceof Error ? e.message : String(e)}`));
+	onDestroy(() => void unlistenTabs.then((f) => f(), () => {}));
 
 	// A click brings the window up whatever the notification was about; the
 	// manager selects its session only if that very session is still there.
@@ -122,11 +212,17 @@
 	}
 
 	// On the window in the capture phase, so it runs before xterm's handler on
-	// its textarea and the terminal never sees the key.
+	// its textarea and the terminal never sees the key. ⌘⇧[ and ⌘⇧] stand in
+	// for the menu's ⌃⇧Tab and ⌃Tab, but only where the page has the keys: a
+	// focused PDF frame keeps them.
 	function shortcut(e: KeyboardEvent) {
 		if (isNewSessionShortcut(e)) newSession();
 		else if (isSidebarShortcut(e)) toggleSidebar();
-		else return;
+		else if (isPrevTabShortcut(e)) stepTab(-1);
+		else if (isNextTabShortcut(e)) stepTab(1);
+		else if (isSaveShortcut(e)) {
+			// Nothing saves yet: no tab edits a file.
+		} else return;
 		e.preventDefault();
 		e.stopPropagation();
 	}
@@ -139,12 +235,12 @@
 		return sessions.find((r) => r.info.sid === selected)?.view;
 	}
 
-	// The terminal takes the focus, which would otherwise be lost in a hidden
+	// The content takes the focus, which would otherwise be lost in a hidden
 	// sidebar or left on the status line's button.
 	function toggleSidebar() {
 		sidebarHidden = !sidebarHidden;
 		save(SIDEBAR_HIDDEN, String(sidebarHidden));
-		if (!dialogOpen) selectedView()?.focus();
+		if (!dialogOpen) focusContent();
 	}
 
 	function sidebarResized() {
@@ -167,6 +263,8 @@
 			}
 			const view = selectedView();
 			if (!view) return;
+			// The paths go to the terminal, so it shows.
+			if (active !== undefined) void showTab(undefined);
 			try {
 				view.sendInput(shellQuoteAll(e.payload.paths));
 			} catch (err) {
@@ -261,9 +359,20 @@
 		disabled={$manager.creating || $manager.status !== 'connected'}
 		oncreate={(cwd, cmd, name) => manager.create(cwd, cmd, name)}
 		onclose={() => (dialogOpen = false)}
-		fallbackFocus={() => selectedView()?.focus()}
+		fallbackFocus={focusContent}
 	/>
-	<TerminalPane sessions={$manager.sessions} selected={$manager.selected} />
+	<section class="content">
+		{#if selectedRow}
+			<TabBar title={sessionTitle(selectedRow.info)} tabs={groupTabs} {active} {dirty} onselect={(p) => void showTab(p)} onclose={closeFileTab} />
+		{/if}
+		<div class="stack">
+			<TerminalPane sessions={$manager.sessions} selected={$manager.selected} />
+			{#if active !== undefined}
+				{@const path = active}
+				<FilePane bind:this={filePane} {path} onclose={() => closeFileTab(path)} report={(m) => manager.report(m)} />
+			{/if}
+		</div>
+	</section>
 	<div class="notices">
 		{#if $appUpdater.version !== undefined}
 			{@const version = $appUpdater.version}

@@ -48,6 +48,9 @@ export interface ManagerState<V = ViewLike> extends LinkState {
 	sessions: SessionRow<V>[];
 	// The registered repos; the last list the daemon sent, kept across reconnects.
 	repos: string[];
+	// Whether the daemon has sent a repo list this run: the empty one the
+	// manager starts with is not a list the daemon sent.
+	reposListed: boolean;
 	selected?: number;
 	// A create waits or is in flight; the form is disabled until it resolves.
 	creating: boolean;
@@ -101,7 +104,7 @@ function newEntry<T, V>(info: SessionInfo): Entry<T, V> {
 }
 
 export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewLike = ViewLike> {
-	private state: ManagerState<V> = { status: 'connecting', sessions: [], repos: [], creating: false, focused: true };
+	private state: ManagerState<V> = { status: 'connecting', sessions: [], repos: [], reposListed: false, creating: false, focused: true };
 	private readonly subscribers = new Set<(s: ManagerState<V>) => void>();
 	// Requests go only through its ready connection.
 	private readonly link: DaemonLink;
@@ -125,7 +128,7 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 				error: (m) => this.onError(m),
 				status: (m) => this.onStatus(m),
 				notify: (m) => this.onNotify(m),
-				repos: (list) => this.set({ repos: list }),
+				repos: (list) => this.set({ repos: list, reposListed: true }),
 				frame: (f) => this.entries.get(f.sid)?.core?.frame(f),
 			}),
 			ready: (conn, list) => this.onReady(conn, list),

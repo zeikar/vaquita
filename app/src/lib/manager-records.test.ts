@@ -16,6 +16,14 @@ describe('SessionManager repos and records', () => {
 		t.m.stop();
 	});
 
+	it('tells a repo list the daemon sent from the empty one it starts with', async () => {
+		const t = await connected([]);
+		expect(t.state().reposListed).toBe(false);
+		t.c.emit.repos([]);
+		expect(t.state().reposListed).toBe(true);
+		t.m.stop();
+	});
+
 	it('sends repo adds and removes only with a ready connection', async () => {
 		const t = setup();
 		t.m.addRepo('/tmp/x');
