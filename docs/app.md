@@ -60,7 +60,7 @@ The release workflow signs the archive with the private key in the `VAQUITA_UPDA
 
 ## Footprint
 
-Measured on 2026-10-24 with a release build on an Apple Silicon Mac: 10 shell sessions, each holding about 300 lines of output, one of them on screen, left idle for a minute. Memory is macOS's `footprint` (the Memory column of Activity Monitor) of the app, the three WebKit processes it starts and `vaquitad`; the shells and agents in the sessions are not counted. Together they came to about 200–230 MB (app about 30, WebKit about 190, daemon about 11), with no terminal on screen 181 MB. Idle CPU over that minute was 0.5% of one core with a terminal on screen (its cursor blinks) and 0.02% without. These numbers predate the file editor; they will be measured again and replaced.
+Measured on 2026-10-29 with a release build on an Apple Silicon Mac: 13 shell sessions, 9 of them holding about 300 lines of output, one of those on screen, left idle for a minute. Memory is macOS's `footprint` (the Memory column of Activity Monitor) of the app, the three WebKit processes it starts and `vaquitad`; the shells and agents in the sessions are not counted. Together they came to about 205 MB (app 32, WebKit 156, daemon 16), and about 110 MB with 10 sessions and no terminal on screen. Opening the first file in a text tab loads Monaco and brings it to about 320 MB; Monaco stays loaded once the tab is closed (about 300 MB) until the app restarts; an app run that never opens a text file never loads it. Idle CPU over each minute was 0% in `ps`.
 
 ## Icon
 
