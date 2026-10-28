@@ -7,8 +7,10 @@
 	import AddRepo from './lib/AddRepo.svelte';
 	import AppUpdateBanner from './lib/AppUpdateBanner.svelte';
 	import { AppUpdater, releaseUrl } from './lib/app-update';
+	import { ask } from './lib/ask';
 	import { DaemonConnection } from './lib/connection';
 	import { runningCount } from './lib/daemon-update';
+	import { documents } from './lib/documents';
 	import { appBuild, checkAppUpdate, checkRestart, installAppUpdate, onUpdateCheckAsked, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
 	import FilePane from './lib/FilePane.svelte';
 	import { onTabAsked } from './lib/files';
@@ -25,7 +27,7 @@
 	import SidebarEdge from './lib/SidebarEdge.svelte';
 	import { load, save } from './lib/storage';
 	import TabBar from './lib/TabBar.svelte';
-	import { closeTab, groupKey, loadTabs, neighbour, openTab, prune, saveTabs } from './lib/tabs';
+	import { closeTab, fileName, groupKey, loadTabs, neighbour, openTab, prune, saveTabs } from './lib/tabs';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
 	import { isTauri } from './lib/tauri';
@@ -53,6 +55,7 @@
 	let groups = $state(loadTabs());
 	let active = $state<string>();
 	const dirty = new SvelteSet<string>();
+	onDestroy(documents.onDirtyChange((path, d) => (d ? dirty.add(path) : dirty.delete(path))));
 	let filePane = $state<ReturnType<typeof FilePane>>();
 
 	const selectedRow = $derived($manager.sessions.find((r) => r.info.sid === $manager.selected));
@@ -60,7 +63,8 @@
 	const groupTabs = $derived((group !== undefined && groups[group]) || []);
 
 	// Not before the daemon has sent its list: the empty one the app starts
-	// with would drop every repo's tabs.
+	// with would drop every repo's tabs. Their documents are kept: no one was
+	// asked about the unsaved edits they may hold.
 	$effect(() => {
 		if (!$manager.reposListed) return;
 		const kept = prune(groups, $manager.repos);
@@ -107,17 +111,42 @@
 		if (!dialogOpen) focusContent();
 	}
 
-	function closeFileTab(path: string): void {
-		if (group === undefined) return;
-		groups = closeTab(groups, group, path);
+	// Asked before unsaved edits are lost; false when the user keeps them or
+	// the question could not be asked.
+	async function mayLose(message: string): Promise<boolean> {
+		try {
+			return await ask(message, 'Close');
+		} catch (e) {
+			manager.report(`asking before closing failed: ${e instanceof Error ? e.message : String(e)}`);
+			return false;
+		}
+	}
+
+	async function closeFileTab(path: string): Promise<void> {
+		const key = group;
+		if (key === undefined) return;
+		if (documents.isDirty(path) && !(await mayLose(`${fileName(path)} has unsaved changes. Close it?`))) return;
+		documents.dropDocument(path);
+		groups = closeTab(groups, key, path);
 		saveTabs(groups);
 		if (active === path) void showTab(undefined);
 	}
 
 	// ⌘W: the file tab shown, else the window, as the menu's Close Window did.
 	function closeActive(): void {
-		if (active !== undefined) closeFileTab(active);
+		if (active !== undefined) void closeFileTab(active);
 		else getCurrentWindow().close().catch((e) => manager.report(`closing the window failed: ${e instanceof Error ? e.message : String(e)}`));
+	}
+
+	// Every way of closing the window but ⌘Q comes here: its close button, ⌘W
+	// and the menu. With a listener, Tauri leaves the closing to it.
+	if (isTauri()) {
+		const unlisten = getCurrentWindow().onCloseRequested(async (e) => {
+			const n = dirty.size;
+			if (n > 0 && !(await mayLose(`${n === 1 ? '1 file has' : `${n} files have`} unsaved changes. Close the window?`))) e.preventDefault();
+		});
+		unlisten.catch((e) => manager.report(`asking before closing unavailable: ${e instanceof Error ? e.message : String(e)}`));
+		onDestroy(() => void unlisten.then((f) => f(), () => {}));
 	}
 
 	function stepTab(step: number): void {
@@ -221,7 +250,8 @@
 		else if (isPrevTabShortcut(e)) stepTab(-1);
 		else if (isNextTabShortcut(e)) stepTab(1);
 		else if (isSaveShortcut(e)) {
-			// Nothing saves yet: no tab edits a file.
+			// By path, not through an editor, so a tab that shows no editor saves too.
+			if (active !== undefined) void documents.saveDocument(active, (m) => manager.report(m));
 		} else return;
 		e.preventDefault();
 		e.stopPropagation();
@@ -363,13 +393,13 @@
 	/>
 	<section class="content">
 		{#if selectedRow}
-			<TabBar title={sessionTitle(selectedRow.info)} tabs={groupTabs} {active} {dirty} onselect={(p) => void showTab(p)} onclose={closeFileTab} />
+			<TabBar title={sessionTitle(selectedRow.info)} tabs={groupTabs} {active} {dirty} onselect={(p) => void showTab(p)} onclose={(p) => void closeFileTab(p)} />
 		{/if}
 		<div class="stack">
 			<TerminalPane sessions={$manager.sessions} selected={$manager.selected} />
 			{#if active !== undefined}
 				{@const path = active}
-				<FilePane bind:this={filePane} {path} onclose={() => closeFileTab(path)} report={(m) => manager.report(m)} />
+				<FilePane bind:this={filePane} {path} onclose={() => void closeFileTab(path)} report={(m) => manager.report(m)} />
 			{/if}
 		</div>
 	</section>

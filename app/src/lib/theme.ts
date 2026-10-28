@@ -1,5 +1,8 @@
 import type { ITheme } from '@xterm/xterm';
 
+// The terminal's and the editor's.
+export const MONO_FONT = 'SF Mono, Menlo, monospace';
+
 export const theme = {
 	background: '#1e1e1e',
 	foreground: '#d4d4d4',

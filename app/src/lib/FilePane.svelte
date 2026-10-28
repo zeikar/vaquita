@@ -2,6 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import { fileUrl, viewPath, type FileKind } from './files';
 	import { fileName } from './tabs';
+	import TextEditor from './TextEditor.svelte';
 
 	let {
 		path,
@@ -17,10 +18,18 @@
 
 	let shown = $state<Shown>({ state: 'loading' });
 	let root: HTMLElement;
+	let editor = $state<ReturnType<typeof TextEditor>>();
+	// The last path judged text. The editor stays mounted, hidden, while other
+	// tabs show, so that one Monaco editor serves every text tab of the pane.
+	let textPath = $state<string>();
+	let textShown = $state(0);
+	const isText = (s: Shown) => s.state === 'view' && (s.kind === 'text' || s.kind === 'markdown');
+	const showsText = $derived(isText(shown));
 
-	// Takes the focus from the terminal underneath, so that typing never reaches it.
+	// Takes the focus from the terminal underneath, so that typing never
+	// reaches it: the editor's once it has the file, else the pane's.
 	export function focus(): void {
-		root.focus();
+		if (!(showsText && editor?.focus())) root.focus();
 	}
 
 	// Each request takes a number; an answer is applied only while its number
@@ -34,7 +43,11 @@
 		shown = { state: 'loading' };
 		void load(asked).then(
 			(s) => {
-				if (n === request) shown = s;
+				if (n !== request) return;
+				shown = s;
+				if (!isText(s)) return;
+				textPath = asked;
+				textShown++;
 			},
 			(e) => {
 				if (n === request) shown = { state: 'error', message: e instanceof Error ? e.message : String(e) };
@@ -54,6 +67,11 @@
 </script>
 
 <div class="file" tabindex="-1" bind:this={root}>
+	{#if textPath !== undefined}
+		<div class="text" hidden={!showsText}>
+			<TextEditor bind:this={editor} path={textPath} shown={textShown} {report} />
+		</div>
+	{/if}
 	{#if shown.state === 'error'}
 		<div class="error">
 			<p>{shown.message}</p>
@@ -84,6 +102,10 @@
 		overflow: auto;
 		background: #1e1e1e;
 		outline: none;
+	}
+	.text {
+		place-self: stretch;
+		position: relative;
 	}
 	img,
 	video {

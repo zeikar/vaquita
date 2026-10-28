@@ -10,7 +10,7 @@ import { activateUri, type LinkText } from './file-links';
 import type { Tone, ViewLike } from './manager';
 import { pathLinkProvider } from './path-link-provider';
 import type { SessionCore, Size } from './session-core';
-import { theme } from './theme';
+import { MONO_FONT, theme } from './theme';
 
 export function createTerminal(cols: number, rows: number): Terminal {
 	return new Terminal({
@@ -20,7 +20,7 @@ export function createTerminal(cols: number, rows: number): Terminal {
 		allowProposedApi: true,
 		scrollback: 2000,
 		theme,
-		fontFamily: 'SF Mono, Menlo, monospace',
+		fontFamily: MONO_FONT,
 		fontSize: 13,
 		// Plain drag selects only when the app has mouse reporting off; Option forces it.
 		macOptionClickForcesSelection: true,
