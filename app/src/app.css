@@ -263,6 +263,9 @@ aside > header {
 	/* The + ends where the repo headers' ⋯ does, the title starts where the
 	   rows' marks do. */
 	padding: 4px 6px 4px 16px;
+	/* With its padding and border, as tall as the tab bar beside it (30px and
+	   its border), so the two lines under them meet. */
+	min-height: 22px;
 	border-bottom: 1px solid #333;
 	font-size: 11px;
 	color: #999;
