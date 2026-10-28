@@ -63,6 +63,11 @@ export class Documents {
 		return doc;
 	}
 
+	// The text as edited, saved or not, for a path with a document.
+	textOf(path: string): string | undefined {
+		return this.docs.get(path)?.model.getValue();
+	}
+
 	// An undo back to the saved text is not dirty.
 	isDirty(path: string): boolean {
 		const doc = this.docs.get(path);

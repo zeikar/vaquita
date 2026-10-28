@@ -134,6 +134,16 @@ describe('openDocument', () => {
 	});
 });
 
+describe('textOf', () => {
+	it('gives the text as edited, and nothing for a path with no document', async () => {
+		const { docs, model } = setup();
+		expect(docs.textOf(path)).toBeUndefined();
+		await docs.openDocument(path);
+		model().edit('two');
+		expect(docs.textOf(path)).toBe('two');
+	});
+});
+
 describe('saveDocument', () => {
 	it('does nothing for a path with no document, or an unchanged one', async () => {
 		const { docs, deps, report } = setup();

@@ -1,6 +1,14 @@
+<script module lang="ts">
+	import { SvelteSet } from 'svelte/reactivity';
+
+	// The markdown files switched to Source, for the app run; the rest preview.
+	const sources = new SvelteSet<string>();
+</script>
+
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import { fileUrl, viewPath, type FileKind } from './files';
+	import MarkdownView from './MarkdownView.svelte';
 	import { fileName } from './tabs';
 	import TextEditor from './TextEditor.svelte';
 
@@ -14,22 +22,53 @@
 		report: (message: string) => void;
 	} = $props();
 
-	type Shown = { state: 'loading' } | { state: 'error'; message: string } | { state: 'view'; kind: FileKind; src?: string };
+	// A view keeps the path it was judged for: the path prop changes before the
+	// effect below sets loading, and a view still mounted then must not take it.
+	type Shown =
+		| { state: 'loading' }
+		| { state: 'error'; message: string }
+		| { state: 'view'; path: string; kind: FileKind; src?: string };
 
 	let shown = $state<Shown>({ state: 'loading' });
 	let root: HTMLElement;
 	let editor = $state<ReturnType<typeof TextEditor>>();
-	// The last path judged text. The editor stays mounted, hidden, while other
-	// tabs show, so that one Monaco editor serves every text tab of the pane.
+	let preview = $state<ReturnType<typeof MarkdownView>>();
+	// The last path shown in the editor. The editor stays mounted, hidden, while
+	// other tabs show, so that one Monaco editor serves every text tab of the
+	// pane, a markdown file's source included.
 	let textPath = $state<string>();
 	let textShown = $state(0);
-	const isText = (s: Shown) => s.state === 'view' && (s.kind === 'text' || s.kind === 'markdown');
-	const showsText = $derived(isText(shown));
+	const markdown = $derived(shown.state === 'view' && shown.kind === 'markdown' ? shown.path : undefined);
+	const source = $derived(markdown !== undefined && sources.has(markdown));
+	const inEditor = (s: Shown) => s.state === 'view' && (s.kind === 'text' || (s.kind === 'markdown' && sources.has(s.path)));
+	const showsEditor = $derived(inEditor(shown));
+
+	function showEditor(p: string): void {
+		textPath = p;
+		textShown++;
+	}
 
 	// Takes the focus from the terminal underneath, so that typing never
-	// reaches it: the editor's once it has the file, else the pane's.
+	// reaches it: the editor's once it has the file, else the preview's or
+	// the pane's.
 	export function focus(): void {
-		if (!(showsText && editor?.focus())) root.focus();
+		if (showsEditor && editor?.focus()) return;
+		if (markdown !== undefined && !source && preview) preview.focus();
+		else root.focus();
+	}
+
+	// Saving needs nothing here: it goes by path, and the document outlives the
+	// editor, so a file edited in Source saves from Preview too.
+	async function setSource(on: boolean): Promise<void> {
+		if (markdown === undefined || on === source) return;
+		if (on) {
+			sources.add(markdown);
+			showEditor(markdown);
+		} else {
+			sources.delete(markdown);
+		}
+		await tick();
+		focus();
 	}
 
 	// Each request takes a number; an answer is applied only while its number
@@ -45,9 +84,7 @@
 			(s) => {
 				if (n !== request) return;
 				shown = s;
-				if (!isText(s)) return;
-				textPath = asked;
-				textShown++;
+				if (inEditor(s)) showEditor(asked);
 			},
 			(e) => {
 				if (n === request) shown = { state: 'error', message: e instanceof Error ? e.message : String(e) };
@@ -56,21 +93,31 @@
 	});
 
 	// view_path judges the file again, as a restored tab's may have changed;
-	// text is read by its editor, the rest is loaded from the URL it allowed.
+	// text is read by its editor or preview, the rest is loaded from the URL
+	// it allowed.
 	async function load(asked: string): Promise<Shown> {
 		const { path: canonical, kind } = await viewPath(asked);
-		if (kind === 'text' || kind === 'markdown') return { state: 'view', kind };
-		return { state: 'view', kind, src: await fileUrl(canonical) };
+		if (kind === 'text' || kind === 'markdown') return { state: 'view', path: asked, kind };
+		return { state: 'view', path: asked, kind, src: await fileUrl(canonical) };
 	}
 
 	const failed = () => report(`${fileName(path)} could not be shown`);
 </script>
 
 <div class="file" tabindex="-1" bind:this={root}>
+	{#if markdown !== undefined}
+		<div class="toolbar" role="group" aria-label="Markdown view">
+			<button aria-pressed={!source} onclick={() => void setSource(false)}>Preview</button>
+			<button aria-pressed={source} onclick={() => void setSource(true)}>Source</button>
+		</div>
+	{/if}
 	{#if textPath !== undefined}
-		<div class="text" hidden={!showsText}>
+		<div class="text" hidden={!showsEditor}>
 			<TextEditor bind:this={editor} path={textPath} shown={textShown} {report} />
 		</div>
+	{/if}
+	{#if markdown !== undefined && !source}
+		<MarkdownView bind:this={preview} path={markdown} {report} />
 	{/if}
 	{#if shown.state === 'error'}
 		<div class="error">
@@ -94,14 +141,53 @@
 </div>
 
 <style>
+	/* A first row for the markdown toolbar, empty for other files: above what
+	   the file shows rather than over it, where Monaco's find widget opens. */
 	.file {
 		display: grid;
-		grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+		grid-template: auto minmax(0, 1fr) / minmax(0, 1fr);
 		place-items: center;
 		min-height: 0;
 		overflow: auto;
 		background: #1e1e1e;
 		outline: none;
+	}
+	.file > :global(*) {
+		grid-area: 2 / 1;
+	}
+	.file > .toolbar {
+		grid-area: 1 / 1;
+		justify-self: end;
+		display: flex;
+		margin: 6px 12px;
+		border: 1px solid #3c3c3c;
+		border-radius: 4px;
+		overflow: hidden;
+	}
+	.toolbar button {
+		height: 22px;
+		padding: 0 10px;
+		border: none;
+		background: transparent;
+		color: #999;
+		font: inherit;
+		font-size: 12px;
+		cursor: pointer;
+	}
+	.toolbar button + button {
+		border-left: 1px solid #3c3c3c;
+	}
+	.toolbar button:hover {
+		background: #2a2d2e;
+		color: #d4d4d4;
+	}
+	.toolbar button[aria-pressed='true'] {
+		background: #3a3d41;
+		color: #e5e5e5;
+	}
+	.toolbar button:focus-visible {
+		outline: 1px solid var(--neon);
+		outline-offset: -1px;
 	}
 	.text {
 		place-self: stretch;
