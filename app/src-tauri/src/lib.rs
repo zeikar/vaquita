@@ -1,6 +1,7 @@
 mod files;
 mod home;
 mod launchd;
+mod menu;
 mod notify;
 mod open_path;
 mod stop;
@@ -133,9 +134,9 @@ pub fn run() {
         .manage(update::Pending::default())
         .setup(|app| {
             notify::setup(app.handle());
-            // Without the item the app still updates on its timed checks.
-            if let Err(e) = update::add_menu_item(app.handle()) {
-                eprintln!("vaquita: adding Check for Updates to the menu failed: {e}");
+            // Without the menu the app still updates on its timed checks.
+            if let Err(e) = menu::install(app.handle()) {
+                eprintln!("vaquita: setting up the menu failed: {e}");
             }
             Ok(())
         })

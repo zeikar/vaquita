@@ -12,8 +12,10 @@
     "opener:allow-reveal-item-in-dir",
     "clipboard-manager:allow-write-text",
     "dialog:allow-open",
+    "dialog:allow-ask",
     "core:window:allow-show",
     "core:window:allow-unminimize",
-    "core:window:allow-set-focus"
+    "core:window:allow-set-focus",
+    "core:window:allow-close"
   ]
 }
