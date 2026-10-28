@@ -1,6 +1,6 @@
 import { isTauri } from './tauri';
 
-export type FileKind = 'text' | 'markdown' | 'image' | 'pdf' | 'audio' | 'video';
+export type FileKind = 'text' | 'markdown' | 'image' | 'audio' | 'video';
 
 // A file's modification time and length when it was read; a save sends it back
 // so that the app can tell the file changed in between.
@@ -40,13 +40,6 @@ export function writeText(path: string, text: string, stamp?: Stamp): Promise<St
 export async function fileUrl(path: string): Promise<string> {
 	const { convertFileSrc } = await import('@tauri-apps/api/core');
 	return convertFileSrc(path);
-}
-
-// A PDF comes through its own scheme, which serves only a path view_path
-// judged a PDF and forces its type; WebKit shows no PDF in a sandboxed frame.
-export async function pdfUrl(path: string): Promise<string> {
-	const { convertFileSrc } = await import('@tauri-apps/api/core');
-	return convertFileSrc(path, 'vqpdf');
 }
 
 export type TabAction = 'close' | 'terminal' | 'prev' | 'next';

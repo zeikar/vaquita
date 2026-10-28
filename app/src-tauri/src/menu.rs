@@ -4,10 +4,14 @@
 //! Close and the tab shortcuts are menu items. WKWebView hands a key with a
 //! modifier to the page first and to the menu only when the page lets it
 //! through, so they work wherever the app's key handlers pass them on (the
-//! terminal's included), and in a PDF frame too, where no handler of ours runs
-//! to see them. The default menu has Close Window with ⌘W under both File and
+//! terminal's included). The default menu has Close Window with ⌘W under both File and
 //! Window; both go and our Close takes File's place, so ⌘W is only ever ours,
 //! and the webview closes the window itself when ⌘W lands on the terminal tab.
+//!
+//! The tab keys are ⌘⇧[ and ⌘⇧], not ⌃Tab: AppKit binds ⌃Tab to the window's
+//! key-view loop, which WKWebView runs and counts as handled whenever the page
+//! does not cancel the key, so a menu item on ⌃Tab never fires. The page takes
+//! ⌃Tab itself (App.svelte).
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Wry};
@@ -24,8 +28,8 @@ const CLOSE_KEY: &str = "CmdOrCtrl+W";
 /// Above Toggle Full Screen, the default View's only item: id, title, key.
 const VIEW_ITEMS: [(&str, &str, &str); 3] = [
     (TERMINAL_ID, "Show Terminal", "CmdOrCtrl+1"),
-    (PREV_ID, "Previous Tab", "Ctrl+Shift+Tab"),
-    (NEXT_ID, "Next Tab", "Ctrl+Tab"),
+    (PREV_ID, "Previous Tab", "CmdOrCtrl+Shift+["),
+    (NEXT_ID, "Next Tab", "CmdOrCtrl+Shift+]"),
 ];
 
 /// The title macOS gives PredefinedMenuItem::close_window.
@@ -165,8 +169,8 @@ mod tests {
         let keys: Vec<&str> = VIEW_ITEMS.iter().map(|(_, _, key)| *key).chain([CLOSE_KEY]).collect();
         let want = [
             (Modifiers::META, Code::Digit1),
-            (Modifiers::CONTROL | Modifiers::SHIFT, Code::Tab),
-            (Modifiers::CONTROL, Code::Tab),
+            (Modifiers::META | Modifiers::SHIFT, Code::BracketLeft),
+            (Modifiers::META | Modifiers::SHIFT, Code::BracketRight),
             (Modifiers::META, Code::KeyW),
         ];
         assert_eq!(keys.len(), want.len());

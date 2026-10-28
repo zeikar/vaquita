@@ -44,17 +44,8 @@ describe('keyHandler', () => {
 		expect(results.slice(0, 2)).toEqual([false, false]);
 	});
 
-	it('leaves Ctrl+Tab and Ctrl+Shift+Tab to the menu, uncancelled', () => {
-		const sent: string[] = [];
-		const handle = keyHandler((t) => void sent.push(t));
-		for (const shiftKey of [false, true]) {
-			let prevented = false;
-			const ev = key('keydown', { key: 'Tab', keyCode: 9, ctrlKey: true, shiftKey, preventDefault: () => void (prevented = true) });
-			expect(handle(ev)).toBe(false);
-			expect(prevented).toBe(false);
-		}
-		expect(sent).toEqual([]);
-		// A plain Tab and Shift+Tab are the terminal's.
+	it('leaves Tab and Shift+Tab to the terminal, and Ctrl+Tab too, which the page takes first', () => {
+		const handle = keyHandler(() => {});
 		expect(handle(key('keydown', { key: 'Tab', keyCode: 9 }))).toBe(true);
 		expect(handle(key('keydown', { key: 'Tab', keyCode: 9, shiftKey: true }))).toBe(true);
 	});
@@ -117,21 +108,19 @@ describe('isSaveShortcut', () => {
 });
 
 describe('isPrevTabShortcut and isNextTabShortcut', () => {
-	const bracket = (code: string, init: Partial<KeyboardEvent>) =>
-		key('keydown', { code, key: code === 'BracketLeft' ? '{' : '}', keyCode: code === 'BracketLeft' ? 219 : 221, ...init });
+	const tab = (init: Partial<KeyboardEvent>) => key('keydown', { key: 'Tab', keyCode: 9, ctrlKey: true, ...init });
 
-	it('are Cmd+Shift+[ and Cmd+Shift+], by code', () => {
-		expect(isPrevTabShortcut(bracket('BracketLeft', { metaKey: true, shiftKey: true }))).toBe(true);
-		expect(isNextTabShortcut(bracket('BracketRight', { metaKey: true, shiftKey: true }))).toBe(true);
-		expect(isPrevTabShortcut(bracket('BracketRight', { metaKey: true, shiftKey: true }))).toBe(false);
-		expect(isNextTabShortcut(bracket('BracketLeft', { metaKey: true, shiftKey: true }))).toBe(false);
+	it('are Ctrl+Shift+Tab and Ctrl+Tab', () => {
+		expect(isPrevTabShortcut(tab({ shiftKey: true }))).toBe(true);
+		expect(isNextTabShortcut(tab({}))).toBe(true);
+		expect(isPrevTabShortcut(tab({}))).toBe(false);
+		expect(isNextTabShortcut(tab({ shiftKey: true }))).toBe(false);
 	});
 
 	it('are not their variants', () => {
-		expect(isPrevTabShortcut(bracket('BracketLeft', { metaKey: true, key: '[' }))).toBe(false);
-		expect(isPrevTabShortcut(bracket('BracketLeft', { shiftKey: true }))).toBe(false);
-		expect(isPrevTabShortcut(bracket('BracketLeft', { metaKey: true, shiftKey: true, ctrlKey: true }))).toBe(false);
-		expect(isNextTabShortcut(bracket('BracketRight', { metaKey: true, shiftKey: true, altKey: true }))).toBe(false);
-		expect(isNextTabShortcut(bracket('BracketRight', { metaKey: true, shiftKey: true, keyCode: 229 }))).toBe(false);
+		expect(isNextTabShortcut(key('keydown', { key: 'Tab', keyCode: 9 }))).toBe(false);
+		expect(isNextTabShortcut(tab({ metaKey: true }))).toBe(false);
+		expect(isNextTabShortcut(tab({ altKey: true }))).toBe(false);
+		expect(isNextTabShortcut(tab({ keyCode: 229 }))).toBe(false);
 	});
 });

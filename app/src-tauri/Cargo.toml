@@ -27,8 +27,6 @@ tauri-plugin-dialog = "2.8.3"
 tauri-plugin-updater = "2.14.0"
 sha2 = "0.11.1"
 libc = "0.2.191"
-# Decodes the path in a PDF request, as tauri does for its own asset protocol.
-percent-encoding = "2.3.2"
 # UNUserNotificationCenter, for notifications whose clicks reach the app, and
 # NSWorkspace and NSURL, for the app macOS would open a clicked path with; the
 # versions tauri already depends on.

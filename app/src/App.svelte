@@ -263,9 +263,9 @@
 	}
 
 	// On the window in the capture phase, so it runs before xterm's handler on
-	// its textarea and the terminal never sees the key. ⌘⇧[ and ⌘⇧] stand in
-	// for the menu's ⌃⇧Tab and ⌃Tab, but only where the page has the keys: a
-	// focused PDF frame keeps them.
+	// its textarea and the terminal never sees the key. ⌃Tab and ⌃⇧Tab are
+	// here and not in the menu, as AppKit would run its key-view loop on them.
+	// The menu has ⌘⇧[ and ⌘⇧].
 	function shortcut(e: KeyboardEvent) {
 		if (isNewSessionShortcut(e)) newSession();
 		else if (isSidebarShortcut(e)) toggleSidebar();

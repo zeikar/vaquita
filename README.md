@@ -26,7 +26,7 @@ vaquita is a lightweight ADE (agentic development environment) for macOS. It run
 - **Sessions outlive the app.** Shells and agents run in a small daemon, `vaquitad`, so quitting or updating the app leaves them running. After a reboot, reopen a session and Claude Code or Codex resumes its conversation.
 - **No hooks, no global config.** State comes from what the agents already write to the terminal (Claude Code's OSC 7501 status reports, Codex's notifications), so nothing is written into your agents' settings.
 - **Titles that say what a session is about.** A session takes the topic its agent gives the conversation; double-click it to rename.
-- **Open the files agents mention.** ⌘-click a path or a file link in the output to open it in a tab inside the app (text, code, Markdown, images, PDF, audio and video) or else in its default app. Terminal output is not trusted, so anything that could run something is only shown in Finder.
+- **Open the files agents mention.** ⌘-click a path or a file link in the output to open it in a tab inside the app (text, code, Markdown, images, audio and video) or else in its default app. Terminal output is not trusted, so anything that could run something is only shown in Finder.
 - **Light.** With 10 sessions open, the app, its WebKit processes and the daemon use about 200 MB of memory together, and next to no CPU while idle ([how it was measured](docs/app.md#footprint)).
 
 ## Install

@@ -56,6 +56,11 @@
 					fontSize: 13,
 					minimap: { enabled: false },
 					automaticLayout: true,
+					// WebKit has no EditContext, so typing goes through Monaco's
+					// hidden textarea. With 'auto' it holds a page of text that
+					// WebKit scrolls a few pixels off Monaco's alignment, which
+					// shakes the line while an IME composes (monaco-editor#4796).
+					accessibilitySupport: 'off',
 				});
 			},
 			(e) => {

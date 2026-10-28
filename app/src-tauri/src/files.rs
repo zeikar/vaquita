@@ -1,32 +1,24 @@
 //! Files the webview shows in a tab of its own instead of their default app.
 //! Only a regular file that open_path.rs would open qualifies. An image,
 //! audio or video file is one by its extension, the formats WebKit on macOS
-//! shows; a .pdf is one when it starts with the PDF magic; any other file is
-//! text when it is at most TEXT_MAX bytes and its first SNIFF bytes hold no NUL
+//! shows; a .pdf never is, whatever it holds, so it keeps its default app; any
+//! other file is text when it is at most TEXT_MAX bytes and its first SNIFF bytes hold no NUL
 //! and are UTF-8 up to the cut, and markdown among text by its extension.
 //! Anything else keeps its default app.
 //!
 //! The asset protocol serves a file it cannot identify as text/html, so HTML
 //! named .png is served as HTML. Media is safe as <img>, <audio> and <video>
-//! never render HTML. A PDF is framed, and WebKit runs its PDF viewer in no
-//! sandboxed frame, so PDFs do not go through the asset protocol: the vqpdf
-//! scheme serves only a path view_path judged a PDF this run, re-checks the
-//! PDF magic on every request, and answers with the type forced to
-//! application/pdf and nosniff, so the frame can only ever show a PDF. No asset
-//! URL is ever framed or navigated to. The file is read whole, up to PDF_MAX.
+//! never render HTML. No asset URL is ever framed or navigated to.
 
-use std::collections::HashSet;
 use std::ffi::{CString, OsString};
 use std::fs::{File, Metadata, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
-use tauri::http::{Response, StatusCode};
 use tauri::{AppHandle, Manager};
 
 use crate::open_path::{self, Action};
@@ -37,7 +29,6 @@ pub enum Kind {
     Text,
     Markdown,
     Image,
-    Pdf,
     Audio,
     Video,
 }
@@ -49,9 +40,6 @@ const MARKDOWN: &[&str] = &["md", "markdown"];
 
 pub const TEXT_MAX: u64 = 2 * 1024 * 1024;
 const SNIFF: u64 = 8 * 1024;
-const PDF_MAGIC: &[u8] = b"%PDF-";
-/// A larger PDF keeps its default app: vqpdf reads the file whole.
-pub const PDF_MAX: u64 = 100 * 1024 * 1024;
 
 /// At most n bytes from the start of f.
 fn head(f: &File, n: u64) -> io::Result<Vec<u8>> {
@@ -73,6 +61,11 @@ pub fn kind_of(canonical: &Path, meta: &Metadata) -> io::Result<Option<Kind>> {
             return Ok(Some(kind));
         }
     }
+    // Preview shows a PDF better than a tab could, and its bytes may well pass
+    // for text.
+    if ext == "pdf" {
+        return Ok(None);
+    }
     // What is read is judged by the handle's own metadata, so a file swapped
     // in after meta cannot slip by; nonblocking, so a FIFO cannot hang the open.
     let f = OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(canonical)?;
@@ -81,12 +74,6 @@ pub fn kind_of(canonical: &Path, meta: &Metadata) -> io::Result<Option<Kind>> {
         return Ok(None);
     }
     let len = opened.len();
-    if ext == "pdf" {
-        if len > PDF_MAX {
-            return Ok(None);
-        }
-        return Ok(head(&f, PDF_MAGIC.len() as u64)?.starts_with(PDF_MAGIC).then_some(Kind::Pdf));
-    }
     if len > TEXT_MAX {
         return Ok(None);
     }
@@ -122,84 +109,14 @@ pub async fn view_path(app: AppHandle, path: String) -> Result<Viewable, String>
             Action::Opened => return Err("it opens in its default app".to_string()),
             Action::View { path, kind } => (path, kind),
         };
-        // Text comes through read_text; a PDF is served by vqpdf, the rest by
-        // the asset protocol.
-        match kind {
-            Kind::Text | Kind::Markdown => {}
-            Kind::Pdf => {
-                app.state::<PdfAllowed>().0.lock().map_err(|e| e.to_string())?.insert(path.clone());
-            }
-            _ => app.asset_protocol_scope().allow_file(&path).map_err(|e| e.to_string())?,
+        // Text comes through read_text; the rest is loaded by URL.
+        if !matches!(kind, Kind::Text | Kind::Markdown) {
+            app.asset_protocol_scope().allow_file(&path).map_err(|e| e.to_string())?;
         }
         Ok(Viewable { path, kind })
     })
     .await
     .map_err(|e| e.to_string())?
-}
-
-/// The PDFs view_path judged this run: the only files vqpdf serves.
-#[derive(Default)]
-pub struct PdfAllowed(Mutex<HashSet<PathBuf>>);
-
-pub const PDF_SCHEME: &str = "vqpdf";
-
-fn refuse(status: StatusCode) -> Response<Vec<u8>> {
-    Response::builder().status(status).body(Vec::new()).expect("a status and an empty body make a response")
-}
-
-/// The answer to a vqpdf request whose URL path is uri_path: the path of the
-/// file, percent-encoded, after a slash. Anything not allowed is a 404 with no
-/// body; an allowed file that no longer starts with the PDF magic is refused.
-fn pdf_response(allowed: &PdfAllowed, uri_path: &str) -> Response<Vec<u8>> {
-    let Ok(decoded) = percent_encoding::percent_decode_str(uri_path.trim_start_matches('/')).decode_utf8() else {
-        return refuse(StatusCode::NOT_FOUND);
-    };
-    let path = PathBuf::from(decoded.as_ref());
-    if !allowed.0.lock().is_ok_and(|set| set.contains(&path)) {
-        return refuse(StatusCode::NOT_FOUND);
-    }
-    let read = || -> io::Result<Result<Vec<u8>, StatusCode>> {
-        // Nonblocking, so a FIFO swapped in cannot hang the open.
-        let f = OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(&path)?;
-        if !f.metadata()?.is_file() {
-            return Ok(Err(StatusCode::UNSUPPORTED_MEDIA_TYPE));
-        }
-        // The header first, so a large non-PDF is never read. It stays in
-        // bytes: the handle has moved past it.
-        let mut bytes = head(&f, PDF_MAGIC.len() as u64)?;
-        if !bytes.starts_with(PDF_MAGIC) {
-            return Ok(Err(StatusCode::UNSUPPORTED_MEDIA_TYPE));
-        }
-        // Bounded, as the file can grow while it is read.
-        (&f).take(PDF_MAX + 1 - bytes.len() as u64).read_to_end(&mut bytes)?;
-        Ok(if bytes.len() as u64 > PDF_MAX { Err(StatusCode::PAYLOAD_TOO_LARGE) } else { Ok(bytes) })
-    };
-    match read() {
-        Ok(Ok(bytes)) => Response::builder()
-            .status(StatusCode::OK)
-            .header("Content-Type", "application/pdf")
-            .header("X-Content-Type-Options", "nosniff")
-            .body(bytes)
-            .expect("fixed headers make a response"),
-        Ok(Err(status)) => refuse(status),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => refuse(StatusCode::NOT_FOUND),
-        Err(e) => {
-            eprintln!("vaquita: serve {}: {e}", path.display());
-            refuse(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-/// Registers vqpdf; the file is read on a blocking thread.
-pub fn register_pdf_scheme<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder.manage(PdfAllowed::default()).register_asynchronous_uri_scheme_protocol(PDF_SCHEME, |ctx, request, responder| {
-        let app = ctx.app_handle().clone();
-        let uri_path = request.uri().path().to_string();
-        tauri::async_runtime::spawn_blocking(move || {
-            let response = pdf_response(&app.state::<PdfAllowed>(), &uri_path);
-            responder.respond(response.map(std::borrow::Cow::Owned));
-        });
-    })
 }
 
 /// A file's modification time and length, which a save compares to tell
@@ -382,9 +299,11 @@ mod tests {
     }
 
     #[test]
-    fn a_pdf_needs_the_magic() {
-        assert_eq!(kind("pdf", ".pdf", b"%PDF-1.7\n"), Some(Kind::Pdf));
+    fn a_pdf_is_never_shown_in_the_app() {
+        // Plain ASCII passes for text, yet a .pdf keeps its default app.
+        assert_eq!(kind("pdf", ".pdf", b"%PDF-1.7\n"), None);
         assert_eq!(kind("fakepdf", ".pdf", b"<html><script></script></html>"), None);
+        assert_eq!(kind("bigpdf", ".PDF", &vec![b'a'; OVER]), None);
     }
 
     #[test]
@@ -515,59 +434,6 @@ mod tests {
         assert_eq!(replace(&p, "one two\n", None).unwrap_err(), format!("a temporary file is in the way: {name}"));
         assert_eq!(content(&p), "one\n");
         assert_eq!(content(&tmp), "someone else's\n");
-    }
-
-    fn allowing(p: &Path) -> PdfAllowed {
-        let a = PdfAllowed::default();
-        a.0.lock().unwrap().insert(p.to_path_buf());
-        a
-    }
-
-    fn url_path(p: &Path) -> String {
-        format!("/{}", p.to_string_lossy().replace('/', "%2F").replace(' ', "%20"))
-    }
-
-    #[test]
-    fn an_allowed_pdf_is_served_with_its_type_forced() {
-        let p = file(&dir("pdf-ok"), "my doc.pdf", 0o644);
-        std::fs::write(&p, b"%PDF-1.7\nbody").unwrap();
-        let r = pdf_response(&allowing(&p), &url_path(&p));
-        assert_eq!(r.status(), StatusCode::OK);
-        assert_eq!(r.headers()["Content-Type"], "application/pdf");
-        assert_eq!(r.headers()["X-Content-Type-Options"], "nosniff");
-        assert_eq!(r.body(), b"%PDF-1.7\nbody");
-    }
-
-    #[test]
-    fn a_path_that_was_not_allowed_is_not_found() {
-        let p = file(&dir("pdf-no"), "a.pdf", 0o644);
-        std::fs::write(&p, b"%PDF-1.7\n").unwrap();
-        let r = pdf_response(&PdfAllowed::default(), &url_path(&p));
-        assert_eq!(r.status(), StatusCode::NOT_FOUND);
-        assert!(r.body().is_empty());
-    }
-
-    #[test]
-    fn an_allowed_file_that_lost_the_magic_is_refused() {
-        let p = file(&dir("pdf-swapped"), "a.pdf", 0o644);
-        std::fs::write(&p, b"<html><script></script></html>").unwrap();
-        let r = pdf_response(&allowing(&p), &url_path(&p));
-        assert_eq!(r.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
-        assert!(r.body().is_empty());
-    }
-
-    #[test]
-    fn a_pdf_over_the_limit_is_not_shown_nor_served() {
-        let p = file(&dir("pdf-big"), "big.pdf", 0o644);
-        let f = File::create(&p).unwrap();
-        f.set_len(PDF_MAX + 1).unwrap();
-        // Zeros, with no magic: judged by size before anything is read.
-        assert_eq!(kind_of(&p, &std::fs::metadata(&p).unwrap()).unwrap(), None);
-        (&f).write_all(b"%PDF-").unwrap();
-        assert_eq!(kind_of(&p, &std::fs::metadata(&p).unwrap()).unwrap(), None);
-        let r = pdf_response(&allowing(&p), &url_path(&p));
-        assert_eq!(r.status(), StatusCode::PAYLOAD_TOO_LARGE);
-        assert!(r.body().is_empty());
     }
 
     #[test]

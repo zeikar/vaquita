@@ -22,18 +22,11 @@ export function swallowsKeypress(ev: KeyboardEvent): boolean {
 	return ev.type === 'keypress' && isShiftEnter(ev);
 }
 
-// Ctrl+Tab and Ctrl+Shift+Tab are the menu's tab switching. WKWebView gives a
-// modified key to the page first, and xterm would type a Tab (or send ESC [ Z)
-// and cancel the event; left alone, WebKit passes it on to the menu.
-function isMenuTabKey(ev: KeyboardEvent): boolean {
-	return ev.key === 'Tab' && ev.ctrlKey && !ev.metaKey && !ev.altKey;
-}
-
 // The handler for xterm's attachCustomKeyEventHandler: true lets xterm handle
 // the event, false means it was handled here (or must not be handled at all).
 export function keyHandler(send: (text: string) => void): (ev: KeyboardEvent) => boolean {
 	return (ev) => {
-		if (swallowsKeypress(ev) || isMenuTabKey(ev)) return false;
+		if (swallowsKeypress(ev)) return false;
 		const s = translateKey(ev);
 		if (s === null) return true;
 		send(s);
@@ -62,17 +55,17 @@ export function isSaveShortcut(ev: KeyboardEvent): boolean {
 	return isCmd(ev, 's');
 }
 
-// Cmd+Shift+[ and Cmd+Shift+], the previous and next tab as in Chrome; an
-// alias of the menu's Ctrl+Shift+Tab and Ctrl+Tab that only the page sees. By
-// code, since Shift turns the key into { or }.
-function isCmdShiftCode(ev: KeyboardEvent, code: string): boolean {
-	return ev.code === code && ev.metaKey && ev.shiftKey && !ev.ctrlKey && !ev.altKey && !belongsToIME(ev);
+// Ctrl+Tab and Ctrl+Shift+Tab, the next and previous tab as in Chrome. They
+// cannot be menu keys: AppKit binds them to the key-view loop, which WKWebView
+// runs unless the page cancels the key.
+function isCtrlTab(ev: KeyboardEvent, shift: boolean): boolean {
+	return ev.key === 'Tab' && ev.ctrlKey && ev.shiftKey === shift && !ev.metaKey && !ev.altKey && !belongsToIME(ev);
 }
 
 export function isPrevTabShortcut(ev: KeyboardEvent): boolean {
-	return isCmdShiftCode(ev, 'BracketLeft');
+	return isCtrlTab(ev, true);
 }
 
 export function isNextTabShortcut(ev: KeyboardEvent): boolean {
-	return isCmdShiftCode(ev, 'BracketRight');
+	return isCtrlTab(ev, false);
 }

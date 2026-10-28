@@ -124,7 +124,7 @@ fn start_and_wait() -> Result<(), String> {
 }
 
 pub fn run() {
-    files::register_pdf_scheme(tauri::Builder::default())
+    tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())

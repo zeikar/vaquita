@@ -91,7 +91,7 @@ describe('TextEditor', () => {
 		expect(s.monaco.editor.create).toHaveBeenCalledTimes(1);
 		expect(s.monaco.editor.create).toHaveBeenCalledWith(
 			expect.any(HTMLElement),
-			expect.objectContaining({ model: null, theme: 'vs-dark', fontSize: 13, minimap: { enabled: false }, automaticLayout: true }),
+			expect.objectContaining({ model: null, theme: 'vs-dark', fontSize: 13, minimap: { enabled: false }, automaticLayout: true, accessibilitySupport: 'off' }),
 		);
 	});
 

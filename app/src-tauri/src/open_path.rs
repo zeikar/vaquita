@@ -6,7 +6,8 @@
 //! read; its name has an extension on BUNDLES or FILES, or a folder above it
 //! one on BUNDLES; or the app macOS would open it with is on HANDLERS, or is
 //! Finder for something that is not a folder. A path no app opens is revealed
-//! too. Everything else opens with its default app, but for the text,
+//! too, unless the webview shows it itself: that is a convenience verdict, not
+//! a danger. Everything else opens with its default app, but for the text,
 //! markdown and media files that the webview shows itself, by the rule in
 //! files.rs. The lists are all the guard knows.
 
@@ -79,6 +80,8 @@ pub enum Action {
         kind: Kind,
     },
 }
+
+const NO_APP: &str = "no app opens it";
 
 fn revealed(why: impl Into<String>) -> Action {
     Action::Revealed { why: why.into() }
@@ -185,7 +188,7 @@ fn judge(canonical: &Path, meta: &Metadata, handler: &dyn Fn(&Path) -> Option<St
             revealed("Finder opens what it points to")
         }
         Some(_) => Action::Opened,
-        None => revealed("no app opens it"),
+        None => revealed(NO_APP),
     }
 }
 
@@ -210,16 +213,20 @@ pub(crate) fn resolve(path: &str, host: &str, home: &Path, handler: &dyn Fn(&Pat
     }
     let canonical = std::fs::canonicalize(&path).map_err(io_error)?;
     let meta = std::fs::metadata(&canonical).map_err(io_error)?;
+    // What the webview shows itself it shows, whether or not an app would open
+    // it; otherwise the verdict stands.
+    let shown = |otherwise: Action| match files::kind_of(&canonical, &meta) {
+        Ok(None) => otherwise,
+        Ok(Some(kind)) => Action::View { path: canonical.clone(), kind },
+        // Its default app could not read it either, so Finder shows it.
+        Err(e) => {
+            eprintln!("vaquita: read {}: {e}", canonical.display());
+            revealed(format!("it cannot be read: {e}"))
+        }
+    };
     let action = match judge(&canonical, &meta, handler) {
-        Action::Opened => match files::kind_of(&canonical, &meta) {
-            Ok(None) => Action::Opened,
-            Ok(Some(kind)) => Action::View { path: canonical.clone(), kind },
-            // Its default app could not read it either, so Finder shows it.
-            Err(e) => {
-                eprintln!("vaquita: read {}: {e}", canonical.display());
-                revealed(format!("it cannot be read: {e}"))
-            }
-        },
+        Action::Opened => shown(Action::Opened),
+        Action::Revealed { why } if why == NO_APP => shown(revealed(NO_APP)),
         action => action,
     };
     Ok((canonical, action))
@@ -398,8 +405,24 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_file_no_app_opens_is_revealed() {
-        assert_eq!(act(&file(&dir("noapp"), "notes.txt", 0o644), &|_: &Path| None), revealed("no app opens it"));
+    fn a_binary_file_no_app_opens_is_revealed() {
+        let p = file(&dir("noapp"), "notes.bin", 0o644);
+        std::fs::write(&p, b"a\0b").unwrap();
+        assert_eq!(act(&p, &|_: &Path| None), revealed("no app opens it"));
+    }
+
+    #[test]
+    fn a_text_file_no_app_opens_is_shown_in_the_app() {
+        let p = file(&dir("noapp-text"), "settings.env", 0o644);
+        std::fs::write(&p, "TIMEOUT=30\nDEBUG=false\n").unwrap();
+        assert_eq!(act(&p, &|_: &Path| None), viewed(&p, Kind::Text));
+    }
+
+    #[test]
+    fn a_script_no_app_opens_is_still_revealed_as_a_script() {
+        let p = file(&dir("noapp-sh"), "build.sh", 0o644);
+        std::fs::write(&p, "echo hi\n").unwrap();
+        assert_eq!(act(&p, &|_: &Path| None), revealed(format!("it is a .sh, {KIND}")));
     }
 
     // Asks LaunchServices only; nothing is opened. Which app owns .command
@@ -496,6 +519,13 @@ pub(crate) mod tests {
         let binary = file(&d, "data.bin", 0o644);
         std::fs::write(&binary, b"a\0b").unwrap();
         assert_eq!(act(&binary, &editor), Action::Opened);
+    }
+
+    #[test]
+    fn a_pdf_opens_in_its_default_app() {
+        let p = file(&dir("pdf"), "doc.pdf", 0o644);
+        std::fs::write(&p, b"%PDF-1.7\n").unwrap();
+        assert_eq!(act(&p, &editor), Action::Opened);
     }
 
     #[test]
