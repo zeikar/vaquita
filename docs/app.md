@@ -117,6 +117,8 @@ rm -rf /tmp/vaquita-browser
 
 The bridge keeps to what the UI needs: its open gate, sort, changes list and diff sides are rough copies of the Rust side's, file watching (the repo's for Changes too) uses Node's `fs.watch`, and native parts (menus and their keys, dialogs, Finder, the clipboard, WKWebView's own behaviour) are not covered. Those still need the built app.
 
+Checks that are worth running again live in `tools/browser/checks/`, one file each, on Playwright from `tools/browser/package.json`. `tools/browser/check.sh changes` runs the check of the Changes view end to end: it installs Playwright on first use, sets up `run.sh` in a new temporary folder, edits the demo repo and prints a PASS or FAIL line per step, stops what it started and exits non-zero on a failure. Screenshots go to `<dir>/shots`, beside the logs; the script prints the folder. It runs WebKit, the engine closest to the app's WKWebView; `BROWSER=chromium` runs it in Chromium. A new check is a new file in `tools/browser/checks/`, run as `check.sh <name>`.
+
 ## Update check
 
 `tools/update-check/check.sh` runs the in-app update once, end to end, on this Mac: it builds a 0.0.1 bundle and a 0.0.2 bundle signed with a throwaway key, serves the update feed on 127.0.0.1:1421, and opens the old bundle. It proves that the app finds the feed, checks the signature, swaps the bundle and relaunches with `VAQUITA_HOME` kept.
