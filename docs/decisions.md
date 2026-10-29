@@ -27,7 +27,7 @@ Not built, on purpose:
 - **Hooks or edits to the agents' settings.** Claude Code and Codex already report their state in the terminal ([below](#agent-state-without-hooks)).
 - **SSH, Windows, Linux, mobile.**
 - **A built-in browser, a chat UI, issue trackers.**
-- **Source control, pull requests, checks, ports, plugins.** The files panel shows and edits files and stops there.
+- **Source control, pull requests, checks, ports, plugins.** The files panel shows and edits files, and lists and diffs what changed since the last commit, read-only, and stops there.
 - **Split panes**, until tabs prove not enough.
 - **Worktrees** for now ([below](#grouped-by-repo)).
 
@@ -175,13 +175,17 @@ Worktrees were dropped from the plan on 2026-10-23 because they were rarely used
 ## The files panel
 
 - **Tabs, not splits.** The terminal is always the first tab. Tabs are kept per repo, as the sidebar groups sessions, and restored after a relaunch.
-- **Monaco**, the editor Orca uses, for light edits rather than full coding. It is loaded the first time a text file opens: it adds about 1.3 MB to the download and about 100 MB of memory once loaded, and an app run that opens no text file never pays for it. A save checks that an agent did not change the file in the meantime.
+- **Monaco**, the editor Orca uses, for light edits rather than full coding. It is loaded the first time a text file or a diff opens: it adds about 1.3 MB to the download and about 100 MB of memory once loaded, and an app run that opens no text file never pays for it. A save checks that an agent did not change the file in the meantime.
 - **All file access is in app Rust commands, on demand.** The daemon is not involved.
 - **PDFs open in their default app.** In WebKit a sandboxed frame showed PDFs blank, and an unsandboxed one needed a scheme of its own that checked every request. After trying it, that was removed on 2026-10-29 in favour of Preview or whatever app owns PDFs. Images, audio and video do open in a tab.
 - **The tree reads a folder when it is expanded and watches only expanded folders** with FSEvents. A change to a file's contents alone does nothing, a hidden panel reads and watches nothing, and nothing polls (Orca polls git every 2 to 3 s). A folder lists at most 2000 entries, and a symlink is a row, not a branch.
-- **Git is asked only what it ignores**, when a folder is read, with `core.fsmonitor` off so a repository's configuration cannot run a command.
 - **The Markdown preview is sanitized** and shows no images; that limit was accepted to keep untrusted content inert.
-- **Next, if anything:** a list of changed files with a Monaco diff. Side-by-side views wait until tabs prove not enough.
+- **Changes are against HEAD only**: staged, unstaged and untracked together, with no branch base, so work a branch already committed does not show.
+- **Git runs no command a repository configures.** The tree asks git only what it ignores; the Changes list and the diff ask for the status, the line counts and HEAD's copy of a file. Every call has `core.fsmonitor` off; the list and the diff also turn off external diff, textconv and lazy fetches (`--no-lazy-fetch`, hence git 2.46 or later), and HEAD's side is read as the raw blob. Two things a plain `git status` runs were turned off rather than allowed, and what that costs was accepted on 2026-10-29. Filter drivers the repository's own config defines are emptied, while a user's global ones, such as Git LFS's, keep running, as the user set them up; so a touched file whose filter only the repo's config sets, as git-crypt's is, can show as changed with its content the same. And git does not enter submodule working trees (`--ignore-submodules=dirty`), where it would follow each submodule's own config; so edits inside a submodule are not listed, only its commit moving.
+- **One recursive watch of the repo, only while the Changes view shows**, beside the tree's per-folder ones. Inside `.git` only the index, HEAD and branches count, so a fetch refreshes nothing, and ignored paths are dropped with one `check-ignore` per 300 ms batch, so a build writing into `dist` costs a git run per batch and no refresh. Optional locks and diff's index refresh are off: a status or a diff would otherwise rewrite a stat-dirty index, which the watch would see as a change and answer with another status, forever. Beyond that, the list is read on a turn's end, a save or a click, never on a timer.
+- **A diff tab is a tab key, not a path** (`diff:` and the file's path; paths start with `/`, so none collides), so preview tabs, pinning, order, grouping by repo and restoring needed no change. It has no document, so it is never dirty and closing it asks nothing.
+- **Read-only: no staging, committing or discarding.** The agents and the terminal do that.
+- **Next, if anything:** staging or a branch base, when tabs and the list prove not enough.
 
 ## Phase 0 findings
 
