@@ -2,6 +2,10 @@
 
 Each release's notes open with its section here.
 
+## 0.1.17
+
+- If the app crashes, it first writes what failed and where to `app-panic.log` in its folder (`~/Library/Application Support/vaquita`), so the cause can be found. A crash report alone shows only addresses.
+
 ## 0.1.16
 
 - A file you open with a click in the tree or a ⌘-click in the terminal opens in a preview tab, in italics, and the next file you open takes its place, so looking through what an agent touched no longer piles up tabs. Editing the file, or double-clicking its tab or its row in the tree, keeps the tab.
