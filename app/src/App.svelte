@@ -16,10 +16,10 @@
 	import { openPath } from './lib/file-links';
 	import { clampPanelWidth, loadPanelWidth, PANEL_DEFAULT_WIDTH, PANEL_HIDDEN, PANEL_WIDTH } from './lib/file-panel';
 	import FilePane from './lib/FilePane.svelte';
-	import FileTree from './lib/FileTree.svelte';
+	import FilesPanel from './lib/FilesPanel.svelte';
 	import { onTabAsked } from './lib/files';
 	import { watchFocus } from './lib/focus';
-	import { repoName, repoOf } from './lib/groups';
+	import { repoOf } from './lib/groups';
 	import Icon from './lib/Icon.svelte';
 	import { isNewSessionShortcut, isNextTabShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut } from './lib/keys';
 	import { holdLayout } from './lib/layout-hold';
@@ -27,7 +27,6 @@
 	import { SessionManager } from './lib/manager';
 	import NewSessionDialog, { LAST_CWD } from './lib/NewSessionDialog.svelte';
 	import { sessionTitle, type Notifier, type Target } from './lib/notify';
-	import { shortPath } from './lib/paths';
 	import SessionList from './lib/SessionList.svelte';
 	import { loadWidth, SIDEBAR_HIDDEN, SIDEBAR_WIDTH } from './lib/sidebar';
 	import SidebarEdge from './lib/SidebarEdge.svelte';
@@ -536,33 +535,23 @@
 			{/if}
 		</div>
 	</section>
-	<!-- Unmounted, not hidden, while it is off, so nothing of the tree runs and
-	     no folder is watched. -->
+	<!-- Unmounted, not hidden, while it is off, so nothing of the tree or the
+	     changes runs and no folder is watched. -->
 	{#if !panelHidden}
 		<aside class="files">
-			<header>
-				<span class="title">Files</span>
-				{#if root !== undefined}<span class="repo" title={root}>{repoName(root)}</span>{/if}
-			</header>
-			{#if root !== undefined}
-				{#key root}
-					<FileTree {root} highlight={active === undefined ? undefined : tabFile(active)} onopen={openFromTree} report={(m) => manager.report(m)} />
-				{/key}
-			{:else if selectedRow}
-				{@const cwd = selectedRow.info.cwd}
-				<!-- An empty cwd is the home folder, unknown in a plain browser. -->
-				{@const folder = cwd || home}
-				<div class="no-repo">
-					<p>This session's folder is not a registered repo, so it has no file tree.</p>
-					<button
-						title={folder}
-						disabled={$manager.status !== 'connected' || folder === undefined}
-						onclick={() => folder !== undefined && manager.addRepo(folder)}
-					>
-						Add {shortPath(cwd, home)} as a repo
-					</button>
-				</div>
-			{/if}
+			<FilesPanel
+				{root}
+				cwd={selectedRow?.info.cwd}
+				{home}
+				connected={$manager.status === 'connected'}
+				sessions={$manager.sessions.map((r) => r.info)}
+				repos={$manager.repos}
+				highlight={active === undefined ? undefined : tabFile(active)}
+				onopen={openFromTree}
+				onopendiff={openDiff}
+				onaddrepo={(f) => manager.addRepo(f)}
+				report={(m) => manager.report(m)}
+			/>
 			<SidebarEdge
 				side="left"
 				clamp={clampPanelWidth}

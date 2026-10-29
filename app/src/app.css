@@ -323,32 +323,6 @@ aside.files > header .repo {
 	white-space: nowrap;
 }
 
-/* The file panel's offer for a session under no repo, in the middle of it. */
-.no-repo {
-	flex: 1;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	gap: 10px;
-	padding: 16px;
-	color: #999;
-	font-size: 12px;
-	line-height: 1.4;
-	text-align: center;
-}
-
-.no-repo p {
-	margin: 0;
-}
-
-.no-repo button {
-	max-width: 100%;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
 /* The brand marks keep a colour of their own wherever they show. OpenAI's is
    black or white, so a light grey beside the muted shell and command icons. */
 svg[data-icon='claude'] {

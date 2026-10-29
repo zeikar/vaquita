@@ -78,6 +78,28 @@ describe('ChangeLists', () => {
 		expect(lists.lists['/tmp/repo'].error).toBeUndefined();
 	});
 
+	it('tells a new error once, again after a success, and no one once stopped', async () => {
+		const status = vi.fn<(root: string) => Promise<ChangeList>>().mockRejectedValue(new Error('git broke'));
+		const lists = new ChangeLists(status);
+		const failed = vi.fn();
+		const stop = lists.onFailed(failed);
+		await lists.refresh('/tmp/repo');
+		await lists.refresh('/tmp/repo');
+		expect(failed.mock.calls).toEqual([['/tmp/repo', 'git broke']]);
+		status.mockRejectedValueOnce(new Error('git broke worse'));
+		await lists.refresh('/tmp/repo');
+		expect(failed).toHaveBeenCalledTimes(2);
+		status.mockResolvedValueOnce(list('/tmp/repo', 1));
+		await lists.refresh('/tmp/repo');
+		await lists.refresh('/tmp/repo');
+		expect(failed.mock.calls.at(-1)).toEqual(['/tmp/repo', 'git broke']);
+		stop();
+		status.mockResolvedValueOnce(list('/tmp/repo', 1));
+		await lists.refresh('/tmp/repo');
+		await lists.refresh('/tmp/repo');
+		expect(failed).toHaveBeenCalledTimes(3);
+	});
+
 	it('keeps two roots apart', async () => {
 		const gate = deferred<ChangeList>();
 		const status = vi.fn((root: string) => (root === '/tmp/a' ? gate.promise : Promise.resolve(list(root, 5))));
