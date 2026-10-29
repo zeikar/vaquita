@@ -37,6 +37,21 @@ PATH="/opt/homebrew/opt/rustup/bin:$PATH" npm run tauri dev
 - A desktop notification when an agent finishes, fails or needs input, unless that session is in front of you. Clicking it opens the session. Notifications missed while the app was closed are summed up in one when it reconnects. A `tauri dev` run, which is not an app bundle, shows none.
 - The status line at the bottom shows whether the daemon is connected, and why not while it is not. What came of something you did shows there for a while: a failure in red for a minute, anything else, such as a path revealed in Finder, in grey for eight seconds. A click on it takes it away, and hovering shows all of a long one.
 
+## Rules the app keeps
+
+Each of these was learned the hard way; a change to the app keeps all of them, and a plan or review that touches one says how.
+
+- **Typing never reaches a terminal you cannot see.** Whatever covers the terminal (a file tab, a dialog) holds the focus; every path that gives focus back goes through one place (`focusContent()` in `App.svelte`), and a terminal that starts while covered does not take it.
+- **Unsaved edits are never lost without a question.** Closing a tab, the window or the app for an update asks first (⌘Q is the known exception). Removing a repo moves its tabs elsewhere; nothing disposes an edited document on its own. A save checks that the file did not change on disk since it was read, writes a temporary file and renames it over the original, and keeps the original's permissions, ACLs and extended attributes.
+- **Terminal output and file contents are untrusted.** A path from the terminal or the tree goes through the open gate (`open_path.rs`) before anything opens it: executables, scripts, bundles and the like are only revealed in Finder. The Markdown preview is sanitized (no scripts, images, media, SVG, forms, styles, classes or ids) and its links open only http, https and mailto in the browser; nothing frames or navigates to a file the app serves. Git runs with `core.fsmonitor` off and names passed literally, so showing a folder never runs a command a repository configured.
+- **Light means nothing polls.** Work happens on a user action, a daemon message or a file event. Only expanded folders are watched, a hidden panel mounts nothing, Monaco loads the first time a text file opens, and git is asked only when a folder is read.
+- **Dragging an edge does not reflow what is under it.** While the sidebar or the files panel edge is dragged, the terminal keeps its size and the editor its layout; both lay out once on release, so an agent redraws once.
+- **Shortcuts that must work everywhere go in the native menu, and only keys AppKit leaves alone.** WKWebView hands a key to the page first and then runs any standard key binding (`StandardKeyBinding.dict`), which swallows keys such as ⌃Tab before the menu sees them. Menu keys use ⌘ or ⌥⌘ combinations with no binding there; keys meant only for the page are handled in the window's capture-phase handler before the terminal sees them.
+- **The repo list is trusted only once the daemon sent it.** The app starts with an empty list; pruning anything by repo waits until the daemon's list has arrived.
+- **After a relaunch the terminal shows first**, with the file tabs restored behind it.
+- **The three header rows line up**: the sidebar's header, the tab bar and the files panel's header are each 30 px plus a 1 px border.
+- **Checking a build by hand**: use the dev daemon (`VAQUITA_HOME=~/.vaquita-dev`), start it before the app and quit the app before stopping it, as a release build installs its LaunchAgent when its daemon goes away. Stop only the processes you started, by their PIDs.
+
 ## Release build
 
 A release build looks for the daemon and, if none is running, starts its LaunchAgent through launchd. When the agent is not loaded, it first installs it with the vaquitad inside the app, so no separate `vaquitad install` is needed. `tauri dev` never does; it shows a hint instead.
