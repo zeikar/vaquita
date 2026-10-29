@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs one browser check end to end, in WebKit (BROWSER=chromium for Chromium).
+# Runs one browser check end to end, in WebKit.
 #
 #   tools/browser/check.sh <name> [dir]
 #

@@ -3,22 +3,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium, webkit } from 'playwright';
+import { webkit } from 'playwright';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-// WebKit by default, as the app runs in WKWebView; BROWSER=chromium for a
-// second opinion.
+// WebKit only: the app runs in WKWebView, so a failure there is one its users
+// would meet, and a pass in another engine would prove nothing.
 export async function openApp(viewport) {
-	const name = process.env.BROWSER ?? 'webkit';
-	const type = { webkit, chromium }[name];
-	if (!type) throw new Error(`BROWSER=${name}: use webkit or chromium`);
-	const browser = await type.launch();
+	const browser = await webkit.launch();
 	const page = await browser.newPage({ viewport });
 	page.on('pageerror', (e) => console.log('pageerror', e.message));
 	await page.addInitScript({ path: path.join(here, '..', 'init.js') });
 	await page.goto('http://localhost:1420');
-	console.log(`browser: ${name} ${browser.version()}`);
+	console.log(`browser: webkit ${browser.version()}`);
 	return { browser, page };
 }
 
