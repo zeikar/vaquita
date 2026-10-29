@@ -57,8 +57,9 @@ PATH="/opt/homebrew/opt/rustup/bin:$PATH" npm run tauri dev
 
 ## Docs
 
-- [Daemon](docs/daemon.md): `vaquitad` commands, Codex notifications, reopening sessions after a restart.
-- [App](docs/app.md): the dev loop, what the app does, release builds, the icon and the screenshot.
+- [Daemon](docs/daemon.md): `vaquitad` commands, Codex notifications, reopening sessions after a restart, and the rules the daemon keeps.
+- [App](docs/app.md): the dev loop, what the app does, the rules it keeps, release builds, the icon and the screenshot.
+- [Design decisions](docs/decisions.md): why it is built the way it is, and what was left out on purpose.
 - [tools/probe](docs/probe.md): the recorders and test beds used to check the risky parts.
 
 ## License
