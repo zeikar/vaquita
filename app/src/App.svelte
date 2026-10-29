@@ -458,7 +458,7 @@
 			<TerminalPane sessions={$manager.sessions} selected={$manager.selected} />
 			{#if active !== undefined}
 				{@const path = active}
-				<FilePane bind:this={filePane} {path} readOnly={updating} onclose={() => void closeFileTab(path)} report={(m) => manager.report(m)} />
+				<FilePane bind:this={filePane} {path} repo={root} {home} readOnly={updating} onclose={() => void closeFileTab(path)} report={(m) => manager.report(m)} />
 			{/if}
 		</div>
 	</section>

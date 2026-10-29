@@ -34,8 +34,8 @@ vi.mock('./markdown', () => ({ renderMarkdown: async (text: string) => text }));
 let target: HTMLElement;
 let shown: ReturnType<typeof mount> | undefined;
 
-function show(path: string) {
-	const props = $state({ path, onclose: vi.fn(), report: vi.fn() });
+function show(path: string, where: { repo?: string; home?: string } = {}) {
+	const props = $state({ path, ...where, onclose: vi.fn(), report: vi.fn() });
 	target = document.createElement('div');
 	document.body.append(target);
 	shown = mount(FilePane, { target, props });
@@ -48,7 +48,8 @@ async function settle() {
 	flushSync();
 }
 
-const button = (name: string) => [...target.querySelectorAll('.toolbar button')].find((b) => b.textContent === name) as HTMLButtonElement;
+const button = (name: string) => target.querySelector<HTMLButtonElement>(`.bar button[aria-label="${name}"]`)!;
+const bar = () => target.querySelector<HTMLElement>('.bar')!;
 const previewShown = () => target.querySelector('.markdown') !== null;
 const editorShown = () => target.querySelector<HTMLElement>('.text')?.hidden === false;
 
@@ -56,6 +57,46 @@ afterEach(() => {
 	if (shown) unmount(shown);
 	shown = undefined;
 	target?.remove();
+});
+
+describe('FilePane path bar', () => {
+	it('shows the path from the repo folder, the full one as its tooltip', async () => {
+		show('/tmp/repo/src/lib/a.ts', { repo: '/tmp/repo', home: '/Users/me' });
+		await settle();
+		expect(bar().querySelector('.dir')?.textContent).toBe('src/lib/');
+		expect(bar().querySelector('.name')?.textContent).toBe('a.ts');
+		expect(bar().title).toBe('/tmp/repo/src/lib/a.ts');
+	});
+
+	it('shows the path from ~ outside a repo', async () => {
+		show('/Users/me/notes/todo.txt', { home: '/Users/me' });
+		await settle();
+		expect(bar().querySelector('.where')?.textContent).toBe('~/notes/todo.txt');
+		expect(bar().title).toBe('/Users/me/notes/todo.txt');
+	});
+
+	it('has the Preview and Source switch for markdown only', async () => {
+		const props = show('/tmp/repo/a.txt');
+		await settle();
+		expect(bar().querySelector('button')).toBeNull();
+		props.path = '/tmp/repo/b.png';
+		flushSync();
+		await settle();
+		expect(bar().querySelector('button')).toBeNull();
+		props.path = '/tmp/repo/c.md';
+		flushSync();
+		await settle();
+		expect(button('Preview').title).toBe('Preview');
+		expect(button('Source').title).toBe('Source');
+		expect(button('Preview').querySelector('svg[data-icon="eye"]')).not.toBeNull();
+		expect(button('Source').querySelector('svg[data-icon="code-bracket-micro"]')).not.toBeNull();
+	});
+
+	it('replaces the old toolbar row', async () => {
+		show('/tmp/repo/d.md');
+		await settle();
+		expect(target.querySelector('.toolbar')).toBeNull();
+	});
 });
 
 describe('FilePane markdown', () => {
@@ -72,6 +113,8 @@ describe('FilePane markdown', () => {
 		await settle();
 		expect(previewShown()).toBe(false);
 		expect(editorShown()).toBe(true);
+		expect(button('Source').getAttribute('aria-pressed')).toBe('true');
+		expect(button('Preview').getAttribute('aria-pressed')).toBe('false');
 
 		button('Preview').click();
 		await settle();

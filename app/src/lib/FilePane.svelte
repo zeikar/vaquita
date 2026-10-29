@@ -9,7 +9,9 @@
 	import { onDestroy, tick } from 'svelte';
 	import { documents } from './documents';
 	import { fileUrl, viewPath, type FileKind } from './files';
+	import Icon from './Icon.svelte';
 	import MarkdownView from './MarkdownView.svelte';
+	import { barPath } from './paths';
 	import { fileName } from './tabs';
 	import TextEditor from './TextEditor.svelte';
 
@@ -18,8 +20,13 @@
 		onclose,
 		report,
 		readOnly = false,
+		repo,
+		home,
 	}: {
 		path: string;
+		// The repo of the tab's group, which the path bar goes from; none for Other.
+		repo?: string;
+		home?: string;
 		onclose: () => void;
 		report: (message: string) => void;
 		readOnly?: boolean;
@@ -45,6 +52,7 @@
 	const source = $derived(markdown !== undefined && sources.has(markdown));
 	const inEditor = (s: Shown) => s.state === 'view' && (s.kind === 'text' || (s.kind === 'markdown' && sources.has(s.path)));
 	const showsEditor = $derived(inEditor(shown));
+	const where = $derived(barPath(path, repo, home));
 
 	function showEditor(p: string): void {
 		textPath = p;
@@ -123,12 +131,15 @@
 </script>
 
 <div class="file" tabindex="-1" bind:this={root}>
-	{#if markdown !== undefined}
-		<div class="toolbar" role="group" aria-label="Markdown view">
-			<button aria-pressed={!source} onclick={() => void setSource(false)}>Preview</button>
-			<button aria-pressed={source} onclick={() => void setSource(true)}>Source</button>
-		</div>
-	{/if}
+	<div class="bar" title={path}>
+		<span class="where"><span class="dir">{where.dir}</span><span class="name">{where.name}</span></span>
+		{#if markdown !== undefined}
+			<div class="modes" role="group" aria-label="Markdown view">
+				<button title="Preview" aria-label="Preview" aria-pressed={!source} onclick={() => void setSource(false)}><Icon name="eye" /></button>
+				<button title="Source" aria-label="Source" aria-pressed={source} onclick={() => void setSource(true)}><Icon name="code-bracket-micro" /></button>
+			</div>
+		{/if}
+	</div>
 	{#if shown.state === 'view' && shown.note}
 		<p class="note">{shown.note}</p>
 	{/if}
@@ -158,11 +169,11 @@
 </div>
 
 <style>
-	/* A first row for the markdown toolbar, empty for other files: above what
-	   the file shows rather than over it, where Monaco's find widget opens. */
+	/* The path bar's row, then the note's, empty without one, above what the
+	   file shows rather than over it, where Monaco's find widget opens. */
 	.file {
 		display: grid;
-		grid-template: auto minmax(0, 1fr) / minmax(0, 1fr);
+		grid-template: auto auto minmax(0, 1fr) / minmax(0, 1fr);
 		place-items: center;
 		min-height: 0;
 		overflow: auto;
@@ -170,44 +181,82 @@
 		outline: none;
 	}
 	.file > :global(*) {
-		grid-area: 2 / 1;
+		grid-area: 3 / 1;
 	}
-	.file > .toolbar {
+	.file > .bar {
 		grid-area: 1 / 1;
-		justify-self: end;
+		place-self: stretch;
 		display: flex;
-		margin: 6px 12px;
+		align-items: center;
+		gap: 8px;
+		height: 22px;
+		padding: 0 4px 0 12px;
+		border-bottom: 1px solid #333;
+		background: #1e1e1e;
+		color: #888;
+		font-size: 12px;
+		white-space: nowrap;
+		-webkit-user-select: none;
+		user-select: none;
+	}
+	/* The folders give way first: the name shrinks only once it alone is wider
+	   than the bar. */
+	.where {
+		display: flex;
+		min-width: 0;
+	}
+	.dir {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.name {
+		flex: none;
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		color: #ccc;
+	}
+	.modes {
+		display: flex;
+		flex: none;
+		margin-left: auto;
 		border: 1px solid #3c3c3c;
 		border-radius: 4px;
 		overflow: hidden;
 	}
-	.toolbar button {
-		height: 22px;
-		padding: 0 10px;
+	.modes button {
+		display: grid;
+		place-items: center;
+		width: 20px;
+		height: 18px;
+		padding: 0;
 		border: none;
 		background: transparent;
 		color: #999;
-		font: inherit;
-		font-size: 12px;
 		cursor: pointer;
 	}
-	.toolbar button + button {
+	.modes button + button {
 		border-left: 1px solid #3c3c3c;
 	}
-	.toolbar button:hover {
+	.modes button:hover {
 		background: #2a2d2e;
 		color: #d4d4d4;
 	}
-	.toolbar button[aria-pressed='true'] {
+	.modes button[aria-pressed='true'] {
 		background: #3a3d41;
 		color: #e5e5e5;
 	}
-	.toolbar button:focus-visible {
+	.modes button:focus-visible {
 		outline: 1px solid var(--neon);
 		outline-offset: -1px;
 	}
+	.modes :global(svg) {
+		width: 12px;
+		height: 12px;
+	}
 	.file > .note {
-		grid-area: 1 / 1;
+		grid-area: 2 / 1;
 		justify-self: start;
 		margin: 6px 12px;
 		color: #d7ba7d;

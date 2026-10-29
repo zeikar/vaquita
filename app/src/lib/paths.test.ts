@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shortPath } from './paths';
+import { barPath, shortPath } from './paths';
 
 describe('shortPath', () => {
 	const home = '/Users/me';
@@ -24,5 +24,26 @@ describe('shortPath', () => {
 	it('shows the filesystem root as /', () => {
 		expect(shortPath('/', home)).toBe('/');
 		expect(shortPath('/')).toBe('/');
+	});
+});
+
+describe('barPath', () => {
+	const home = '/Users/me';
+	it('goes from the repo folder for a file in the repo', () => {
+		expect(barPath('/tmp/repo/src/lib/a.ts', '/tmp/repo', home)).toEqual({ dir: 'src/lib/', name: 'a.ts' });
+		expect(barPath('/tmp/repo/README.md', '/tmp/repo', home)).toEqual({ dir: '', name: 'README.md' });
+	});
+	it('goes from ~ under the home folder, outside any repo', () => {
+		expect(barPath('/Users/me/notes/todo.md', undefined, home)).toEqual({ dir: '~/notes/', name: 'todo.md' });
+		expect(barPath('/Users/me/src/other/x.txt', '/Users/me/src/example', home)).toEqual({ dir: '~/src/other/', name: 'x.txt' });
+		expect(barPath('/Users/me/x.txt', undefined, home)).toEqual({ dir: '~/', name: 'x.txt' });
+	});
+	it('compares whole components', () => {
+		expect(barPath('/tmp/repo-feature/a.ts', '/tmp/repo', home)).toEqual({ dir: '/tmp/repo-feature/', name: 'a.ts' });
+		expect(barPath('/Users/meow/a.ts', undefined, home)).toEqual({ dir: '/Users/meow/', name: 'a.ts' });
+	});
+	it('stays absolute without a home', () => {
+		expect(barPath('/Users/me/notes/todo.md')).toEqual({ dir: '/Users/me/notes/', name: 'todo.md' });
+		expect(barPath('/etc/hosts', '/tmp/repo')).toEqual({ dir: '/etc/', name: 'hosts' });
 	});
 });

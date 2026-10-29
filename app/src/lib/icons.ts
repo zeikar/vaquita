@@ -56,7 +56,9 @@ export type IconName =
 	| 'musical-note'
 	| 'cog-6-tooth'
 	| 'lock-closed'
-	| 'command-line-outline';
+	| 'command-line-outline'
+	| 'eye'
+	| 'code-bracket-micro';
 
 export interface IconData {
 	viewBox: string;
@@ -199,5 +201,18 @@ export const icons: Record<IconName, IconData> = {
 		viewBox: '0 0 24 24',
 		d: 'm6.75 7.5 3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25Z',
 		stroke: true,
+	},
+	// Its pupil and its evenodd outline joined into one evenodd path, which
+	// fills the same: the pupil lies inside both of the outline's subpaths.
+	eye: {
+		viewBox: '0 0 16 16',
+		d: 'M8 9.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z M1.38 8.28a.87.87 0 0 1 0-.566 7.003 7.003 0 0 1 13.238.006.87.87 0 0 1 0 .566A7.003 7.003 0 0 1 1.379 8.28ZM11 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
+		evenodd: true,
+	},
+	// Named apart from the outline `code-bracket` the file tree uses.
+	'code-bracket-micro': {
+		viewBox: '0 0 16 16',
+		d: 'M4.78 4.97a.75.75 0 0 1 0 1.06L2.81 8l1.97 1.97a.75.75 0 1 1-1.06 1.06l-2.5-2.5a.75.75 0 0 1 0-1.06l2.5-2.5a.75.75 0 0 1 1.06 0ZM11.22 4.97a.75.75 0 0 0 0 1.06L13.19 8l-1.97 1.97a.75.75 0 1 0 1.06 1.06l2.5-2.5a.75.75 0 0 0 0-1.06l-2.5-2.5a.75.75 0 0 0-1.06 0ZM8.856 2.008a.75.75 0 0 1 .636.848l-1.5 10.5a.75.75 0 0 1-1.484-.212l1.5-10.5a.75.75 0 0 1 .848-.636Z',
+		evenodd: true,
 	},
 };
