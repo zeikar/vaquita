@@ -16,7 +16,7 @@
 
 vaquita is a lightweight ADE (agentic development environment) for macOS. It runs AI coding agents such as [Claude Code](https://code.claude.com) and [Codex CLI](https://github.com/openai/codex) side by side in the repos they work on: a Tauri app and a Go daemon in a download of about 10 MB, with no hooks to install. Think of it as a smaller take on [Orca](https://www.onorca.dev/), the agent IDE.
 
-![The vaquita app: repos and their sessions in the sidebar, each with its agent's state, and a Claude Code session open](docs/screenshot.png)
+![The vaquita app: repos and their sessions in the sidebar, each with its agent's state, a Claude Code session open, and the repo's files on the right](docs/screenshot.png)
 
 ## Features
 
