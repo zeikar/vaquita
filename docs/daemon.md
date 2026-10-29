@@ -37,3 +37,21 @@ After the daemon restarts (a crash or a reboot), the app lists every earlier ses
 The ids are only read from `$HOME/.claude` and `$HOME/.codex`, so with `CLAUDE_CONFIG_DIR` or `CODEX_HOME` set the fallback is used. No hooks are installed and nothing is written into the agents' directories.
 
 The conversation id is not the daemon's session id: that one is a small number per terminal (`vaquitad ls` shows it), while a conversation id belongs to the agent and changes inside one terminal on `/clear` or a new agent. A reopened session gets a new session id and keeps the old conversation id.
+
+## Rules the daemon keeps
+
+Most of these come from bugs seen in other terminal multiplexers and from reviews; a change to the daemon keeps all of them.
+
+- **At most one answer per byte of output.** Bytes that arrived while a client was attached are answered (terminal queries such as DA1, colour queries, Claude Code's OSC 7501 query) by one writable client only; bytes that arrived with no client, and every replay (also after a generation reset), are answered by nobody. The OSC 7501 answer goes before the DA1 one.
+- **A replay starts from the modes in force where the ring starts**, not the current ones.
+- **Reading a PTY never stops.** Only sending to a client waits, and a client acknowledges what it got, so a slow client cannot make its queue grow without bound.
+- **Buffers are copied, not shared.** Nothing passes a slice of the ring or of a read buffer to a channel or a send, and a small tail kept for long is copied too, so it does not hold the whole array.
+- **Every buffer and snapshot has a cap.**
+- **Late answers are checked against what they belong to**: a session's incarnation and a subscription's generation, as a reply can arrive after its session or subscription is gone.
+- **A close that arrives while a session is still starting is remembered**, and the session is killed once it has started, so no orphan shell is left.
+- **The exit event goes out after the PTY is drained.**
+- **A kill reaches every process group in the PTY session**, as an agent runs in a group other than its shell's; processes are found by their session id (`getsid`).
+- **Under launchd**: `ProcessType=Interactive`, an explicit list of environment variables to keep (`SSH_AUTH_SOCK` among them), `LANG` set, the shell by absolute path. The daemon is never a child the app would take down with it.
+- **The daemon removes only the socket, port and lock files it created**, so a daemon on its way out never deletes a newer one's.
+- **A daemon is replaced only when no session runs**, or when the user chooses to; the app compares the build fingerprint (`vaquitad version`) to tell whether a restart is needed at all. Development uses its own `VAQUITA_HOME`.
+- **No hooks and no writes into the agents' settings.** State comes from what Claude Code and Codex write to the terminal; per-session `-c` options for Codex are the only thing added, and only to a Codex the daemon starts.

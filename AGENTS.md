@@ -3,7 +3,7 @@
 vaquita is a macOS app (Tauri v2 + Svelte 5 in `app/`) over a Go session daemon (`daemon/`). Read before changing code:
 
 - [README.md](README.md) for what it is, and [docs/app.md](docs/app.md) and [docs/daemon.md](docs/daemon.md) for how each part works.
-- **[docs/app.md › Rules the app keeps](docs/app.md#rules-the-app-keeps)** before any change to the app. Every plan and review checks a change against them.
+- **[docs/app.md › Rules the app keeps](docs/app.md#rules-the-app-keeps)** before any change to the app, and **[docs/daemon.md › Rules the daemon keeps](docs/daemon.md#rules-the-daemon-keeps)** before any change to the daemon. Every plan and review checks a change against them.
 
 Conventions:
 
