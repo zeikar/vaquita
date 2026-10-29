@@ -61,7 +61,8 @@ export async function onTabAsked(run: (a: TabAction) => void): Promise<() => voi
 export type Entry = { name: string; dir: boolean };
 
 // `total` counts the folder's entries; `entries` holds at most the first 2000 of them.
-export type Listing = { entries: Entry[]; total: number };
+// `canonical` is the folder with its links resolved, as a tab's path is.
+export type Listing = { entries: Entry[]; total: number; canonical: string };
 
 // A folder set_watched could not resolve, with the reason.
 export type Refused = { path: string; error: string };

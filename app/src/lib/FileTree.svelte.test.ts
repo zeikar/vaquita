@@ -50,6 +50,7 @@ function gate(path: string): () => void {
 const listing = (...names: string[]): Listing => ({
 	entries: names.map((n) => (n.endsWith('/') ? { name: n.slice(0, -1), dir: true } : { name: n, dir: false })),
 	total: names.length,
+	canonical: '',
 });
 
 // Each test gets a root of its own, as the expanded folders are remembered by
@@ -383,6 +384,37 @@ describe('FileTree', () => {
 		flushSync();
 		expect(row('c.ts').getAttribute('aria-current')).toBe('true');
 		expect(row('b.ts').hasAttribute('aria-current')).toBe(false);
+	});
+
+	it('marks the highlighted file by its canonical path when the root is reached through a link', async () => {
+		fake.disk[root] = { ...listing('a.ts'), canonical: `/private${root}` };
+		show(`/private${root}/a.ts`);
+		await settle();
+		expect(row('a.ts').getAttribute('aria-current')).toBe('true');
+	});
+
+	it('closes and stops watching an expanded folder a new listing shows as a file or not at all', async () => {
+		fake.disk[root] = listing('src/', 'lib/');
+		fake.disk[at('src')] = listing('a.ts');
+		fake.disk[at('lib')] = listing('b.ts');
+		show();
+		await settle();
+		await click(row('src'));
+		await click(row('lib'));
+		expect(lastSet()).toEqual([root, at('src'), at('lib')]);
+		// src becomes a link (a row, no folder), lib is removed.
+		fake.disk[root] = listing('src');
+		fake.run!([root]);
+		await new Promise((r) => setTimeout(r, 200));
+		await settle();
+		expect(lastSet()).toEqual([root]);
+		expect(names()).toEqual(['src']);
+		// A remount does not bring them back.
+		hide();
+		fake.disk[root] = listing('src/', 'lib/');
+		show();
+		await settle();
+		expect(lastSet()).toEqual([root]);
 	});
 
 	it('collapses a folder whose read fails, reports it, and stops watching it', async () => {

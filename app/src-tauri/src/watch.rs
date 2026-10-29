@@ -75,22 +75,34 @@ fn changes_listing(kind: &EventKind) -> bool {
     !matches!(kind, EventKind::Access(_) | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)))
 }
 
+/// The lexical folders an event concerns. A rescan means events were dropped
+/// and names only some folder, so every watched folder is read again, as notify
+/// requires of a consumer.
+fn affected(event: &Event, roots: &[Root]) -> Vec<String> {
+    let mut folders: Vec<String> = Vec::new();
+    if event.need_rescan() {
+        for r in roots {
+            if !folders.contains(&r.lexical) {
+                folders.push(r.lexical.clone());
+            }
+        }
+        return folders;
+    }
+    for path in &event.paths {
+        for f in to_reload(path, roots) {
+            if !folders.contains(&f) {
+                folders.push(f);
+            }
+        }
+    }
+    folders
+}
+
 fn new_watcher(roots: Arc<Mutex<Vec<Root>>>, emit: impl Fn(Vec<String>) + Send + 'static) -> ::notify::Result<RecommendedWatcher> {
     ::notify::recommended_watcher(move |res: ::notify::Result<Event>| match res {
-        Ok(event) if !changes_listing(&event.kind) => {}
+        Ok(event) if !event.need_rescan() && !changes_listing(&event.kind) => {}
         Ok(event) => {
-            let folders = {
-                let roots = roots.lock().unwrap();
-                let mut folders: Vec<String> = Vec::new();
-                for path in &event.paths {
-                    for f in to_reload(path, &roots) {
-                        if !folders.contains(&f) {
-                            folders.push(f);
-                        }
-                    }
-                }
-                folders
-            };
+            let folders = affected(&event, &roots.lock().unwrap());
             if !folders.is_empty() {
                 emit(folders);
             }
@@ -242,6 +254,19 @@ mod tests {
     fn a_canonical_path_names_the_lexical_folder() {
         let roots = [root("/private/tmp/repo", "/tmp/repo")];
         assert_eq!(to_reload(Path::new("/private/tmp/repo/a.ts"), &roots), ["/tmp/repo"]);
+    }
+
+    #[test]
+    fn a_rescan_names_every_watched_folder() {
+        use ::notify::event::Flag;
+        let roots = [root("/x/repo", "/x/repo"), root("/x/repo/src", "/x/repo/src")];
+        let event = Event::new(EventKind::Other).add_path(PathBuf::from("/x/repo")).set_flag(Flag::Rescan);
+        assert_eq!(affected(&event, &roots), ["/x/repo", "/x/repo/src"]);
+        // Without the flag the same event names only the folders it concerns.
+        let plain = Event::new(EventKind::Other).add_path(PathBuf::from("/x/repo/src"));
+        assert_eq!(affected(&plain, &roots), ["/x/repo", "/x/repo/src"]);
+        let plain = Event::new(EventKind::Other).add_path(PathBuf::from("/x/repo/a.ts"));
+        assert_eq!(affected(&plain, &roots), ["/x/repo"]);
     }
 
     #[test]

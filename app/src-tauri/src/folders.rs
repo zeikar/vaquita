@@ -27,12 +27,16 @@ pub struct Entry {
 pub struct Listing {
     entries: Vec<Entry>,
     total: usize,
+    /// The folder with its links resolved: the tree shows lexical paths, but
+    /// a tab holds the canonical one of the file it opened.
+    canonical: String,
 }
 
 fn list(path: &Path, cap: usize) -> Result<Listing, String> {
     if !std::fs::metadata(path).map_err(open_path::io_error)?.is_dir() {
         return Err("not a folder".to_string());
     }
+    let canonical = std::fs::canonicalize(path).map_err(open_path::io_error)?.to_string_lossy().into_owned();
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(path).map_err(open_path::io_error)? {
         let entry = entry.map_err(open_path::io_error)?;
@@ -46,7 +50,7 @@ fn list(path: &Path, cap: usize) -> Result<Listing, String> {
     entries.sort_by_cached_key(|e| (!e.dir, e.name.to_lowercase()));
     let total = entries.len();
     entries.truncate(cap);
-    Ok(Listing { entries, total })
+    Ok(Listing { entries, total, canonical })
 }
 
 #[tauri::command]
@@ -74,6 +78,15 @@ mod tests {
         let l = list(&d, FOLDER_CAP).unwrap();
         assert_eq!(rows(&l), [("Alpha", true), ("zeta", true), ("a.txt", false), ("B.txt", false), ("c.txt", false)]);
         assert_eq!(l.total, 5);
+    }
+
+    #[test]
+    fn the_listing_names_the_canonical_folder() {
+        let d = dir("folders-canonical");
+        std::fs::create_dir(d.join("real")).unwrap();
+        std::os::unix::fs::symlink(d.join("real"), d.join("link")).unwrap();
+        let l = list(&d.join("link"), FOLDER_CAP).unwrap();
+        assert_eq!(l.canonical, std::fs::canonicalize(d.join("real")).unwrap().to_string_lossy());
     }
 
     #[test]

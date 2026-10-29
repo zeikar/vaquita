@@ -159,7 +159,24 @@
 			report(`${fileName(folder)}: ${listing.error}`);
 			return;
 		}
+		if (!('error' in listing)) forget(folder, listing);
 		listings.set(folder, listing);
+	}
+
+	// An expanded entry the listing no longer shows as a folder (removed, or
+	// replaced by a file or a link) is closed with what is under it, or its
+	// watch would outlive its row and a link would be followed on a remount.
+	function forget(folder: string, listing: Listing) {
+		const prefix = joinPath(folder, '');
+		const dirs = new Set(listing.entries.filter((e) => e.dir).map((e) => e.name));
+		let gone = false;
+		for (const p of [...expanded]) {
+			if (p.startsWith(prefix) && !dirs.has(p.slice(prefix.length).split('/')[0])) {
+				expanded.delete(p);
+				gone = true;
+			}
+		}
+		if (gone) expandedByRoot.set(root, new Set(expanded));
 	}
 
 	function changed(folders: string[]) {
@@ -197,6 +214,14 @@
 		menu = { at: { x: e.clientX, y: e.clientY }, items, path, key: ++opens };
 	}
 
+	// Tab paths are canonical and the tree's are lexical (a repo under /tmp is
+	// opened as /private/tmp/...), and no folder in the tree is a link, so a
+	// row's canonical path is the root's plus its path under the root.
+	const rootListing = $derived(listings.get(root));
+	const canonicalRoot = $derived(rootListing && !('error' in rootListing) && rootListing.canonical ? rootListing.canonical : root);
+	const isHighlighted = (path: string) =>
+		highlight !== undefined && highlight === joinPath(canonicalRoot, path.slice(joinPath(root, '').length));
+
 	const indent = (depth: number) => `${8 + depth * 12}px`;
 </script>
 
@@ -226,7 +251,7 @@
 					class="row"
 					class:menu={menu?.path === path}
 					style:padding-left={indent(depth)}
-					aria-current={path === highlight || undefined}
+					aria-current={isHighlighted(path) || undefined}
 					onclick={() => onopen(path)}
 					oncontextmenu={(e) => context(e, path)}
 				>
