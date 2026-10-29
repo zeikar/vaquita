@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { OTHER, closeTab, fileName, groupKey, neighbour, openTab, parseStored, prune } from './tabs';
+import { OTHER, closeTab, fallback, fileName, groupKey, neighbour, openTab, parseStored, prune, touch } from './tabs';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -47,6 +47,29 @@ describe('neighbour', () => {
 	it('stays on the terminal with no tabs', () => {
 		expect(neighbour([], undefined, 1)).toBeUndefined();
 		expect(neighbour([], undefined, -1)).toBeUndefined();
+	});
+});
+
+describe('touch / fallback', () => {
+	it('puts a new path first and returns a new array', () => {
+		const r = ['/a', undefined];
+		expect(touch(r, '/b')).toEqual(['/b', '/a', undefined]);
+		expect(r).toEqual(['/a', undefined]);
+	});
+	it('moves a known path or the terminal to the front without duplicating it', () => {
+		expect(touch(['/a', '/b', undefined], '/b')).toEqual(['/b', '/a', undefined]);
+		expect(touch(['/a', undefined, '/b'], undefined)).toEqual([undefined, '/a', '/b']);
+		expect(touch([], undefined)).toEqual([undefined]);
+	});
+	it('skips a closed path and finds the terminal', () => {
+		expect(fallback(['/gone', undefined, '/a'], ['/a'])).toBeUndefined();
+	});
+	it('finds the most recent open tab over an older one', () => {
+		expect(fallback(['/gone', '/b', '/a', undefined], ['/a', '/b'])).toBe('/b');
+	});
+	it('gives the terminal for an empty list or one with only closed paths', () => {
+		expect(fallback([], ['/a'])).toBeUndefined();
+		expect(fallback(['/gone', '/also'], ['/a'])).toBeUndefined();
 	});
 });
 

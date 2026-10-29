@@ -32,7 +32,7 @@
 	import SidebarEdge from './lib/SidebarEdge.svelte';
 	import { load, save } from './lib/storage';
 	import TabBar from './lib/TabBar.svelte';
-	import { closeTab, fileName, groupKey, loadTabs, neighbour, openTab, OTHER, prune, saveTabs } from './lib/tabs';
+	import { closeTab, fallback, fileName, groupKey, loadTabs, neighbour, openTab, OTHER, prune, saveTabs, touch, type Recent } from './lib/tabs';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
 	import { isTauri } from './lib/tauri';
@@ -59,6 +59,10 @@
 	// terminal, as after a relaunch and whenever another session is selected.
 	let groups = $state(loadTabs());
 	let active = $state<string>();
+	// What each group showed, most recent first, for where closing the shown
+	// tab goes. Per group, as the tabs are, and for the app run only; plain,
+	// since nothing renders it.
+	const recent = new Map<string, Recent>();
 	const dirty = new SvelteSet<string>();
 	onDestroy(documents.onDirtyChange((path, d) => (d ? dirty.add(path) : dirty.delete(path))));
 	let filePane = $state<ReturnType<typeof FilePane>>();
@@ -126,6 +130,8 @@
 	async function showTab(path: string | undefined): Promise<void> {
 		if (dialogOpen && path !== undefined) return;
 		active = path;
+		// Every change of the shown tab ends here, so this one line keeps the list.
+		if (group !== undefined) recent.set(group, touch(recent.get(group) ?? [], path));
 		// The file pane is there to take the focus only once it has rendered.
 		await tick();
 		if (!dialogOpen) focusContent();
@@ -149,7 +155,7 @@
 		documents.dropDocument(path);
 		groups = closeTab(groups, key, path);
 		saveTabs(groups);
-		if (active === path) void showTab(undefined);
+		if (active === path) void showTab(fallback(recent.get(key) ?? [], groups[key] ?? []));
 	}
 
 	// ⌘W: the file tab shown, else the window, as the menu's Close Window did.

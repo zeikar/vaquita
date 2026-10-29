@@ -38,6 +38,22 @@ export function neighbour(tabs: string[], active: string | undefined, step: numb
 	return next === 0 ? undefined : tabs[next - 1];
 }
 
+// The tabs of one group in the order they were last shown, most recent first;
+// undefined is the terminal. Kept per group for the app run only. A closed
+// path may stay in the list: fallback skips what is not open, and a reopened
+// file is shown, which moves it to the front anyway.
+export type Recent = (string | undefined)[];
+
+export function touch(recent: Recent, shown: string | undefined): Recent {
+	return [shown, ...recent.filter((p) => p !== shown)];
+}
+
+// Where closing the shown tab goes: the most recently shown tab still open,
+// else the terminal.
+export function fallback(recent: Recent, tabs: string[]): string | undefined {
+	return recent.find((p) => p === undefined || tabs.includes(p));
+}
+
 // Tabs of a repo that is no longer registered would never be shown again, so
 // they move to the group its sessions fall into now (a registered parent repo,
 // else OTHER), where an unsaved edit in one is still reachable. The same object
