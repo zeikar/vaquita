@@ -87,3 +87,46 @@ export async function onFolderChanged(run: (folders: string[]) => void): Promise
 		if (Array.isArray(e.payload) && e.payload.every((f) => typeof f === 'string')) run(e.payload);
 	});
 }
+
+// `status` is U for untracked and C for a conflict. `path` is relative to the
+// repo's toplevel, `abs` is the form a tab holds, `from` is a rename's old path. The counts are null for a
+// binary or large file.
+export type Change = {
+	path: string;
+	abs: string;
+	status: 'M' | 'A' | 'D' | 'R' | 'U' | 'C';
+	added: number | null;
+	removed: number | null;
+	from: string | null;
+};
+
+// `root` is the toplevel, canonical; `entries` holds at most the first 2000 of `total`.
+export type ChangeList = { root: string; entries: Change[]; total: number };
+
+// A side that does not exist is null: no HEAD version for a new file, no file on disk for a deleted one.
+export type Sides = { head: string | null; work: string | null };
+
+// The repo's uncommitted changes against HEAD.
+export function gitChanges(root: string): Promise<ChangeList> {
+	return call('git_changes', { root });
+}
+
+// The texts of one file at HEAD and on disk, or the reason they cannot be shown.
+export function diffSides(root: string, path: string): Promise<Sides> {
+	return call('diff_sides', { root, path });
+}
+
+// Like setWatched, one recursive watch of a repo (null: none), replaced whole under a generation.
+export function watchRepo(generation: number, root: string | null): Promise<void> {
+	return call('watch_repo', { generation, root });
+}
+
+// Runs run with the repo's root, as registered, when a change worth a new list happened in it;
+// resolves to a function that stops listening.
+export async function onRepoChanged(run: (root: string) => void): Promise<() => void> {
+	if (!isTauri()) return () => {};
+	const { listen } = await import('@tauri-apps/api/event');
+	return listen<unknown>('repo-changed', (e) => {
+		if (typeof e.payload === 'string') run(e.payload);
+	});
+}

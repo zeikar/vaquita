@@ -35,6 +35,7 @@ export class Documents {
 	// the tab it was for is closed, and its text could be stale by a reopen.
 	private drops = new Map<string, number>();
 	private listeners = new Set<(path: string, dirty: boolean) => void>();
+	private savedListeners = new Set<(path: string) => void>();
 	// Paths whose model a refresh is setting: that text is the disk's, not an
 	// edit, and dirty must mean an edit, since an edit pins a preview tab.
 	private quiet = new Set<string>();
@@ -84,6 +85,12 @@ export class Documents {
 	onDirtyChange(listener: (path: string, dirty: boolean) => void): () => void {
 		this.listeners.add(listener);
 		return () => this.listeners.delete(listener);
+	}
+
+	// Hears each path a write to disk succeeded for; the changes list reads the disk.
+	onSaved(listener: (path: string) => void): () => void {
+		this.savedListeners.add(listener);
+		return () => this.savedListeners.delete(listener);
 	}
 
 	private tell(path: string, dirty: boolean): void {
@@ -146,6 +153,7 @@ export class Documents {
 		const text = doc.model.getValue(undefined, true);
 		const version = doc.model.getAlternativeVersionId();
 		const name = fileName(path);
+		let saved = false;
 		try {
 			let stamp: Stamp;
 			try {
@@ -157,12 +165,15 @@ export class Documents {
 			}
 			doc.stamp = stamp;
 			doc.savedVersion = version;
+			saved = true;
 			// A save changes no content, so no edit event would clear the dot.
 			if (this.docs.get(path) === doc) this.tell(path, this.isDirty(path));
 		} catch (e) {
 			const why = message(e);
 			report(why === 'read-only' ? `${name} is read-only` : `saving ${name} failed: ${why}`);
 		}
+		// Outside the try: a listener's throw is not a failed save.
+		if (saved) for (const l of this.savedListeners) l(path);
 	}
 }
 

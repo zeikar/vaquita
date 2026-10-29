@@ -256,6 +256,36 @@ describe('saveDocument', () => {
 	});
 });
 
+describe('onSaved', () => {
+	it('tells the listener once with the path of a save', async () => {
+		const { docs, model, report } = setup();
+		const saved = vi.fn();
+		docs.onSaved(saved);
+		await docs.openDocument(path);
+		model().edit('two');
+		await docs.saveDocument(path, report);
+		expect(saved).toHaveBeenCalledOnce();
+		expect(saved).toHaveBeenCalledWith(path);
+	});
+
+	it('stays silent for a declined overwrite and a failed write, and after it is stopped', async () => {
+		const { docs, deps, model, report } = setup();
+		const saved = vi.fn();
+		const stop = docs.onSaved(saved);
+		await docs.openDocument(path);
+		model().edit('two');
+		deps.writeText.mockRejectedValueOnce(new Error(CHANGED_ON_DISK));
+		deps.ask.mockResolvedValueOnce(false);
+		await docs.saveDocument(path, report);
+		deps.writeText.mockRejectedValueOnce(new Error('read-only'));
+		await docs.saveDocument(path, report);
+		expect(saved).not.toHaveBeenCalled();
+		stop();
+		await docs.saveDocument(path, report);
+		expect(saved).not.toHaveBeenCalled();
+	});
+});
+
 describe('refresh', () => {
 	const still = () => true;
 
