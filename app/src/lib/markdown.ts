@@ -36,5 +36,17 @@ function load(): Promise<Render> {
 
 // Markdown as sanitized HTML, for {@html}.
 export async function renderMarkdown(text: string): Promise<string> {
-	return (await load())(text);
+	return (await load())(withFrontMatter(text));
+}
+
+// A leading YAML front matter block (Jekyll, Hugo, Astro) is not Markdown: read
+// as such, its opening --- is a rule and its closing --- turns the lines above
+// into one large heading. It is shown as a YAML code block instead.
+export function withFrontMatter(text: string): string {
+	const m = /^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(text);
+	if (!m) return text;
+	// A fence longer than any run of backticks inside, so none can close it early.
+	const longest = Math.max(0, ...(m[1].match(/`+/g) ?? []).map((run) => run.length));
+	const fence = '`'.repeat(Math.max(3, longest + 1));
+	return `${fence}yaml\n${m[1]}\n${fence}\n\n${text.slice(m[0].length)}`;
 }

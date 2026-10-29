@@ -2,7 +2,7 @@
 // Not happy-dom: DOMPurify cannot walk its DOM and lets handlers through there,
 // so the sanitizing would go untested.
 import { describe, expect, it } from 'vitest';
-import { renderMarkdown } from './markdown';
+import { renderMarkdown, withFrontMatter } from './markdown';
 
 async function rendered(text: string): Promise<HTMLElement> {
 	const root = document.createElement('div');
@@ -62,5 +62,28 @@ describe('renderMarkdown', () => {
 		const root = await rendered('- [ ] todo\n- [x] done\n');
 		expect(root.querySelector('input')).toBeNull();
 		expect([...root.querySelectorAll('li')].map((li) => li.textContent?.trim())).toEqual(['☐ todo', '☑ done']);
+	});
+});
+
+describe('front matter', () => {
+	it('shows a leading YAML block as code, not as a rule and a heading', async () => {
+		const root = await rendered('---\ntitle: "A post"\ndate: 2026-10-29\n---\n\nBody text.\n');
+		expect(root.querySelector('hr')).toBeNull();
+		expect(root.querySelector('h1, h2')).toBeNull();
+		expect(root.querySelector('pre code')?.textContent).toBe('title: "A post"\ndate: 2026-10-29\n');
+		expect(root.querySelector('p')?.textContent).toBe('Body text.');
+	});
+
+	it('leaves a document without front matter, or with a rule further down, alone', () => {
+		expect(withFrontMatter('# Title\n\n---\n\ntext\n')).toBe('# Title\n\n---\n\ntext\n');
+		expect(withFrontMatter('---\nno closing line\n')).toBe('---\nno closing line\n');
+	});
+
+	it('takes CRLF line ends and a closing ... line', () => {
+		expect(withFrontMatter('---\r\na: 1\r\n...\r\nrest')).toBe('```yaml\na: 1\n```\n\nrest');
+	});
+
+	it('uses a fence longer than any backticks inside the block', () => {
+		expect(withFrontMatter('---\nx: "```"\n---\n')).toBe('````yaml\nx: "```"\n````\n\n');
 	});
 });
