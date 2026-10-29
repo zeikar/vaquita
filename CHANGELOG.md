@@ -2,6 +2,12 @@
 
 Each release's notes open with its section here.
 
+## 0.1.15
+
+- A slim bar over every file tab shows the file's path in its repo, so two files with the same name are easy to tell apart. On a Markdown tab, its two icons at the right switch between the preview and the source; the row that held that switch is gone.
+- With many tabs open, the tab bar no longer shows a scrollbar: scroll it with the mouse wheel, and the tab you pick stays in view.
+- Scrollbars inside the app, such as the Markdown preview's, are dark like the rest of it.
+
 ## 0.1.14
 
 - The file tree shows an icon for each kind of file, with lines that mark each level, and what git ignores, such as `node_modules` or `.env`, is dimmed.
