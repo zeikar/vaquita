@@ -6,6 +6,7 @@ import { Terminal } from '@xterm/xterm';
 import { clipboardProvider } from './clipboard-provider';
 import { installHangulFix, type HangulFix } from './hangul-fix';
 import { keyHandler } from './keys';
+import { layoutHeld } from './layout-hold';
 import { activateUri, type LinkText } from './file-links';
 import type { Tone, ViewLike } from './manager';
 import { pathLinkProvider } from './path-link-provider';
@@ -25,15 +26,6 @@ export function createTerminal(cols: number, rows: number): Terminal {
 		// Plain drag selects only when the app has mouse reporting off; Option forces it.
 		macOptionClickForcesSelection: true,
 	});
-}
-
-// While the sidebar's edge is dragged no terminal takes the new size, so the
-// session is resized, and its agent redraws, once when it is let go rather
-// than at every step; the caller refits the shown view then.
-let fitHeld = false;
-
-export function holdFit(held: boolean): void {
-	fitHeld = held;
 }
 
 // TermView is a session terminal's DOM side. The terminal is opened the first
@@ -113,7 +105,7 @@ export class TermView implements ViewLike {
 	// fit() is never called: it would resize the terminal itself, hiding the
 	// change from the core, which resizes the terminal and the session.
 	refit(): void {
-		if (fitHeld) return;
+		if (layoutHeld()) return;
 		const d = this.proposed();
 		if (d) this.core.fitted(d.cols, d.rows);
 	}

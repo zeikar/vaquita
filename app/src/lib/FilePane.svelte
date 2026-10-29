@@ -60,6 +60,11 @@
 		else root.focus();
 	}
 
+	// After a panel edge's drag, which the editor sat out (layout-hold.ts).
+	export function relayout(): void {
+		editor?.relayout();
+	}
+
 	// Saving needs nothing here: it goes by path, and the document outlives the
 	// editor, so a file edited in Source saves from Preview too.
 	async function setSource(on: boolean): Promise<void> {

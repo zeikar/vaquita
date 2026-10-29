@@ -21,6 +21,7 @@
 	import { repoName, repoOf } from './lib/groups';
 	import Icon from './lib/Icon.svelte';
 	import { isNewSessionShortcut, isNextTabShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut } from './lib/keys';
+	import { holdLayout } from './lib/layout-hold';
 	import { openExternal } from './lib/links';
 	import { SessionManager } from './lib/manager';
 	import NewSessionDialog, { LAST_CWD } from './lib/NewSessionDialog.svelte';
@@ -36,7 +37,7 @@
 	import { shellQuoteAll } from './lib/shellquote';
 	import { isTauri } from './lib/tauri';
 	import { createTauriNotifier } from './lib/tauri-notify';
-	import { createTerminal, holdFit, TermView } from './lib/term-view';
+	import { createTerminal, TermView } from './lib/term-view';
 	import UpdateBanner from './lib/UpdateBanner.svelte';
 
 	// Replaced by the Tauri notifier once it is ready; the console one stays in
@@ -314,8 +315,9 @@
 	}
 
 	function sidebarResized() {
-		holdFit(false);
+		holdLayout(false);
 		selectedView()?.refit();
+		filePane?.relayout();
 		save(SIDEBAR_WIDTH, String(sidebarWidth));
 	}
 
@@ -330,8 +332,9 @@
 	}
 
 	function panelResized() {
-		holdFit(false);
+		holdLayout(false);
 		selectedView()?.refit();
+		filePane?.relayout();
 		save(PANEL_WIDTH, String(panelWidth));
 	}
 
@@ -436,7 +439,7 @@
 				<kbd>⌘T</kbd>
 			</button>
 		</div>
-		<SidebarEdge width={sidebarWidth} onstart={() => holdFit(true)} onresize={(w) => (sidebarWidth = w)} onend={sidebarResized} />
+		<SidebarEdge width={sidebarWidth} onstart={() => holdLayout(true)} onresize={(w) => (sidebarWidth = w)} onend={sidebarResized} />
 	</aside>
 	<NewSessionDialog
 		open={dialogOpen}
@@ -492,7 +495,7 @@
 				defaultWidth={PANEL_DEFAULT_WIDTH}
 				label="Resize files panel"
 				width={panelWidth}
-				onstart={() => holdFit(true)}
+				onstart={() => holdLayout(true)}
 				onresize={(w) => (panelWidth = w)}
 				onend={panelResized}
 			/>

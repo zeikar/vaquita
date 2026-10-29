@@ -1,8 +1,9 @@
 // @vitest-environment happy-dom
 // Named .svelte.test.ts so that the props can be $state, as the app's are.
 import { flushSync, mount, unmount } from 'svelte';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Document } from './documents';
+import { holdLayout } from './layout-hold';
 import type { Monaco } from './monaco';
 import TextEditor from './TextEditor.svelte';
 
@@ -26,6 +27,7 @@ function setup() {
 		focus: vi.fn(),
 		dispose: vi.fn(),
 		updateOptions: vi.fn(),
+		layout: vi.fn(),
 	};
 	const monaco = { editor: { create: vi.fn(() => editor) } } as unknown as Monaco;
 	const loader = vi.fn(async () => monaco);
@@ -58,10 +60,32 @@ async function settle() {
 	flushSync();
 }
 
+// happy-dom observes no layout, so a test resizes the host by hand.
+const observers: { callback: () => void; disconnected: boolean }[] = [];
+class FakeResizeObserver {
+	private readonly entry: (typeof observers)[number];
+	constructor(callback: () => void) {
+		this.entry = { callback, disconnected: false };
+		observers.push(this.entry);
+	}
+	observe() {}
+	disconnect() {
+		this.entry.disconnected = true;
+	}
+}
+const resize = () => observers.filter((o) => !o.disconnected).forEach((o) => o.callback());
+
+beforeEach(() => {
+	vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+});
+
 afterEach(() => {
 	if (shown) unmount(shown);
 	shown = undefined;
 	target?.remove();
+	holdLayout(false);
+	observers.length = 0;
+	vi.unstubAllGlobals();
 });
 
 const models = (s: Setup) => s.editor.setModel.mock.calls.map(([m]) => (m as { name: string } | null)?.name ?? null);
@@ -91,8 +115,43 @@ describe('TextEditor', () => {
 		expect(s.monaco.editor.create).toHaveBeenCalledTimes(1);
 		expect(s.monaco.editor.create).toHaveBeenCalledWith(
 			expect.any(HTMLElement),
-			expect.objectContaining({ model: null, theme: 'vs-dark', fontSize: 13, minimap: { enabled: false }, automaticLayout: true, accessibilitySupport: 'off' }),
+			expect.objectContaining({ model: null, theme: 'vs-dark', fontSize: 13, minimap: { enabled: false }, wordWrap: 'on', accessibilitySupport: 'off' }),
 		);
+		// Its own observer lays it out, so that a drag can hold the layout.
+		expect(s.monaco.editor.create).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ automaticLayout: expect.anything() }));
+	});
+
+	it('lays out when its host resizes, but not while the layout is held', async () => {
+		const s = setup();
+		show(s, '/tmp/repo/a.ts');
+		await settle();
+		resize();
+		expect(s.editor.layout).toHaveBeenCalledTimes(1);
+		holdLayout(true);
+		resize();
+		resize();
+		expect(s.editor.layout).toHaveBeenCalledTimes(1);
+	});
+
+	it('lays out once when relaid out after a held drag', async () => {
+		const s = setup();
+		show(s, '/tmp/repo/a.ts');
+		await settle();
+		holdLayout(true);
+		resize();
+		holdLayout(false);
+		(shown as { relayout: () => void }).relayout();
+		expect(s.editor.layout).toHaveBeenCalledTimes(1);
+	});
+
+	it('stops observing its host once unmounted', async () => {
+		const s = setup();
+		show(s, '/tmp/repo/a.ts');
+		await settle();
+		unmount(shown!);
+		shown = undefined;
+		resize();
+		expect(s.editor.layout).not.toHaveBeenCalled();
 	});
 
 	it('sets each shown path’s model', async () => {

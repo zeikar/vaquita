@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { documents as shared, type Documents } from './documents';
+	import { layoutHeld } from './layout-hold';
 	import { loadMonaco, type Monaco } from './monaco';
 	import { fileName } from './tabs';
 	import { MONO_FONT } from './theme';
@@ -41,10 +42,16 @@
 		return true;
 	}
 
+	// Lays the editor out to its host's size, as after a panel edge's drag.
+	export function relayout(): void {
+		editor?.layout();
+	}
+
 	$effect(() => editor?.updateOptions({ readOnly }));
 
 	onMount(() => {
 		let mounted = true;
+		let observer: ResizeObserver | undefined;
 		loader().then(
 			(monaco) => {
 				if (!mounted) return;
@@ -55,13 +62,22 @@
 					fontFamily: MONO_FONT,
 					fontSize: 13,
 					minimap: { enabled: false },
-					automaticLayout: true,
+					// Long lines wrap, so there is no sideways scrolling.
+					wordWrap: 'on',
 					// WebKit has no EditContext, so typing goes through Monaco's
 					// hidden textarea. With 'auto' it holds a page of text that
 					// WebKit scrolls a few pixels off Monaco's alignment, which
 					// shakes the line while an IME composes (monaco-editor#4796).
 					accessibilitySupport: 'off',
 				});
+				// Not automaticLayout, which relays out at every step of a panel
+				// edge's drag and flashes the scrollbars each time: the layout is
+				// held then, as the terminal's fit is, and the host clips the
+				// editor at its old size until the drag ends.
+				observer = new ResizeObserver(() => {
+					if (!layoutHeld()) editor?.layout();
+				});
+				observer.observe(host);
 			},
 			(e) => {
 				if (!mounted) return;
@@ -72,6 +88,7 @@
 		// The models stay: they are the documents', which outlive the editor.
 		return () => {
 			mounted = false;
+			observer?.disconnect();
 			editor?.dispose();
 		};
 	});
@@ -136,6 +153,7 @@
 	.editor {
 		place-self: stretch;
 		min-height: 0;
+		overflow: hidden;
 	}
 	.error {
 		max-width: 80%;
