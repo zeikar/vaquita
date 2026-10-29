@@ -32,7 +32,7 @@
 	import SidebarEdge from './lib/SidebarEdge.svelte';
 	import { load, save } from './lib/storage';
 	import TabBar from './lib/TabBar.svelte';
-	import { closeTabs, fallback, fileName, groupKey, loadTabs, neighbour, openTab, OTHER, prune, saveTabs, touch, type Recent } from './lib/tabs';
+	import { closeInGroup, fallback, fileName, groupKey, loadTabs, neighbour, openFileTab, OTHER, prune, saveTabs, touch, unpreview, type Previews, type Recent } from './lib/tabs';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
 	import { isTauri } from './lib/tauri';
@@ -59,12 +59,22 @@
 	// terminal, as after a relaunch and whenever another session is selected.
 	let groups = $state(loadTabs());
 	let active = $state<string>();
+	// The preview tab of each group, for the app run only.
+	let previews = $state<Previews>({});
 	// What each group showed, most recent first, for where closing the shown
 	// tab goes. Per group, as the tabs are, and for the app run only; plain,
 	// since nothing renders it.
 	const recent = new Map<string, Recent>();
 	const dirty = new SvelteSet<string>();
-	onDestroy(documents.onDirtyChange((path, d) => (d ? dirty.add(path) : dirty.delete(path))));
+	// An edit keeps a preview tab, in every group that has it.
+	onDestroy(
+		documents.onDirtyChange((path, d) => {
+			if (d) {
+				dirty.add(path);
+				previews = unpreview(previews, path);
+			} else dirty.delete(path);
+		}),
+	);
 	let filePane = $state<ReturnType<typeof FilePane>>();
 
 	const selectedRow = $derived($manager.sessions.find((r) => r.info.sid === $manager.selected));
@@ -101,8 +111,14 @@
 	});
 
 	// A ⌘-clicked file in a session's terminal; cwd is its starting folder.
-	function openFile(cwd: string, path: string): void {
-		groups = openTab(groups, groupKey(cwd, $manager.repos), path);
+	// Unpinned, it opens as the group's preview. A dirty document opens pinned:
+	// documents are shared by path across groups, so it may hold another
+	// group's edits, and a preview, which the next file replaces, holds none.
+	function openFile(cwd: string, path: string, pin = false): void {
+		const r = openFileTab(groups, previews, groupKey(cwd, $manager.repos), path, pin || documents.isDirty(path));
+		groups = r.groups;
+		previews = r.previews;
+		if (r.drop !== undefined) documents.dropDocument(r.drop);
 		saveTabs(groups);
 		void showTab(path);
 	}
@@ -110,10 +126,10 @@
 	// A file clicked in the tree goes through the gate a ⌘-click does, so what
 	// the app does not show in a tab is opened or revealed the same way. Its tab
 	// lands in the selected session's group, the tree's repo.
-	function openFromTree(path: string): void {
+	function openFromTree(path: string, pin = false): void {
 		const cwd = selectedRow?.info.cwd;
 		if (cwd === undefined) return;
-		void openPath(path, '', (m, tone) => manager.report(m, tone), (p) => openFile(cwd, p));
+		void openPath(path, '', (m, tone) => manager.report(m, tone), (p) => openFile(cwd, p, pin));
 	}
 
 	// What shows takes the focus, so that typing never reaches a terminal
@@ -150,11 +166,12 @@
 
 	// One question for all the unsaved among them; declined, nothing closes,
 	// so the bar is not left half-changed under the answer.
+	// Only the documents that go are asked about: edits in a path another group
+	// still has stay reachable from its tab there.
 	async function closeFileTabs(paths: string[]): Promise<void> {
 		const key = group;
 		if (key === undefined) return;
-		const present = paths.filter((p) => groups[key]?.includes(p));
-		const unsaved = present.filter((p) => documents.isDirty(p));
+		const unsaved = closeInGroup(groups, previews, key, paths).drop.filter((p) => documents.isDirty(p));
 		if (unsaved.length > 0) {
 			const question =
 				unsaved.length === 1
@@ -162,10 +179,14 @@
 					: `${unsaved.length} files have unsaved changes. Close them?`;
 			if (!(await mayLose(question, 'Close'))) return;
 		}
-		for (const p of present) documents.dropDocument(p);
-		groups = closeTabs(groups, key, present);
+		// Again on the tabs as they are after the question, which a repo list
+		// from the daemon may have moved; an unsaved one not asked about stays.
+		const r = closeInGroup(groups, previews, key, paths);
+		for (const p of r.drop) if (!documents.isDirty(p) || unsaved.includes(p)) documents.dropDocument(p);
+		groups = r.groups;
+		previews = r.previews;
 		saveTabs(groups);
-		if (active !== undefined && present.includes(active)) void showTab(fallback(recent.get(key) ?? [], groups[key] ?? []));
+		if (active !== undefined && paths.includes(active)) void showTab(fallback(recent.get(key) ?? [], groups[key] ?? []));
 	}
 
 	// ⌘W: the file tab shown, else the window, as the menu's Close Window did.
@@ -468,7 +489,17 @@
 	/>
 	<section class="content">
 		{#if selectedRow}
-			<TabBar title={sessionTitle(selectedRow.info)} tabs={groupTabs} {active} {dirty} onselect={(p) => void showTab(p)} onclose={(ps) => void closeFileTabs(ps)} report={(m) => manager.report(m)} />
+			<TabBar
+				title={sessionTitle(selectedRow.info)}
+				tabs={groupTabs}
+				{active}
+				preview={group !== undefined ? previews[group] : undefined}
+				{dirty}
+				onselect={(p) => void showTab(p)}
+				onclose={(ps) => void closeFileTabs(ps)}
+				onpin={(p) => (previews = unpreview(previews, p))}
+				report={(m) => manager.report(m)}
+			/>
 		{/if}
 		<div class="stack">
 			<TerminalPane sessions={$manager.sessions} selected={$manager.selected} />

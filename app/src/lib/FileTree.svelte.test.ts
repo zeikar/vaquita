@@ -427,11 +427,19 @@ describe('FileTree', () => {
 		expect(row('a.ts').hasAttribute('aria-current')).toBe(false);
 		await click(row('src'));
 		await click(row('c.ts'));
-		expect(p.onopen).toHaveBeenCalledWith(at('src/c.ts'));
+		expect(p.onopen).toHaveBeenCalledExactlyOnceWith(at('src/c.ts'));
 		p.highlight = at('src/c.ts');
 		flushSync();
 		expect(row('c.ts').getAttribute('aria-current')).toBe('true');
 		expect(row('b.ts').hasAttribute('aria-current')).toBe(false);
+	});
+
+	it('opens a double-clicked file pinned', async () => {
+		fake.disk[root] = listing('a.ts');
+		const p = show();
+		await settle();
+		row('a.ts').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+		expect(p.onopen).toHaveBeenCalledExactlyOnceWith(at('a.ts'), true);
 	});
 
 	it('marks the highlighted file by its canonical path when the root is reached through a link', async () => {

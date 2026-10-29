@@ -32,7 +32,8 @@
 		root: string;
 		// The shown tab's path.
 		highlight?: string;
-		onopen: (path: string) => void;
+		// pin is set on a double-click, which keeps the tab; a click opens a preview.
+		onopen: (path: string, pin?: boolean) => void;
 		report: (message: string) => void;
 	} = $props();
 
@@ -270,6 +271,7 @@
 					style:padding-left={indent(depth)}
 					aria-current={isHighlighted(path) || undefined}
 					onclick={() => onopen(path)}
+					ondblclick={() => onopen(path, true)}
 					oncontextmenu={(e) => context(e, path)}
 				>
 					{@render guides(depth)}

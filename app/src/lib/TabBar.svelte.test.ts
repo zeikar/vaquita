@@ -11,14 +11,16 @@ vi.mock('@tauri-apps/plugin-opener', () => opener);
 let target: HTMLElement;
 let bar: ReturnType<typeof mount> | undefined;
 
-function show(tabs: string[], active?: string) {
+function show(tabs: string[], active?: string, preview?: string) {
 	const props = $state({
 		title: 'claude',
 		tabs,
 		active,
+		preview,
 		dirty: new SvelteSet<string>(),
 		onselect: vi.fn(),
 		onclose: vi.fn((_paths: string[]) => {}),
+		onpin: vi.fn((_path: string) => {}),
 		report: vi.fn(),
 	});
 	target = document.createElement('div');
@@ -68,6 +70,23 @@ describe('TabBar', () => {
 		target.querySelector<HTMLButtonElement>('button[aria-label="Close b.md"]')!.click();
 		expect(props.onclose).toHaveBeenCalledWith(['/tmp/repo/b.md']);
 		expect(props.onselect).not.toHaveBeenCalled();
+	});
+
+	it('sets the preview tab in italics, and only it', () => {
+		const props = show(['/tmp/repo/a.md', '/tmp/repo/b.md'], undefined, '/tmp/repo/b.md');
+		const italic = () => [...target.querySelectorAll('.tab.preview')].map((t) => t.textContent?.trim());
+		expect(italic()).toEqual(['b.md']);
+		props.preview = undefined;
+		flushSync();
+		expect(italic()).toEqual([]);
+	});
+
+	it('pins a double-clicked tab, which its clicks still select', () => {
+		const props = show(['/tmp/repo/a.md'], undefined, '/tmp/repo/a.md');
+		tabs()[1].click();
+		tabs()[1].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+		expect(props.onpin).toHaveBeenCalledExactlyOnceWith('/tmp/repo/a.md');
+		expect(props.onselect).toHaveBeenCalledExactlyOnceWith('/tmp/repo/a.md');
 	});
 
 	it('marks a tab with unsaved edits', () => {

@@ -35,6 +35,9 @@ export class Documents {
 	// the tab it was for is closed, and its text could be stale by a reopen.
 	private drops = new Map<string, number>();
 	private listeners = new Set<(path: string, dirty: boolean) => void>();
+	// Paths whose model a refresh is setting: that text is the disk's, not an
+	// edit, and dirty must mean an edit, since an edit pins a preview tab.
+	private quiet = new Set<string>();
 
 	constructor(private deps: DocumentDeps) {}
 
@@ -57,7 +60,9 @@ export class Documents {
 		if ((this.drops.get(path) ?? 0) !== drops) throw new Error(`${fileName(path)} was closed while it was read`);
 		const model = monaco.editor.createModel(text, languageFor(monaco, path), monaco.Uri.file(path));
 		const doc: Document = { model, stamp, savedVersion: model.getAlternativeVersionId() };
-		model.onDidChangeContent(() => this.tell(path, this.isDirty(path)));
+		model.onDidChangeContent(() => {
+			if (!this.quiet.has(path)) this.tell(path, this.isDirty(path));
+		});
 		// Before the pending entry is cleared, so no open in between reads again.
 		this.docs.set(path, doc);
 		return doc;
@@ -96,10 +101,13 @@ export class Documents {
 		const { text, stamp } = await this.deps.readText(path);
 		if (!still() || this.docs.get(path) !== doc || doc.model.getAlternativeVersionId() !== version) return;
 		if (stamp.secs === doc.stamp.secs && stamp.nanos === doc.stamp.nanos && stamp.len === doc.stamp.len) return;
+		this.quiet.add(path);
 		doc.model.setValue(text);
+		this.quiet.delete(path);
 		doc.stamp = stamp;
 		doc.savedVersion = doc.model.getAlternativeVersionId();
-		// The edit event of setValue came before savedVersion caught up.
+		// The edit event of setValue was silenced; what listeners hear instead is
+		// that the document is as clean as it was, now with the disk's text.
 		this.tell(path, false);
 	}
 

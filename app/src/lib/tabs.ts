@@ -22,6 +22,53 @@ export function openTab(groups: TabGroups, key: string, path: string): TabGroups
 	return tabs.includes(path) ? { ...groups } : { ...groups, [key]: [...tabs, path] };
 }
 
+// The preview tab of each group, by key: the one the next opened file takes the
+// place of. In memory for the app run only; a tab restored after a relaunch is
+// a normal one, and the stored tabs keep their shape.
+export type Previews = Record<string, string>;
+
+// Replaced in place, so the tab stays where the file opened and the order of
+// the group is not churned by every click in the tree.
+export function openPreview(groups: TabGroups, previews: Previews, key: string, path: string): { groups: TabGroups; previews: Previews; replaced?: string } {
+	const tabs = groups[key] ?? [];
+	if (tabs.includes(path)) return { groups, previews };
+	const old = previews[key];
+	const at = old === undefined ? -1 : tabs.indexOf(old);
+	if (at < 0) return { groups: { ...groups, [key]: [...tabs, path] }, previews: { ...previews, [key]: path } };
+	return { groups: { ...groups, [key]: tabs.with(at, path) }, previews: { ...previews, [key]: path }, replaced: old };
+}
+
+// A pin, by an edit or a double-click, or a close: the path is no group's
+// preview any more.
+export function unpreview(previews: Previews, path: string): Previews {
+	return Object.fromEntries(Object.entries(previews).filter(([, p]) => p !== path));
+}
+
+// Opens a file in a group, pinned or as its preview. drop is the replaced
+// preview's path when no group has it as a tab any more, so its document can
+// go: documents are shared by path across groups, and one still open elsewhere
+// stays. The caller pins a path whose document is dirty, as it may hold
+// another group's edits and a preview must have none.
+export function openFileTab(groups: TabGroups, previews: Previews, key: string, path: string, pin: boolean): { groups: TabGroups; previews: Previews; drop?: string } {
+	if (pin) return { groups: openTab(groups, key, path), previews: unpreview(previews, path) };
+	const { replaced, ...r } = openPreview(groups, previews, key, path);
+	if (replaced === undefined || Object.values(r.groups).some((tabs) => tabs.includes(replaced))) return r;
+	return { ...r, drop: replaced };
+}
+
+// Closes paths among a group's tabs. drop is those no group has as a tab any
+// more, whose documents go once unsaved edits in them are asked about; one
+// still open in another group keeps its document, edits and all, reachable
+// from there. Only this group's preview is unpinned: the path stays the
+// preview of any other group that has it.
+export function closeInGroup(groups: TabGroups, previews: Previews, key: string, paths: string[]): { groups: TabGroups; previews: Previews; drop: string[] } {
+	const present = paths.filter((p) => groups[key]?.includes(p));
+	const left = closeTabs(groups, key, present);
+	const drop = present.filter((p) => !Object.values(left).some((tabs) => tabs.includes(p)));
+	const { [key]: preview, ...rest } = previews;
+	return { groups: left, previews: preview !== undefined && present.includes(preview) ? rest : previews, drop };
+}
+
 // A group left with no tabs is dropped so the stored JSON does not collect empties.
 export function closeTabs(groups: TabGroups, key: string, paths: string[]): TabGroups {
 	const { [key]: tabs, ...rest } = groups;

@@ -270,6 +270,8 @@ describe('refresh', () => {
 		expect(doc.stamp).toEqual(stamp(5));
 		expect(docs.isDirty(path)).toBe(false);
 		expect(heard).toHaveBeenLastCalledWith(path, false);
+		// Not dirty even for a moment: dirty means an edit, which pins a preview tab.
+		expect(heard).not.toHaveBeenCalledWith(path, true);
 		await docs.saveDocument(path, report);
 		expect(deps.writeText).not.toHaveBeenCalled();
 	});

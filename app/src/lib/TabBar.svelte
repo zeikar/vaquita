@@ -10,9 +10,11 @@
 		title,
 		tabs,
 		active,
+		preview,
 		dirty,
 		onselect,
 		onclose,
+		onpin,
 		report,
 	}: {
 		// The terminal tab's text: the selected session's title.
@@ -20,9 +22,13 @@
 		tabs: string[];
 		// The file tab shown; undefined is the terminal.
 		active?: string;
+		// The tab the next opened file takes the place of, in italics.
+		preview?: string;
 		dirty: ReadonlySet<string>;
 		onselect: (path: string | undefined) => void;
 		onclose: (paths: string[]) => void;
+		// A double-click keeps the preview tab.
+		onpin: (path: string) => void;
 		report: (message: string) => void;
 	} = $props();
 
@@ -97,8 +103,8 @@
 	</div>
 	{#each tabs as path (path)}
 		<!-- presentation: the list's tabs are the buttons; this only holds the menu's handler. -->
-		<div class="tab" role="presentation" class:active={active === path} class:menu={menu?.path === path} oncontextmenu={(e) => context(e, path)}>
-			<button class="name" role="tab" aria-selected={active === path} title={path} onclick={() => onselect(path)}>
+		<div class="tab" role="presentation" class:active={active === path} class:preview={path === preview} class:menu={menu?.path === path} oncontextmenu={(e) => context(e, path)}>
+			<button class="name" role="tab" aria-selected={active === path} title={path} onclick={() => onselect(path)} ondblclick={() => onpin(path)}>
 				<span class="label">{fileName(path)}</span>
 				{#if dirty.has(path)}<span class="dirty" role="img" aria-label="Unsaved" title="Unsaved"></span>{/if}
 			</button>
@@ -175,6 +181,9 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.tab.preview .label {
+		font-style: italic;
 	}
 	.dirty {
 		flex: none;

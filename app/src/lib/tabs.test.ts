@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { OTHER, closeTabs, fallback, fileName, groupKey, neighbour, openTab, parseStored, prune, touch } from './tabs';
+import { OTHER, closeInGroup, closeTabs, fallback, fileName, groupKey, neighbour, openFileTab, openPreview, openTab, parseStored, prune, touch, unpreview } from './tabs';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -40,6 +40,104 @@ describe('openTab / closeTabs', () => {
 	it('closes the known paths when an unknown one is among them', () => {
 		const g = { '/tmp/repo': ['/a', '/b', '/c'] };
 		expect(closeTabs(g, '/tmp/repo', ['/b', '/zzz'])).toEqual({ '/tmp/repo': ['/a', '/c'] });
+	});
+});
+
+describe('openPreview / unpreview', () => {
+	const repo = '/tmp/repo';
+
+	it('appends the first and marks it as the preview', () => {
+		expect(openPreview({ [repo]: ['/a'] }, {}, repo, '/b')).toEqual({ groups: { [repo]: ['/a', '/b'] }, previews: { [repo]: '/b' } });
+	});
+
+	it('replaces the preview in place and keeps the pinned tabs', () => {
+		const groups = { [repo]: ['/a', '/p', '/c'] };
+		const previews = { [repo]: '/p' };
+		expect(openPreview(groups, previews, repo, '/n')).toEqual({ groups: { [repo]: ['/a', '/n', '/c'] }, previews: { [repo]: '/n' }, replaced: '/p' });
+		expect(groups[repo]).toEqual(['/a', '/p', '/c']);
+		expect(previews[repo]).toBe('/p');
+	});
+
+	it('leaves everything alone for a pinned tab and for the preview itself', () => {
+		const groups = { [repo]: ['/a', '/p'] };
+		const previews = { [repo]: '/p' };
+		expect(openPreview(groups, previews, repo, '/a')).toEqual({ groups, previews });
+		expect(openPreview(groups, previews, repo, '/p')).toEqual({ groups, previews });
+	});
+
+	it('appends when the stored preview is no longer a tab of the group', () => {
+		expect(openPreview({ [repo]: ['/a'] }, { [repo]: '/gone' }, repo, '/n')).toEqual({ groups: { [repo]: ['/a', '/n'] }, previews: { [repo]: '/n' } });
+	});
+
+	it('unpreview removes the entries of its path only and returns a new object', () => {
+		const previews = { [repo]: '/p', '/tmp/other': '/p', [OTHER]: '/q' };
+		expect(unpreview(previews, '/p')).toEqual({ [OTHER]: '/q' });
+		expect(previews).toEqual({ [repo]: '/p', '/tmp/other': '/p', [OTHER]: '/q' });
+		expect(unpreview(previews, '/zzz')).not.toBe(previews);
+	});
+});
+
+describe('openFileTab', () => {
+	const a = '/tmp/a';
+	const b = '/tmp/b';
+	const notes = '/tmp/notes.md';
+
+	it('pins: appends, and a preview opened again is no longer one', () => {
+		expect(openFileTab({}, {}, a, '/x', true)).toEqual({ groups: { [a]: ['/x'] }, previews: {} });
+		expect(openFileTab({ [a]: ['/x'] }, { [a]: '/x' }, a, '/x', true)).toEqual({ groups: { [a]: ['/x'] }, previews: {} });
+	});
+
+	it('drops the replaced preview when no group has it any more', () => {
+		const one = openFileTab({}, {}, b, notes, false);
+		expect(openFileTab(one.groups, one.previews, b, '/x', false)).toEqual({ groups: { [b]: ['/x'] }, previews: { [b]: '/x' }, drop: notes });
+	});
+
+	// Documents are shared by path across groups.
+	it('keeps the replaced preview while another group has it as a tab', () => {
+		let s = openFileTab({}, {}, a, notes, false);
+		s = openFileTab(s.groups, s.previews, b, notes, false);
+		expect(s.previews).toEqual({ [a]: notes, [b]: notes });
+		const r = openFileTab(s.groups, s.previews, b, '/x', false);
+		expect(r.groups).toEqual({ [a]: [notes], [b]: ['/x'] });
+		expect(r.drop).toBeUndefined();
+	});
+
+	// The caller pins a path whose document is dirty, as after edits in A.
+	it('a file edited in one group opens pinned in another and outlives the next file there', () => {
+		let s = openFileTab({}, {}, a, notes, false);
+		s = { ...s, previews: unpreview(s.previews, notes) };
+		s = openFileTab(s.groups, s.previews, b, notes, true);
+		expect(s.previews).toEqual({});
+		const r = openFileTab(s.groups, s.previews, b, '/x', false);
+		expect(r.groups).toEqual({ [a]: [notes], [b]: [notes, '/x'] });
+		expect(r.drop).toBeUndefined();
+	});
+});
+
+describe('closeInGroup', () => {
+	const a = '/tmp/a';
+	const b = '/tmp/b';
+	const notes = '/tmp/notes.md';
+
+	it('closes the known tabs of the group and drops what no group has any more', () => {
+		const groups = { [b]: [notes, '/x', '/y'] };
+		expect(closeInGroup(groups, {}, b, [notes, '/y', '/zzz'])).toEqual({ groups: { [b]: ['/x'] }, previews: {}, drop: [notes, '/y'] });
+		expect(closeInGroup({}, {}, b, [notes])).toEqual({ groups: {}, previews: {}, drop: [] });
+	});
+
+	// Documents are shared by path across groups: edits made in A stay
+	// reachable from A's tab, so nothing is dropped or asked about.
+	it('keeps the document of a path another group still has', () => {
+		const groups = { [a]: [notes], [b]: [notes, '/x'] };
+		expect(closeInGroup(groups, {}, b, [notes, '/x'])).toEqual({ groups: { [a]: [notes] }, previews: {}, drop: ['/x'] });
+	});
+
+	it("unpins only the closing group's preview", () => {
+		const groups = { [a]: [notes], [b]: [notes, '/x'] };
+		const previews = { [a]: notes, [b]: notes, [OTHER]: '/q' };
+		expect(closeInGroup(groups, previews, b, [notes]).previews).toEqual({ [a]: notes, [OTHER]: '/q' });
+		expect(closeInGroup(groups, previews, b, ['/x']).previews).toEqual(previews);
+		expect(previews).toEqual({ [a]: notes, [b]: notes, [OTHER]: '/q' });
 	});
 });
 
