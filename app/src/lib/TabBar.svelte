@@ -80,20 +80,26 @@
 	// whether the click comes before or after the capture is lost.
 	let swallow = false;
 
-	// Captured at once, not at the threshold, so every press ends in
-	// lostpointercapture and a plain click leaves no press behind. The capture
-	// is on the button itself, so the up lands on it and its click still fires.
+	// The capture is taken at the threshold, on the bar, not on the button: the
+	// bar is never moved, while reordering moves the button's own element, which
+	// would release a capture held there and lose the end of the drag. Before
+	// the threshold nothing is captured, so a plain click stays on its button.
 	function down(e: PointerEvent, path: string) {
 		if (e.button !== 0) return;
-		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 		drag = { path, x: e.clientX, pointerId: e.pointerId };
 		swallow = false;
 	}
 
 	function move(e: PointerEvent) {
 		if (!drag || e.pointerId !== drag.pointerId) return;
+		// A release outside the bar before the threshold was never seen.
+		if (e.buttons === 0) {
+			drag = undefined;
+			return;
+		}
 		if (!drag.order) {
 			if (Math.abs(e.clientX - drag.x) < DRAG_PX) return;
+			bar.setPointerCapture(e.pointerId);
 			drag.order = [...tabs];
 			swallow = true;
 		}
@@ -109,7 +115,7 @@
 		drag.order = moveTab(drag.order, path, at);
 	}
 
-	// After an up as well as a cancel, which also release the capture. A tab
+	// On the up, the cancel and the lost capture, whichever comes first. A tab
 	// placed by hand is kept: the next opened file must not take its place.
 	function lost() {
 		const d = drag;
@@ -152,7 +158,16 @@
 	}
 </script>
 
-<div class="tabs" role="tablist" bind:this={bar}>
+<!-- svelte-ignore a11y_interactive_supports_focus: the handlers only follow a drag; the tabs inside are the focusable parts. -->
+<div
+	class="tabs"
+	role="tablist"
+	bind:this={bar}
+	onpointermove={move}
+	onpointerup={lost}
+	onpointercancel={lost}
+	onlostpointercapture={lost}
+>
 	<div class="tab" class:active={active === undefined}>
 		<button class="name" role="tab" aria-selected={active === undefined} title="{title} (⌘1)" onclick={() => onselect(undefined)}>
 			<Icon name="command-line" />

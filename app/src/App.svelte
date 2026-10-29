@@ -187,9 +187,14 @@
 			if (!(await mayLose(question, 'Close'))) return;
 		}
 		// Again on the tabs as they are after the question, which a repo list
-		// from the daemon may have moved; an unsaved one not asked about stays.
+		// from the daemon may have moved; closing stops if that left an unsaved
+		// document going that was not asked about, its tabs kept.
 		const r = closeInGroup(groups, previews, key, paths);
-		for (const p of r.drop) if (!documents.isDirty(p) || unsaved.includes(p)) documents.dropDocument(p);
+		if (r.drop.some((p) => documents.isDirty(p) && !unsaved.includes(p))) {
+			manager.report('The tabs changed while asking; nothing was closed.');
+			return;
+		}
+		for (const p of r.drop) documents.dropDocument(p);
 		groups = r.groups;
 		previews = r.previews;
 		saveTabs(groups);

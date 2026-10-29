@@ -276,7 +276,9 @@ describe('TabBar', () => {
 		}
 		const button = (name: string) => tabs().find((t) => t.textContent?.trim() === name)!;
 		function pointer(name: string, type: string, clientX = 0) {
-			button(name).dispatchEvent(new PointerEvent(type, { button: 0, clientX, pointerId: 1, bubbles: true }));
+			// The capture is the bar's, so everything after the press lands there.
+			const at = type === 'pointerdown' ? button(name) : target.querySelector<HTMLElement>('.tabs')!;
+			at.dispatchEvent(new PointerEvent(type, { button: 0, buttons: type === 'pointerdown' || type === 'pointermove' ? 1 : 0, clientX, pointerId: 1, bubbles: true }));
 			flushSync();
 		}
 		function press(name: string, from: number, to?: number) {
@@ -317,9 +319,37 @@ describe('TabBar', () => {
 			expect(target.querySelector('.tab.dragging')).toBeNull();
 			button('b.md').click();
 			expect(props.onselect).not.toHaveBeenCalled();
-			// The next click is a click again.
+			// The next press is a click again.
+			pointer('b.md', 'pointerdown', 250);
+			pointer('b.md', 'lostpointercapture');
 			button('b.md').click();
 			expect(props.onselect).toHaveBeenCalledExactlyOnceWith(b);
+		});
+
+		// Reordering moves the tab's element, which releases a capture held there;
+		// the bar holds it and still sees the release.
+		it('reports the order when the release comes after the bar re-rendered mid-drag', () => {
+			const props = show([a, b, c]);
+			lay();
+			pointer('c.md', 'pointerdown', 350);
+			pointer('c.md', 'pointermove', 120);
+			lay();
+			pointer('c.md', 'pointermove', 20);
+			pointer('c.md', 'pointerup', 20);
+			expect(props.onreorder).toHaveBeenCalledExactlyOnceWith([c, a, b]);
+			pointer('c.md', 'lostpointercapture');
+			expect(props.onreorder).toHaveBeenCalledTimes(1);
+		});
+
+		it('drops a press whose release was never seen', () => {
+			const props = show([a, b, c]);
+			lay();
+			pointer('b.md', 'pointerdown', 250);
+			target.querySelector<HTMLElement>('.tabs')!.dispatchEvent(new PointerEvent('pointermove', { buttons: 0, clientX: 351, pointerId: 1, bubbles: true }));
+			flushSync();
+			pointer('b.md', 'pointermove', 351);
+			expect(props.onreorder).not.toHaveBeenCalled();
+			expect(names()).toEqual(['claude', 'a.md', 'b.md', 'c.md']);
 		});
 
 		it('never moves a file before the terminal', () => {
