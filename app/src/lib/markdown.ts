@@ -43,10 +43,13 @@ export async function renderMarkdown(text: string): Promise<string> {
 // as such, its opening --- is a rule and its closing --- turns the lines above
 // into one large heading. It is shown as a YAML code block instead.
 export function withFrontMatter(text: string): string {
-	const m = /^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(text);
+	// The block may be empty: the closing line can follow the opening one.
+	const m = /^---\r?\n(?:([\s\S]*?)\r?\n)?(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(text);
 	if (!m) return text;
+	const yaml = m[1] ?? '';
 	// A fence longer than any run of backticks inside, so none can close it early.
-	const longest = Math.max(0, ...(m[1].match(/`+/g) ?? []).map((run) => run.length));
+	let longest = 0;
+	for (const run of yaml.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
 	const fence = '`'.repeat(Math.max(3, longest + 1));
-	return `${fence}yaml\n${m[1]}\n${fence}\n\n${text.slice(m[0].length)}`;
+	return `${fence}yaml\n${yaml}\n${fence}\n\n${text.slice(m[0].length)}`;
 }

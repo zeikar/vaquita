@@ -83,6 +83,10 @@ describe('front matter', () => {
 		expect(withFrontMatter('---\r\na: 1\r\n...\r\nrest')).toBe('```yaml\na: 1\n```\n\nrest');
 	});
 
+	it('takes an empty block, and leaves a rule further down to the body', () => {
+		expect(withFrontMatter('---\n---\n\n# Body\n\n---\nTail')).toBe('```yaml\n\n```\n\n\n# Body\n\n---\nTail');
+	});
+
 	it('uses a fence longer than any backticks inside the block', () => {
 		expect(withFrontMatter('---\nx: "```"\n---\n')).toBe('````yaml\nx: "```"\n````\n\n');
 	});
