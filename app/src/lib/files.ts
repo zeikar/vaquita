@@ -57,3 +57,31 @@ export async function onTabAsked(run: (a: TabAction) => void): Promise<() => voi
 		if (isTabAction(e.payload)) run(e.payload);
 	});
 }
+
+export type Entry = { name: string; dir: boolean };
+
+// `total` counts the folder's entries; `entries` holds at most the first 2000 of them.
+export type Listing = { entries: Entry[]; total: number };
+
+// A folder set_watched could not resolve, with the reason.
+export type Refused = { path: string; error: string };
+
+export function readFolder(path: string): Promise<Listing> {
+	return call('read_folder', { path });
+}
+
+// The set is replaced whole, and Rust ignores a call whose generation is below the last one it
+// applied, so a late answer to an older set can never undo a newer one.
+export function setWatched(generation: number, folders: string[]): Promise<Refused[]> {
+	return call('set_watched', { generation, folders });
+}
+
+// Runs run with the watched folders whose listing changed; resolves to a function that stops
+// listening.
+export async function onFolderChanged(run: (folders: string[]) => void): Promise<() => void> {
+	if (!isTauri()) return () => {};
+	const { listen } = await import('@tauri-apps/api/event');
+	return listen<unknown>('folder-changed', (e) => {
+		if (Array.isArray(e.payload) && e.payload.every((f) => typeof f === 'string')) run(e.payload);
+	});
+}

@@ -26,7 +26,7 @@ simple-icons repository, `openai` from simple-icons 15.0.0, the last release tha
 no trademark; the marks only name the products they stand for.
 */
 
-// Path data only. The micro icons are Heroicons (16x16, solid), but for `sidebar`, drawn here
+// Path data only. The micro icons are Heroicons (16x16, solid), but for `sidebar` and `sidebar-right`, drawn here
 // in their style as Heroicons has none; the two brand marks are Simple Icons (24x24).
 export type IconName =
 	| 'claude'
@@ -43,7 +43,8 @@ export type IconName =
 	| 'x-circle'
 	| 'x-mark'
 	| 'arrow-uturn-left'
-	| 'sidebar';
+	| 'sidebar'
+	| 'sidebar-right';
 
 export interface IconData {
 	viewBox: string;
@@ -120,6 +121,12 @@ export const icons: Record<IconName, IconData> = {
 	sidebar: {
 		viewBox: '0 0 16 16',
 		d: 'M2 5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5Zm5-.5v7h5a.5.5 0 0 0 .5-.5V5a.5.5 0 0 0-.5-.5H7Z',
+		evenodd: true,
+	},
+	// `sidebar` mirrored: a window with its right pane filled.
+	'sidebar-right': {
+		viewBox: '0 0 16 16',
+		d: 'M2 5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5Zm7-.5v7H4a.5.5 0 0 1-.5-.5V5A.5.5 0 0 1 4 4.5h5Z',
 		evenodd: true,
 	},
 };
