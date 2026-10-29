@@ -162,8 +162,8 @@ describe('FileTree', () => {
 		expect(names()).toEqual(['a.ts']);
 	});
 
-	it('shows folders first, in natural order', async () => {
-		fake.disk[root] = listing('file10', 'b/', 'file2', 'A/', 'B.txt');
+	it('shows the rows in the order the listing came in', async () => {
+		fake.disk[root] = listing('A/', 'b/', 'B.txt', 'file2', 'file10');
 		show();
 		await settle();
 		expect(names()).toEqual(['A', 'b', 'B.txt', 'file2', 'file10']);
@@ -417,20 +417,30 @@ describe('FileTree', () => {
 		expect(lastSet()).toEqual([root]);
 	});
 
-	it('collapses a folder whose read fails, reports it, and stops watching it', async () => {
+	it('collapses a folder that is gone without a report, and one whose read fails with a report', async () => {
 		vi.useFakeTimers();
-		fake.disk[root] = listing('src/');
+		fake.disk[root] = listing('src/', 'lib/');
 		fake.disk[at('src')] = listing('a.ts');
+		fake.disk[at('lib')] = listing('b.ts');
 		const p = show();
 		await settle();
 		await click(row('src'));
+		await click(row('lib'));
+		// Gone: its parent's read, racing this one, takes the row.
 		delete fake.disk[at('src')];
 		fake.run!([at('src')]);
 		vi.advanceTimersByTime(150);
 		await settle();
-		expect(p.report).toHaveBeenCalledWith('src: no such file');
+		expect(p.report).not.toHaveBeenCalled();
 		expect(row('src').getAttribute('aria-expanded')).toBe('false');
-		expect(names()).toEqual(['src']);
+		expect(lastSet()).toEqual([root, at('lib')]);
+		// Any other failure is reported.
+		vi.mocked(readFolder).mockRejectedValueOnce(new Error('permission denied'));
+		fake.run!([at('lib')]);
+		vi.advanceTimersByTime(150);
+		await settle();
+		expect(p.report).toHaveBeenCalledWith('lib: permission denied');
+		expect(row('lib').getAttribute('aria-expanded')).toBe('false');
 		expect(lastSet()).toEqual([root]);
 	});
 

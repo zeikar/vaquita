@@ -1,16 +1,5 @@
-import type { Entry } from './files';
-
 export function joinPath(dir: string, name: string): string {
 	return dir.endsWith('/') ? dir + name : `${dir}/${name}`;
-}
-
-// Rust sorts and caps by plain lowercase names; the rows are ordered here again so that file2 comes
-// before file10. It can differ from Rust's order only past the cap, as the cap is a prefix of that
-// order.
-const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-
-export function orderEntries(entries: readonly Entry[]): Entry[] {
-	return [...entries].sort((a, b) => Number(b.dir) - Number(a.dir) || collator.compare(a.name, b.name));
 }
 
 // The folders the tree shows: the root and each expanded folder under it whose ancestors up to the

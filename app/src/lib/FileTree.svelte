@@ -21,7 +21,7 @@
 	import type { MenuAt, MenuItem } from './menu';
 	import { canReveal, revealInFinder } from './reveal';
 	import { fileName } from './tabs';
-	import { joinPath, orderEntries, visibleExpanded } from './tree';
+	import { joinPath, visibleExpanded } from './tree';
 
 	let {
 		root,
@@ -154,9 +154,10 @@
 		if (pending.get(folder) !== n || !ready || destroyed || !shown(folder)) return;
 		pending.delete(folder);
 		if ('error' in listing && folder !== root) {
-			// The effect turns the collapse into an unwatch.
+			// The effect turns the collapse into an unwatch. A folder that is gone
+			// is silent: its parent's read, racing this one, drops its row.
 			toggle(folder);
-			report(`${fileName(folder)}: ${listing.error}`);
+			if (listing.error !== 'no such file') report(`${fileName(folder)}: ${listing.error}`);
 			return;
 		}
 		if (!('error' in listing)) forget(folder, listing);
@@ -230,7 +231,7 @@
 	{#if listing && 'error' in listing}
 		<p class="error">{listing.error}</p>
 	{:else if listing}
-		{#each orderEntries(listing.entries) as entry (entry.name)}
+		{#each listing.entries as entry (entry.name)}
 			{@const path = joinPath(folder, entry.name)}
 			{#if entry.dir}
 				{@const open = expanded.has(path)}

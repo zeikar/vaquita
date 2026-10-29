@@ -1,5 +1,5 @@
 //! The entries of one folder for the file tree, folders first, then by name
-//! ignoring case. Only `.git` is hidden, a folder or the file a worktree has,
+//! ignoring case, digit runs by value (f2 before f10). Only `.git` is hidden, a folder or the file a worktree has,
 //! as nothing in it is the user's to browse; dotfiles and ignored files show.
 //! A symlink is a row, never a branch, whatever it points at: a click sends it
 //! through open_path.rs as any file, while expanding it would put one tree's
@@ -32,6 +32,41 @@ pub struct Listing {
     canonical: String,
 }
 
+/// Case-insensitive order with digit runs compared by value, as the tree's
+/// collator orders rows, so the cap cuts the tail of what the tree shows.
+fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let (mut a, mut b) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        match (a.peek().copied(), b.peek().copied()) {
+            (None, None) => return std::cmp::Ordering::Equal,
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
+                let run = |it: &mut std::iter::Peekable<std::str::Chars>| {
+                    let mut d = String::new();
+                    while let Some(c) = it.next_if(|c| c.is_ascii_digit()) {
+                        d.push(c);
+                    }
+                    d.trim_start_matches('0').to_string()
+                };
+                let (x, y) = (run(&mut a), run(&mut b));
+                let o = x.len().cmp(&y.len()).then_with(|| x.cmp(&y));
+                if o.is_ne() {
+                    return o;
+                }
+            }
+            (Some(x), Some(y)) => {
+                let o = x.to_lowercase().cmp(y.to_lowercase());
+                if o.is_ne() {
+                    return o;
+                }
+                a.next();
+                b.next();
+            }
+        }
+    }
+}
+
 fn list(path: &Path, cap: usize) -> Result<Listing, String> {
     if !std::fs::metadata(path).map_err(open_path::io_error)?.is_dir() {
         return Err("not a folder".to_string());
@@ -47,7 +82,7 @@ fn list(path: &Path, cap: usize) -> Result<Listing, String> {
         let dir = entry.file_type().map_err(open_path::io_error)?.is_dir();
         entries.push(Entry { name: entry.file_name().to_string_lossy().into_owned(), dir });
     }
-    entries.sort_by_cached_key(|e| (!e.dir, e.name.to_lowercase()));
+    entries.sort_by(|x, y| y.dir.cmp(&x.dir).then_with(|| natural_cmp(&x.name, &y.name)).then_with(|| x.name.cmp(&y.name)));
     let total = entries.len();
     entries.truncate(cap);
     Ok(Listing { entries, total, canonical })
@@ -110,6 +145,18 @@ mod tests {
         std::os::unix::fs::symlink(d.join("real"), d.join("to-folder")).unwrap();
         std::os::unix::fs::symlink(d.join("missing"), d.join("broken")).unwrap();
         assert_eq!(rows(&list(&d, FOLDER_CAP).unwrap()), [("real", true), ("broken", false), ("to-folder", false)]);
+    }
+
+    #[test]
+    fn digit_runs_are_ordered_by_value_and_the_cap_cuts_the_tail() {
+        let d = dir("folders-natural");
+        for n in 1..=12 {
+            file(&d, &format!("f{n}"), 0o644);
+        }
+        let l = list(&d, 10).unwrap();
+        let names: Vec<_> = l.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10"]);
+        assert_eq!(l.total, 12);
     }
 
     #[test]
