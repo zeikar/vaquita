@@ -71,11 +71,12 @@ Any build but a release, `tauri dev` included, has `app/app-icon-dev.png` as its
 
 ## Screenshot
 
-The README's screenshot is of a demo that `tools/screenshot/demo.sh` sets up in a new folder: a daemon and a HOME of its own, three repos, sessions (seeded by `sessions.mjs`) in which `fake-agent.sh` reports states the way Claude Code and Codex do, and one real Claude Code session that answers a short question with your login. To take it again, with port 1420 free and claude logged in:
+The README's screenshot is of a demo that `tools/screenshot/demo.sh` sets up in a new folder: a daemon and a HOME of its own, three repos (two of them seeded with a few files and a `.gitignore`, so their file trees are not empty), sessions (seeded by `sessions.mjs`) in which `fake-agent.sh` reports states the way Claude Code and Codex do, and one real Claude Code session that answers a short question with your login. To take it again, with port 1420 free and claude logged in:
 
 ```sh
 PATH="/opt/homebrew/opt/rustup/bin:$PATH" tools/screenshot/demo.sh up /tmp/vaquita-demo
-# once claude has answered, select its row under vaquita
+# once claude has answered, select its row under vaquita; the files panel shows
+# the clone (expand app/ to show its ignored node_modules and dist dimmed)
 screencapture -iw docs/screenshot.png   # then click the app's window
 tools/screenshot/demo.sh down /tmp/vaquita-demo
 rm -rf /tmp/vaquita-demo

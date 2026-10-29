@@ -56,6 +56,30 @@ mkdir -p "$home/src/api-server" "$home/src/web-app" "$vh"
 git clone --quiet "$repo" "$home/src/vaquita"
 # Its log then names the branch and tags, not the origin's branches too.
 git -C "$home/src/vaquita" remote remove origin
+# What a checkout has after npm install and a build, so the files panel shows
+# ignored folders dimmed when app/ is expanded.
+mkdir -p "$home/src/vaquita/app/node_modules" "$home/src/vaquita/app/dist"
+: >"$home/src/vaquita/app/node_modules/.package-lock.json"
+: >"$home/src/vaquita/app/dist/index.html"
+
+# The other two repos get a few files, so their trees are not empty.
+# seed <repo> <path>...: an empty file per path, then git init and a commit.
+seed() {
+	r=$home/src/$1
+	shift
+	for p in "$@"; do
+		mkdir -p "$r/$(dirname "$p")"
+		: >"$r/$p"
+	done
+	printf 'node_modules/\ndist/\n.env\n' >"$r/.gitignore"
+	git -C "$r" init --quiet
+	git -C "$r" add -A
+	git -C "$r" -c user.name=demo -c user.email=demo@example.com commit --quiet -m init
+	mkdir -p "$r/node_modules"
+	: >"$r/.env"
+}
+seed api-server go.mod main.go README.md Dockerfile internal/auth/login.go internal/auth/ratelimit.go internal/retry/retry.go internal/retry/retry_test.go
+seed web-app package.json tsconfig.json README.md index.html src/main.ts src/App.svelte src/settings/Settings.svelte src/settings/theme.css src/chart/UsageChart.svelte public/logo.svg
 make -s -C "$repo/daemon" BIN="$dir/bin/vaquitad" >/dev/null
 
 cat >"$home/.zshrc" <<'ZSHRC'
