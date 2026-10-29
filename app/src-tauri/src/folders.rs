@@ -8,8 +8,18 @@
 //! applied here so a folder of 100 000 files is one small answer over IPC; the
 //! entries kept are the first of the sorted order, so which show is the same
 //! on every read.
+//!
+//! Each entry kept says whether git ignores it, asked of `git check-ignore`
+//! once per read: git alone knows the nested .gitignore files, .git/info/exclude
+//! and the global excludes file, which a parser here would have to copy. It
+//! runs only on the reads the tree makes anyway, never on a timer, and a folder
+//! outside a repo, or a Mac without git, lists with nothing ignored.
 
+use std::collections::HashSet;
+use std::io::Write;
 use std::path::Path;
+use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 use serde::Serialize;
 
@@ -21,6 +31,7 @@ pub const FOLDER_CAP: usize = 2000;
 pub struct Entry {
     name: String,
     dir: bool,
+    ignored: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -67,6 +78,66 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
+/// The git to run, found once per run: without the command line tools,
+/// /usr/bin/git is a stub that asks to install them each time it runs.
+fn git() -> Option<&'static str> {
+    static GIT: OnceLock<Option<&'static str>> = OnceLock::new();
+    *GIT.get_or_init(|| {
+        let version = |git: &str| Command::new(git).arg("--version").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        // An app opened from Finder has only the system PATH, whose git is
+        // /usr/bin/git, so that is where a PATH without one looks.
+        let (git, status) = match version("git") {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => ("/usr/bin/git", version("/usr/bin/git")),
+            r => ("git", r),
+        };
+        status.is_ok_and(|s| s.success()).then_some(git)
+    })
+}
+
+/// The names in `names`, entries of `folder`, that git ignores; none when
+/// `folder` is not in a repo or git cannot run, as the tree must list a folder
+/// whatever git says. A tracked file is not ignored, whatever the patterns.
+fn ignored_names(folder: &Path, names: &[&str]) -> HashSet<String> {
+    if names.is_empty() {
+        return HashSet::new();
+    }
+    let Some(git) = git() else { return HashSet::new() };
+    let child = Command::new(git)
+        .arg("-C")
+        .arg(folder)
+        .args(["check-ignore", "-z", "--stdin"])
+        // Set in the app's environment, as by a git hook that started a
+        // dev build, these would make git judge another repo's files.
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn();
+    let Ok(mut child) = child else { return HashSet::new() };
+    let mut input = Vec::new();
+    for n in names {
+        input.extend_from_slice(n.as_bytes());
+        input.push(0);
+    }
+    // git answers each name as it reads it, so writing all of them before
+    // reading could fill both pipes and stall the two ends on each other. A
+    // write fails only when git has quit, and then its status says why.
+    let mut stdin = child.stdin.take().unwrap();
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(&input);
+    });
+    let out = child.wait_with_output();
+    let _ = writer.join();
+    // Exit 1 is no name ignored, 128 not a repo or any other failure.
+    match out {
+        Ok(out) if out.status.success() => {
+            out.stdout.split(|&b| b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n).into_owned()).collect()
+        }
+        _ => HashSet::new(),
+    }
+}
+
 fn list(path: &Path, cap: usize) -> Result<Listing, String> {
     if !std::fs::metadata(path).map_err(open_path::io_error)?.is_dir() {
         return Err("not a folder".to_string());
@@ -80,11 +151,15 @@ fn list(path: &Path, cap: usize) -> Result<Listing, String> {
         }
         // file_type does not follow a symlink, so a link is never a branch.
         let dir = entry.file_type().map_err(open_path::io_error)?.is_dir();
-        entries.push(Entry { name: entry.file_name().to_string_lossy().into_owned(), dir });
+        entries.push(Entry { name: entry.file_name().to_string_lossy().into_owned(), dir, ignored: false });
     }
     entries.sort_by(|x, y| y.dir.cmp(&x.dir).then_with(|| natural_cmp(&x.name, &y.name)).then_with(|| x.name.cmp(&y.name)));
     let total = entries.len();
     entries.truncate(cap);
+    let ignored = ignored_names(path, &entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>());
+    for e in &mut entries {
+        e.ignored = ignored.contains(&e.name);
+    }
     Ok(Listing { entries, total, canonical })
 }
 
@@ -168,6 +243,38 @@ mod tests {
         let l = list(&d, 3).unwrap();
         assert_eq!(rows(&l), [("a", false), ("b", false), ("c", false)]);
         assert_eq!(l.total, 5);
+    }
+
+    fn ignored(l: &Listing) -> Vec<&str> {
+        l.entries.iter().filter(|e| e.ignored).map(|e| e.name.as_str()).collect()
+    }
+
+    #[test]
+    fn what_git_ignores_is_marked() {
+        let d = dir("folders-ignored");
+        let init = Command::new("git").arg("-C").arg(&d).args(["init", "-q"]).env_remove("GIT_DIR").env_remove("GIT_WORK_TREE").status();
+        assert!(init.unwrap().success());
+        std::fs::write(d.join(".gitignore"), "dist/\n*.log\n").unwrap();
+        std::fs::create_dir(d.join("dist")).unwrap();
+        std::fs::create_dir(d.join("src")).unwrap();
+        file(&d.join("dist"), "app.js", 0o644);
+        // -z, so a newline in a name is part of it.
+        for name in ["a.log", "new\nline.log", "b.txt"] {
+            file(&d, name, 0o644);
+        }
+        assert_eq!(ignored(&list(&d, FOLDER_CAP).unwrap()), ["dist", "a.log", "new\nline.log"]);
+        // Inside an ignored folder, its entries are ignored too.
+        assert_eq!(ignored(&list(&d.join("dist"), FOLDER_CAP).unwrap()), ["app.js"]);
+    }
+
+    #[test]
+    fn outside_a_repo_nothing_is_ignored() {
+        let d = dir("folders-no-repo");
+        std::fs::write(d.join(".gitignore"), "*.log\n").unwrap();
+        file(&d, "a.log", 0o644);
+        let l = list(&d, FOLDER_CAP).unwrap();
+        assert_eq!(rows(&l), [(".gitignore", false), ("a.log", false)]);
+        assert!(ignored(&l).is_empty());
     }
 
     #[test]

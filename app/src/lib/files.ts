@@ -58,7 +58,8 @@ export async function onTabAsked(run: (a: TabAction) => void): Promise<() => voi
 	});
 }
 
-export type Entry = { name: string; dir: boolean };
+// `ignored` is whether git ignores the entry; false outside a repo.
+export type Entry = { name: string; dir: boolean; ignored: boolean };
 
 // `total` counts the folder's entries; `entries` holds at most the first 2000 of them.
 // `canonical` is the folder with its links resolved, as a tab's path is.

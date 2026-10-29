@@ -70,9 +70,18 @@ fn to_reload(path: &Path, roots: &[Root]) -> Vec<String> {
 /// metadata cannot, and an agent rewriting a log in an expanded folder would
 /// otherwise have the folder re-read all the time. notify makes one event per
 /// FSEvents flag, so a create or rename coalesced with a write still comes as
-/// its own event. Any and Other are kept, as Other is how a rescan comes.
-fn changes_listing(kind: &EventKind) -> bool {
-    !matches!(kind, EventKind::Access(_) | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Metadata(_)))
+/// its own event. Any and Other are kept, as Other is how a rescan comes. A
+/// write to a .gitignore is kept too, as the listing marks what git ignores.
+fn changes_listing(event: &Event) -> bool {
+    match event.kind {
+        EventKind::Access(_) | EventKind::Modify(ModifyKind::Metadata(_)) => false,
+        EventKind::Modify(ModifyKind::Data(_)) => event.paths.iter().any(|p| is_gitignore(p)),
+        _ => true,
+    }
+}
+
+fn is_gitignore(path: &Path) -> bool {
+    path.file_name().is_some_and(|n| n == ".gitignore")
 }
 
 /// The lexical folders an event concerns. A rescan means events were dropped
@@ -94,13 +103,22 @@ fn affected(event: &Event, roots: &[Root]) -> Vec<String> {
                 folders.push(f);
             }
         }
+        // A .gitignore's patterns reach every folder under it, so each one
+        // watched there is read again for what it now ignores.
+        if is_gitignore(path) && let Some(parent) = path.parent() {
+            for r in roots {
+                if r.canonical.starts_with(parent) && !folders.contains(&r.lexical) {
+                    folders.push(r.lexical.clone());
+                }
+            }
+        }
     }
     folders
 }
 
 fn new_watcher(roots: Arc<Mutex<Vec<Root>>>, emit: impl Fn(Vec<String>) + Send + 'static) -> ::notify::Result<RecommendedWatcher> {
     ::notify::recommended_watcher(move |res: ::notify::Result<Event>| match res {
-        Ok(event) if !event.need_rescan() && !changes_listing(&event.kind) => {}
+        Ok(event) if !event.need_rescan() && !changes_listing(&event) => {}
         Ok(event) => {
             let folders = affected(&event, &roots.lock().unwrap());
             if !folders.is_empty() {
@@ -272,6 +290,7 @@ mod tests {
     #[test]
     fn only_events_that_can_change_a_listing_count() {
         use ::notify::event::{AccessKind, CreateKind, DataChange, MetadataKind, RemoveKind, RenameMode};
+        let at = |kind, path: &str| Event::new(kind).add_path(PathBuf::from(path));
         for kind in [
             EventKind::Create(CreateKind::File),
             EventKind::Remove(RemoveKind::Folder),
@@ -280,15 +299,26 @@ mod tests {
             EventKind::Any,
             EventKind::Other,
         ] {
-            assert!(changes_listing(&kind), "{kind:?}");
+            assert!(changes_listing(&at(kind, "/x/repo/a.ts")), "{kind:?}");
         }
         for kind in [
             EventKind::Access(AccessKind::Any),
             EventKind::Modify(ModifyKind::Data(DataChange::Content)),
             EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any)),
         ] {
-            assert!(!changes_listing(&kind), "{kind:?}");
+            assert!(!changes_listing(&at(kind, "/x/repo/a.ts")), "{kind:?}");
         }
+        // A .gitignore's contents decide what the listing marks ignored.
+        assert!(changes_listing(&at(EventKind::Modify(ModifyKind::Data(DataChange::Content)), "/x/repo/.gitignore")));
+        assert!(!changes_listing(&at(EventKind::Modify(ModifyKind::Data(DataChange::Content)), "/x/repo/a.gitignore")));
+        assert!(!changes_listing(&at(EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any)), "/x/repo/.gitignore")));
+    }
+
+    #[test]
+    fn a_gitignore_names_every_watched_folder_under_it() {
+        let roots = [root("/x/repo", "/x/repo"), root("/x/repo/src", "/x/repo/src"), root("/x/repo/src/a", "/x/repo/src/a"), root("/x/other", "/x/other")];
+        let event = Event::new(EventKind::Other).add_path(PathBuf::from("/x/repo/src/.gitignore"));
+        assert_eq!(affected(&event, &roots), ["/x/repo/src", "/x/repo/src/a"]);
     }
 
     // A folder removed between its canonicalize and its watch cannot be

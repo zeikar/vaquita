@@ -48,7 +48,9 @@ function gate(path: string): () => void {
 
 // A listing of names, a trailing slash marking a folder.
 const listing = (...names: string[]): Listing => ({
-	entries: names.map((n) => (n.endsWith('/') ? { name: n.slice(0, -1), dir: true } : { name: n, dir: false })),
+	entries: names.map((n) =>
+		n.endsWith('/') ? { name: n.slice(0, -1), dir: true, ignored: false } : { name: n, dir: false, ignored: false },
+	),
 	total: names.length,
 	canonical: '',
 });
