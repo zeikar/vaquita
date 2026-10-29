@@ -9,5 +9,6 @@ Conventions:
 
 - Code, comments, commit messages and docs are in English. Comments say why, not what, and match the density of the code around them.
 - Examples and test data use neutral paths such as `/tmp/repo` or `~/src/example`, never real personal or company paths.
+- UI changes can be checked in a browser with [tools/browser](docs/app.md#browser-check) before the built app.
 - Tests sit next to the code: vitest (happy-dom) in `app/src/lib`, `cargo test` in `app/src-tauri`, `go test` in `daemon`. Run `npm test`, `npm run check` and `cargo test` before calling app work done.
 - A user-visible change to a release adds its lines to the top section of [CHANGELOG.md](CHANGELOG.md) before the tag.

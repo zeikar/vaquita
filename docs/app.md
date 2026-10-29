@@ -101,6 +101,19 @@ tools/screenshot/demo.sh down /tmp/vaquita-demo
 rm -rf /tmp/vaquita-demo
 ```
 
+## Browser check
+
+`tools/browser/run.sh` lets an agent drive the webview in a plain browser with Playwright, for UI checks that need no native window: a daemon and a vaquita home of its own, a small git repo with ignored files, two sessions (one in the repo, one outside any repo), vite on port 1420, and `bridge.mjs`, which answers the app's Rust commands against the real disk on 127.0.0.1:14999. In Playwright, `tools/browser/init.js` goes in as an init script before the page loads; it stands in for Tauri's internals, and `window.__vqFire(event, payload)` delivers an event the way the Rust side does (the menu's `tab` event, for example).
+
+```sh
+tools/browser/run.sh up /tmp/vaquita-browser
+# drive http://localhost:1420 with tools/browser/init.js as an init script
+tools/browser/run.sh down /tmp/vaquita-browser
+rm -rf /tmp/vaquita-browser
+```
+
+The bridge keeps to what the UI needs: its open gate and sort are rough copies of the Rust side's, file watching uses Node's `fs.watch`, and native parts (menus and their keys, dialogs, Finder, the clipboard, WKWebView's own behaviour) are not covered. Those still need the built app.
+
 ## Update check
 
 `tools/update-check/check.sh` runs the in-app update once, end to end, on this Mac: it builds a 0.0.1 bundle and a 0.0.2 bundle signed with a throwaway key, serves the update feed on 127.0.0.1:1421, and opens the old bundle. It proves that the app finds the feed, checks the signature, swaps the bundle and relaunches with `VAQUITA_HOME` kept.
