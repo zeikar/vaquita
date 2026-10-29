@@ -19,14 +19,27 @@ body {
 	font: 13px system-ui, sans-serif;
 }
 
-/* Sidebar left, the tabs and what they show right, the status bar along the
-   bottom. The sidebar's width is set from App, where it is dragged and
-   remembered. */
+/* Three placed columns: the sidebar, the tabs and what they show, the file
+   panel; the status bar along the bottom. A hidden side panel's column is an
+   empty track, so hiding one moves nothing else. The panels' widths are set
+   from App, where they are dragged and remembered. */
 main {
+	--left-col: var(--sidebar-width, 280px);
+	--right-col: var(--panel-width, 260px);
 	display: grid;
-	grid-template-columns: var(--sidebar-width, 280px) minmax(0, 1fr);
+	grid-template-columns: var(--left-col) minmax(0, 1fr) var(--right-col);
 	grid-template-rows: minmax(0, 1fr) auto;
 	height: 100%;
+}
+
+main > aside:not(.files) {
+	grid-column: 1;
+}
+
+aside.files {
+	grid-column: 3;
+	border-right: none;
+	border-left: 1px solid #333;
 }
 
 /* The tab bar over the terminal and the file shown. They share the stack's
@@ -35,6 +48,7 @@ main {
    Each layer is isolated so that xterm's z-indexed layers stay inside the
    terminal's and the file, coming later, paints over all of them. */
 .content {
+	grid-column: 2;
 	display: grid;
 	grid-template-rows: auto minmax(0, 1fr);
 	min-width: 0;
@@ -56,11 +70,16 @@ main {
 /* No text selection, as in a native sidebar: WebKit selects the word under a
    right-click or a double-click, which would light up in the rows. */
 main.sidebar-hidden {
-	grid-template-columns: minmax(0, 1fr);
+	--left-col: 0px;
 }
 
-main.sidebar-hidden > aside {
+main.sidebar-hidden > aside:not(.files) {
 	display: none;
+}
+
+/* The panel is not rendered then. */
+main.files-hidden {
+	--right-col: 0px;
 }
 
 aside {
@@ -155,9 +174,11 @@ footer {
 	gap: 8px;
 }
 
-/* The new-session dialog's buttons, smaller. :not keeps this off the dismiss
-   icon button, whose .icon-btn rules it would otherwise outrank. */
-.notice button:not(.icon-btn) {
+/* The new-session dialog's buttons, smaller, and the file panel's Add-repo
+   button. :not keeps this off the dismiss icon button, whose .icon-btn rules
+   it would otherwise outrank. */
+.notice button:not(.icon-btn),
+.no-repo button {
 	height: 22px;
 	padding: 0 10px;
 	border: 1px solid #3c3c3c;
@@ -168,7 +189,8 @@ footer {
 	cursor: pointer;
 }
 
-.notice button:not(.icon-btn):hover:not(:disabled) {
+.notice button:not(.icon-btn):hover:not(:disabled),
+.no-repo button:hover:not(:disabled) {
 	background: #45494e;
 }
 
@@ -182,12 +204,14 @@ footer {
 	background: var(--accent-hover);
 }
 
-.notice button:not(.icon-btn):focus-visible {
+.notice button:not(.icon-btn):focus-visible,
+.no-repo button:focus-visible {
 	outline: 1px solid var(--neon);
 	outline-offset: 1px;
 }
 
-.notice button:not(.icon-btn):disabled {
+.notice button:not(.icon-btn):disabled,
+.no-repo button:disabled {
 	opacity: 0.5;
 	cursor: default;
 }
@@ -223,6 +247,13 @@ footer .sidebar-toggle {
 	margin: -2px -10px -2px -4px;
 }
 
+/* At the right end, as the panel it toggles; never squeezed by a long report. */
+footer .files-toggle {
+	flex: none;
+	height: 18px;
+	margin: -2px -4px -2px auto;
+}
+
 /* Every message reports something that failed. */
 footer .message {
 	overflow: hidden;
@@ -255,7 +286,7 @@ footer .report:focus-visible {
 	outline-offset: 1px;
 }
 
-/* Sidebar header row; RepoHeader's look. */
+/* The side panels' header row; RepoHeader's look. */
 aside > header {
 	display: flex;
 	flex-wrap: wrap;
@@ -276,6 +307,44 @@ aside > header .title {
 	flex: 1;
 	color: #ccc;
 	font-weight: 600;
+}
+
+/* One line, however long the repo's name, so the header keeps its height. */
+aside.files > header {
+	flex-wrap: nowrap;
+}
+
+aside.files > header .repo {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* The file panel's offer for a session under no repo, in the middle of it. */
+.no-repo {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	padding: 16px;
+	color: #999;
+	font-size: 12px;
+	line-height: 1.4;
+	text-align: center;
+}
+
+.no-repo p {
+	margin: 0;
+}
+
+.no-repo button {
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 /* The brand marks keep a colour of their own wherever they show. OpenAI's is

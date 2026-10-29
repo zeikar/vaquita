@@ -1,14 +1,29 @@
 <script lang="ts">
 	import { clampWidth, DEFAULT_WIDTH } from './sidebar';
 
-	// The sidebar's right edge, dragged to resize it; a double-click sets the
-	// default width back. onend follows a drag or a double-click.
+	// The inner edge of a side panel, dragged to resize it: the sidebar's
+	// right one, the file panel's left one, where a pointer moving left widens
+	// the panel. A double-click sets the default width back. onend follows a
+	// drag or a double-click.
 	let {
 		width,
 		onstart,
 		onresize,
 		onend,
-	}: { width: number; onstart: () => void; onresize: (width: number) => void; onend: () => void } = $props();
+		side = 'right',
+		clamp = clampWidth,
+		defaultWidth = DEFAULT_WIDTH,
+		label = 'Resize sidebar',
+	}: {
+		width: number;
+		onstart: () => void;
+		onresize: (width: number) => void;
+		onend: () => void;
+		side?: 'left' | 'right';
+		clamp?: (width: number) => number;
+		defaultWidth?: number;
+		label?: string;
+	} = $props();
 
 	let from = $state<{ x: number; width: number }>();
 
@@ -22,7 +37,9 @@
 	}
 
 	function move(e: PointerEvent) {
-		if (from) onresize(clampWidth(from.width + e.clientX - from.x));
+		if (!from) return;
+		const travel = e.clientX - from.x;
+		onresize(clamp(from.width + (side === 'right' ? travel : -travel)));
 	}
 
 	// After a pointerup as well as a cancel, which also release the capture.
@@ -33,17 +50,18 @@
 	}
 
 	function reset() {
-		onresize(DEFAULT_WIDTH);
+		onresize(defaultWidth);
 		onend();
 	}
 </script>
 
 <div
 	class="edge"
+	class:left={side === 'left'}
 	class:dragging={from !== undefined}
 	role="separator"
 	aria-orientation="vertical"
-	aria-label="Resize sidebar"
+	aria-label={label}
 	onpointerdown={down}
 	onpointermove={move}
 	onlostpointercapture={lost}
@@ -51,7 +69,7 @@
 ></div>
 
 <style>
-	/* Straddles the sidebar's border, over the terminal's padding. */
+	/* Straddles the panel's border, over the terminal's padding. */
 	.edge {
 		position: absolute;
 		top: 0;
@@ -60,6 +78,11 @@
 		z-index: 5;
 		width: 6px;
 		cursor: col-resize;
+	}
+
+	.edge.left {
+		right: auto;
+		left: -3px;
 	}
 
 	/* A line where the border is, once the pointer has rested on it. */

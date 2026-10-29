@@ -12,22 +12,26 @@
 	import { runningCount } from './lib/daemon-update';
 	import { documents } from './lib/documents';
 	import { appBuild, checkAppUpdate, checkRestart, installAppUpdate, onUpdateCheckAsked, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
+	import { openPath } from './lib/file-links';
+	import { clampPanelWidth, loadPanelWidth, PANEL_DEFAULT_WIDTH, PANEL_HIDDEN, PANEL_WIDTH } from './lib/file-panel';
 	import FilePane from './lib/FilePane.svelte';
+	import FileTree from './lib/FileTree.svelte';
 	import { onTabAsked } from './lib/files';
 	import { watchFocus } from './lib/focus';
-	import { repoOf } from './lib/groups';
+	import { repoName, repoOf } from './lib/groups';
 	import Icon from './lib/Icon.svelte';
 	import { isNewSessionShortcut, isNextTabShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut } from './lib/keys';
 	import { openExternal } from './lib/links';
 	import { SessionManager } from './lib/manager';
 	import NewSessionDialog, { LAST_CWD } from './lib/NewSessionDialog.svelte';
 	import { sessionTitle, type Notifier, type Target } from './lib/notify';
+	import { shortPath } from './lib/paths';
 	import SessionList from './lib/SessionList.svelte';
 	import { loadWidth, SIDEBAR_HIDDEN, SIDEBAR_WIDTH } from './lib/sidebar';
 	import SidebarEdge from './lib/SidebarEdge.svelte';
 	import { load, save } from './lib/storage';
 	import TabBar from './lib/TabBar.svelte';
-	import { closeTab, fileName, groupKey, loadTabs, neighbour, openTab, prune, saveTabs } from './lib/tabs';
+	import { closeTab, fileName, groupKey, loadTabs, neighbour, openTab, OTHER, prune, saveTabs } from './lib/tabs';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
 	import { isTauri } from './lib/tauri';
@@ -61,6 +65,9 @@
 	const selectedRow = $derived($manager.sessions.find((r) => r.info.sid === $manager.selected));
 	const group = $derived(selectedRow && groupKey(selectedRow.info.cwd, $manager.repos));
 	const groupTabs = $derived((group !== undefined && groups[group]) || []);
+	// The repo whose tree the file panel shows: the selected session's group,
+	// unless that is no repo.
+	const root = $derived(group !== OTHER ? group : undefined);
 
 	// Not before the daemon has sent its list: the empty one the app starts
 	// with would drop every repo's tabs. Those of a repo removed move to Other,
@@ -93,6 +100,15 @@
 		groups = openTab(groups, groupKey(cwd, $manager.repos), path);
 		saveTabs(groups);
 		void showTab(path);
+	}
+
+	// A file clicked in the tree goes through the gate a ⌘-click does, so what
+	// the app does not show in a tab is opened or revealed the same way. Its tab
+	// lands in the selected session's group, the tree's repo.
+	function openFromTree(path: string): void {
+		const cwd = selectedRow?.info.cwd;
+		if (cwd === undefined) return;
+		void openPath(path, '', (m, tone) => manager.report(m, tone), (p) => openFile(cwd, p));
 	}
 
 	// What shows takes the focus, so that typing never reaches a terminal
@@ -208,6 +224,8 @@
 				return stepTab(-1);
 			case 'next':
 				return stepTab(1);
+			case 'files':
+				return togglePanel();
 		}
 	});
 	unlistenTabs.catch((e) => manager.report(`tab shortcuts unavailable: ${e instanceof Error ? e.message : String(e)}`));
@@ -301,6 +319,22 @@
 		save(SIDEBAR_WIDTH, String(sidebarWidth));
 	}
 
+	let panelWidth = $state(loadPanelWidth());
+	let panelHidden = $state(load(PANEL_HIDDEN) === 'true');
+
+	// As toggleSidebar: the focus may be in the tree, which goes.
+	function togglePanel() {
+		panelHidden = !panelHidden;
+		save(PANEL_HIDDEN, String(panelHidden));
+		if (!dialogOpen) focusContent();
+	}
+
+	function panelResized() {
+		holdFit(false);
+		selectedView()?.refit();
+		save(PANEL_WIDTH, String(panelWidth));
+	}
+
 	// The OS file drop only exists inside Tauri. Paths dropped on the sidebar
 	// are added as repos; anywhere else they are typed into the selected session.
 	if (isTauri()) {
@@ -371,7 +405,7 @@
 
 <svelte:window onkeydowncapture={shortcut} />
 
-<main class:sidebar-hidden={sidebarHidden} style:--sidebar-width="{sidebarWidth}px">
+<main class:sidebar-hidden={sidebarHidden} class:files-hidden={panelHidden} style:--sidebar-width="{sidebarWidth}px" style:--panel-width="{panelWidth}px">
 	<aside bind:this={aside}>
 		<header>
 			<span class="title">Repos</span>
@@ -425,6 +459,45 @@
 			{/if}
 		</div>
 	</section>
+	<!-- Unmounted, not hidden, while it is off, so nothing of the tree runs and
+	     no folder is watched. -->
+	{#if !panelHidden}
+		<aside class="files">
+			<header>
+				<span class="title">Files</span>
+				{#if root !== undefined}<span class="repo" title={root}>{repoName(root)}</span>{/if}
+			</header>
+			{#if root !== undefined}
+				{#key root}
+					<FileTree {root} highlight={active} onopen={openFromTree} report={(m) => manager.report(m)} />
+				{/key}
+			{:else if selectedRow}
+				{@const cwd = selectedRow.info.cwd}
+				<!-- An empty cwd is the home folder, unknown in a plain browser. -->
+				{@const folder = cwd || home}
+				<div class="no-repo">
+					<p>This session's folder is not a registered repo, so it has no file tree.</p>
+					<button
+						title={folder}
+						disabled={$manager.status !== 'connected' || folder === undefined}
+						onclick={() => folder !== undefined && manager.addRepo(folder)}
+					>
+						Add {shortPath(cwd, home)} as a repo
+					</button>
+				</div>
+			{/if}
+			<SidebarEdge
+				side="left"
+				clamp={clampPanelWidth}
+				defaultWidth={PANEL_DEFAULT_WIDTH}
+				label="Resize files panel"
+				width={panelWidth}
+				onstart={() => holdFit(true)}
+				onresize={(w) => (panelWidth = w)}
+				onend={panelResized}
+			/>
+		</aside>
+	{/if}
 	<div class="notices">
 		{#if $appUpdater.version !== undefined}
 			{@const version = $appUpdater.version}
@@ -457,5 +530,8 @@
 			{@const report = $manager.report}
 			<button class="report {report.tone}" title={report.text} onclick={() => manager.dismissReport()}>{report.text}</button>
 		{/if}
+		<button class="icon-btn files-toggle" title="{panelHidden ? 'Show' : 'Hide'} files (⌥⌘B)" onclick={togglePanel}>
+			<Icon name="sidebar-right" />
+		</button>
 	</footer>
 </main>
