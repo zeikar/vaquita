@@ -34,18 +34,25 @@
 //! both, as after `git rm --cached`, is listed once as its tracked change.
 //! With no commit yet, all but D is U. At most CHANGES_CAP rows come back, in
 //! git's order, with the total.
+//!
+//! A diff's two sides are HEAD's raw blob, which `cat-file blob` gives with no
+//! textconv and no filter, and the file on disk. The path comes from the
+//! webview: its part under the toplevel is git's name for the file, and the
+//! disk is read only when the file's parent is canonically that folder, so a
+//! symlinked folder never leads to another file, in the repo or outside it,
+//! and a symlink as the file itself is not followed.
 
 use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output};
 
 use serde::Serialize;
 
-use crate::{files, folders};
+use crate::{files, folders, open_path};
 
 pub const CHANGES_CAP: usize = 2000;
 
@@ -308,6 +315,153 @@ pub fn list(folder: &Path, cap: usize) -> Result<ChangeList, String> {
 #[tauri::command]
 pub async fn git_changes(root: String) -> Result<ChangeList, String> {
     tauri::async_runtime::spawn_blocking(move || list(Path::new(&root), CHANGES_CAP)).await.map_err(|e| e.to_string())?
+}
+
+/// The texts of a diff; None is a side that does not exist.
+#[derive(Debug, Serialize)]
+pub struct Sides {
+    head: Option<String>,
+    work: Option<String>,
+}
+
+const OUTSIDE: &str = "outside the repo";
+const BINARY: &str = "binary";
+const SYMLINK: &str = "a symlink";
+const SUBMODULE: &str = "a submodule";
+
+/// The path relative to top, which is git's name for it, and where the file
+/// is on disk; no location when nothing on disk is that file.
+fn located(top: &Path, path: &Path) -> Result<(String, Option<PathBuf>), String> {
+    let outside = || OUTSIDE.to_string();
+    if !path.is_absolute() {
+        return Err(outside());
+    }
+    let Ok(lexical) = path.strip_prefix(top) else {
+        // Reached another way, through a symlinked path to the repo say: the
+        // canonical parent names it.
+        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else { return Err(outside()) };
+        let real = std::fs::canonicalize(parent).map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { outside() } else { open_path::io_error(e) })?;
+        let rel = real.strip_prefix(top).map_err(|_| outside())?.join(name);
+        let rel = rel.to_str().ok_or("not a UTF-8 path")?.to_string();
+        return Ok((rel, Some(real.join(name))));
+    };
+    let mut parts = Vec::new();
+    for c in lexical.components() {
+        match c {
+            Component::Normal(p) => parts.push(p.to_str().ok_or("not a UTF-8 path")?),
+            _ => return Err(outside()),
+        }
+    }
+    if parts.is_empty() {
+        return Err(outside());
+    }
+    let rel = parts.join("/");
+    let at = top.join(&rel);
+    let (Some(parent), Some(name)) = (at.parent(), at.file_name()) else { return Err(outside()) };
+    // The disk side is read only when the parent is canonically itself: a
+    // symlinked folder on the way, repo/link/f with link pointing anywhere,
+    // names another file than the one git lists, inside the repo or not.
+    match std::fs::canonicalize(parent) {
+        Ok(real) if real == parent => Ok((rel, Some(real.join(name)))),
+        Ok(_) => Ok((rel, None)),
+        Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory) => Ok((rel, None)),
+        Err(e) => Err(open_path::io_error(e)),
+    }
+}
+
+/// HEAD's entry at rel: its mode, type, object id and size (`-` but for a
+/// blob); None when HEAD has nothing there.
+fn head_entry(top: &Path, rel: &str) -> Result<Option<[String; 4]>, String> {
+    let mut cmd = git(top)?;
+    cmd.args(["--literal-pathspecs", "ls-tree", "-l", "-z", "--full-tree", "HEAD", "--", rel]);
+    let out = run(cmd)?;
+    // A tree object missing on the way is a failure here, where `rev-parse
+    // HEAD:<path>` would have answered no such path.
+    if !out.status.success() {
+        return Err(failed("git ls-tree", &out));
+    }
+    let bad = || "git ls-tree: unexpected output".to_string();
+    for record in out.stdout.split(|&b| b == 0).filter(|r| !r.is_empty()) {
+        let at = record.iter().position(|&b| b == b'\t').ok_or_else(bad)?;
+        if &record[at + 1..] != rel.as_bytes() {
+            continue;
+        }
+        let meta = std::str::from_utf8(&record[..at]).map_err(|_| bad())?;
+        let fields: Vec<&str> = meta.split_whitespace().collect();
+        let [mode, kind, id, size] = fields[..] else { return Err(bad()) };
+        return Ok(Some([mode, kind, id, size].map(str::to_string)));
+    }
+    Ok(None)
+}
+
+/// HEAD's text of rel, or of what a staged rename made rel from.
+fn head_side(top: &Path, rel: &str) -> Result<Option<String>, String> {
+    if !has_head(top)? {
+        return Ok(None);
+    }
+    let mut entry = head_entry(top, rel)?;
+    // Only a path HEAD lacks can be a rename's new name, so status runs only
+    // then.
+    if entry.is_none() {
+        let overrides = filter_overrides(top)?;
+        let from = status_entries(top, &overrides)?.into_iter().find(|(path, _, _)| path == rel).and_then(|(_, from, _)| from);
+        if let Some(from) = from {
+            entry = head_entry(top, &from)?;
+        }
+    }
+    let Some([mode, kind, id, size]) = entry else { return Ok(None) };
+    match (mode.as_str(), kind.as_str()) {
+        (_, "commit") => return Err(SUBMODULE.to_string()),
+        // A folder in HEAD is no file to diff.
+        (_, "tree") => return Ok(None),
+        ("120000", _) => return Err(SYMLINK.to_string()),
+        (_, "blob") => {}
+        _ => return Err("git ls-tree: unexpected output".to_string()),
+    }
+    let size: u64 = size.parse().map_err(|_| "git ls-tree: unexpected output")?;
+    if size > files::TEXT_MAX {
+        return Err(files::TOO_LARGE.to_string());
+    }
+    // The object that was sized, so a checkout in between cannot pass a
+    // larger one; a raw blob, with no textconv and no filter.
+    let mut cmd = git(top)?;
+    cmd.args(["cat-file", "blob", &id]);
+    let out = run(cmd)?;
+    if !out.status.success() {
+        return Err(failed("git cat-file", &out));
+    }
+    if out.stdout.contains(&0) {
+        return Err(BINARY.to_string());
+    }
+    String::from_utf8(out.stdout).map(Some).map_err(|_| files::NOT_UTF8.to_string())
+}
+
+fn work_side(at: Option<&Path>) -> Result<Option<String>, String> {
+    let Some(at) = at else { return Ok(None) };
+    match std::fs::symlink_metadata(at) {
+        Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory) => return Ok(None),
+        Err(e) => return Err(open_path::io_error(e)),
+        Ok(meta) if meta.is_symlink() => return Err(SYMLINK.to_string()),
+        // A file replaced by a folder is a deletion of the file.
+        Ok(meta) if meta.is_dir() => return Ok(None),
+        Ok(_) => {}
+    }
+    let text = files::read(at)?.text;
+    if text.contains('\0') {
+        return Err(BINARY.to_string());
+    }
+    Ok(Some(text))
+}
+
+pub fn sides(folder: &Path, path: &Path) -> Result<Sides, String> {
+    let top = toplevel(folder)?;
+    let (rel, at) = located(&top, path)?;
+    Ok(Sides { head: head_side(&top, &rel)?, work: work_side(at.as_deref())? })
+}
+
+#[tauri::command]
+pub async fn diff_sides(root: String, path: String) -> Result<Sides, String> {
+    tauri::async_runtime::spawn_blocking(move || sides(Path::new(&root), Path::new(&path))).await.map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -610,5 +764,172 @@ mod tests {
         let l = list(&d, CHANGES_CAP).unwrap();
         assert!(!d.join("marker").exists());
         assert_eq!(rows(&l), [("sub", "M", Some(1), Some(1), None)]);
+    }
+
+    fn texts(s: Sides) -> (Option<String>, Option<String>) {
+        (s.head, s.work)
+    }
+
+    fn some(t: &str) -> Option<String> {
+        Some(t.to_string())
+    }
+
+    #[test]
+    fn a_diff_has_head_and_disk_for_every_kind_of_change() {
+        let d = repo("sides-kinds");
+        std::fs::write(d.join("a.txt"), "1\n2\n").unwrap();
+        std::fs::write(d.join("b.txt"), "b\n").unwrap();
+        std::fs::write(d.join("c.txt"), "c\n").unwrap();
+        std::fs::create_dir(d.join("gone")).unwrap();
+        std::fs::write(d.join("gone/g.txt"), "g\n").unwrap();
+        std::fs::write(d.join("x.txt"), "x\n").unwrap();
+        commit(&d);
+        std::fs::write(d.join("a.txt"), "1\nx\n").unwrap();
+        std::fs::remove_file(d.join("b.txt")).unwrap();
+        sh(&d, &["mv", "c.txt", "e.txt"]);
+        std::fs::write(d.join("e.txt"), "c\nmore\n").unwrap();
+        std::fs::write(d.join("new.txt"), "n\n").unwrap();
+        std::fs::remove_dir_all(d.join("gone")).unwrap();
+        std::fs::remove_file(d.join("x.txt")).unwrap();
+        std::fs::create_dir(d.join("x.txt")).unwrap();
+        let t = top(&d);
+        assert_eq!(texts(sides(&d, &t.join("a.txt")).unwrap()), (some("1\n2\n"), some("1\nx\n")));
+        assert_eq!(texts(sides(&d, &t.join("new.txt")).unwrap()), (None, some("n\n")));
+        assert_eq!(texts(sides(&d, &t.join("b.txt")).unwrap()), (some("b\n"), None));
+        assert_eq!(texts(sides(&d, &t.join("gone/g.txt")).unwrap()), (some("g\n"), None));
+        assert_eq!(texts(sides(&d, &t.join("e.txt")).unwrap()), (some("c\n"), some("c\nmore\n")));
+        // A file replaced by a folder is gone as a file.
+        assert_eq!(texts(sides(&d, &t.join("x.txt")).unwrap()), (some("x\n"), None));
+    }
+
+    #[test]
+    fn a_side_that_is_no_text_cannot_be_shown() {
+        let d = repo("sides-not-text");
+        std::fs::write(d.join("bin.dat"), b"a\0b\n").unwrap();
+        std::fs::write(d.join("big.txt"), "x").unwrap();
+        std::fs::write(d.join("huge.txt"), "x".repeat(files::TEXT_MAX as usize + 1)).unwrap();
+        std::os::unix::fs::symlink("bin.dat", d.join("was-link")).unwrap();
+        commit(&d);
+        std::fs::write(d.join("bin.dat"), "text now\n").unwrap();
+        std::fs::write(d.join("big.txt"), "x".repeat(files::TEXT_MAX as usize + 1)).unwrap();
+        std::fs::write(d.join("huge.txt"), "small now\n").unwrap();
+        std::os::unix::fs::symlink("big.txt", d.join("link")).unwrap();
+        std::fs::remove_file(d.join("was-link")).unwrap();
+        std::fs::write(d.join("was-link"), "a file now\n").unwrap();
+        let t = top(&d);
+        assert_eq!(sides(&d, &t.join("bin.dat")).unwrap_err(), "binary");
+        assert_eq!(sides(&d, &t.join("big.txt")).unwrap_err(), "larger than 2 MiB");
+        assert_eq!(sides(&d, &t.join("huge.txt")).unwrap_err(), "larger than 2 MiB");
+        assert_eq!(sides(&d, &t.join("link")).unwrap_err(), "a symlink");
+        // A symlink in HEAD, a file on disk.
+        assert_eq!(sides(&d, &t.join("was-link")).unwrap_err(), "a symlink");
+    }
+
+    #[test]
+    fn a_submodule_is_no_file_to_diff() {
+        let src = repo("sides-submodule-src");
+        std::fs::write(src.join("s.txt"), "s\n").unwrap();
+        commit(&src);
+        let d = repo("sides-submodule");
+        sh(&d, &["-c", "protocol.file.allow=always", "submodule", "add", "-q", src.to_str().unwrap(), "sub"]);
+        commit(&d);
+        assert_eq!(sides(&d, &top(&d).join("sub")).unwrap_err(), "a submodule");
+    }
+
+    #[test]
+    fn a_path_outside_the_toplevel_is_refused() {
+        let d = repo("sides-outside");
+        std::fs::write(d.join("a.txt"), "a\n").unwrap();
+        commit(&d);
+        let out = dir("sides-outside-elsewhere");
+        std::fs::write(out.join("f"), "secret\n").unwrap();
+        std::os::unix::fs::symlink(&out, d.join("link")).unwrap();
+        let t = top(&d);
+        assert_eq!(sides(&d, &out.join("f")).unwrap_err(), "outside the repo");
+        assert_eq!(sides(&d, &t.join("..").join(out.file_name().unwrap()).join("f")).unwrap_err(), "outside the repo");
+        assert_eq!(sides(&d, &t.join("gone/../../x")).unwrap_err(), "outside the repo");
+        assert_eq!(sides(&d, &t.join("a.txt/..")).unwrap_err(), "outside the repo");
+        // Under the repo by its name, outside it in fact: git has no such
+        // file, and the outside one is never read.
+        assert_eq!(located(&t, &t.join("link/f")).unwrap(), ("link/f".to_string(), None));
+        assert_eq!(texts(sides(&d, &t.join("link/f")).unwrap()), (None, None));
+    }
+
+    #[test]
+    fn a_symlinked_folder_on_the_way_reads_no_other_file() {
+        let d = repo("sides-inner-link");
+        for f in ["d/f.txt", "e/f.txt"] {
+            std::fs::create_dir(d.join(&f[..1])).unwrap();
+            std::fs::write(d.join(f), format!("{f}\n")).unwrap();
+        }
+        commit(&d);
+        std::os::unix::fs::symlink("e", d.join("alias")).unwrap();
+        // A folder swapped for a link: git lists d/f.txt as deleted, and the
+        // disk's d/f.txt is e's file.
+        std::fs::remove_dir_all(d.join("d")).unwrap();
+        std::os::unix::fs::symlink("e", d.join("d")).unwrap();
+        let t = top(&d);
+        assert_eq!(located(&t, &t.join("alias/f.txt")).unwrap(), ("alias/f.txt".to_string(), None));
+        assert_eq!(located(&t, &t.join("d/f.txt")).unwrap(), ("d/f.txt".to_string(), None));
+        assert_eq!(texts(sides(&d, &t.join("d/f.txt")).unwrap()), (some("d/f.txt\n"), None));
+        assert_eq!(located(&t, &t.join("e/f.txt")).unwrap(), ("e/f.txt".to_string(), Some(t.join("e/f.txt"))));
+    }
+
+    #[test]
+    fn a_repo_reached_through_a_symlink_resolves_to_its_real_path() {
+        let d = repo("sides-via-link");
+        std::fs::write(d.join("a.txt"), "a\n").unwrap();
+        commit(&d);
+        std::fs::write(d.join("a.txt"), "b\n").unwrap();
+        let via = dir("sides-via-link-alias").join("repo");
+        std::os::unix::fs::symlink(&d, &via).unwrap();
+        assert_eq!(texts(sides(&via, &via.join("a.txt")).unwrap()), (some("a\n"), some("b\n")));
+    }
+
+    #[test]
+    fn head_is_the_raw_blob_with_no_textconv_run() {
+        let d = repo("sides-textconv");
+        std::fs::write(d.join(".gitattributes"), "*.txt diff=x\n").unwrap();
+        std::fs::write(d.join(".gitignore"), "marker*\n").unwrap();
+        std::fs::write(d.join("a.txt"), "raw\n").unwrap();
+        commit(&d);
+        let marker = marker_script(&d);
+        sh(&d, &["config", "diff.x.textconv", marker.to_str().unwrap()]);
+        std::fs::write(d.join("a.txt"), "raw too\n").unwrap();
+        assert_eq!(texts(sides(&d, &top(&d).join("a.txt")).unwrap()), (some("raw\n"), some("raw too\n")));
+        assert!(!d.join("marker").exists());
+    }
+
+    #[test]
+    fn with_no_commit_there_is_no_head_side() {
+        let d = repo("sides-unborn");
+        std::fs::write(d.join("a.txt"), "a\n").unwrap();
+        sh(&d, &["add", "a.txt"]);
+        assert_eq!(texts(sides(&d, &top(&d).join("a.txt")).unwrap()), (None, some("a\n")));
+    }
+
+    #[test]
+    fn a_git_that_fails_is_an_error_not_a_missing_side() {
+        let d = repo("sides-broken");
+        std::fs::write(d.join("a.txt"), "a\n").unwrap();
+        // As in the list's test: a HEAD naming an object that is not there.
+        std::fs::write(d.join(".git/HEAD"), "0123456789012345678901234567890123456789\n").unwrap();
+        let e = sides(&d, &top(&d).join("a.txt")).unwrap_err();
+        assert!(e.starts_with("git ls-tree failed: ") && e.contains("not a tree object"), "{e}");
+    }
+
+    #[test]
+    fn a_tree_missing_from_head_is_an_error_not_a_new_file() {
+        let d = repo("sides-missing-tree");
+        std::fs::create_dir(d.join("sub")).unwrap();
+        std::fs::write(d.join("sub/f.txt"), "f\n").unwrap();
+        commit(&d);
+        std::fs::write(d.join("sub/f.txt"), "g\n").unwrap();
+        let out = Command::new("git").arg("-C").arg(&d).args(["rev-parse", "HEAD:sub"]).output().unwrap();
+        let id = String::from_utf8(out.stdout).unwrap();
+        let id = id.trim();
+        std::fs::remove_file(d.join(".git/objects").join(&id[..2]).join(&id[2..])).unwrap();
+        let e = sides(&d, &top(&d).join("sub/f.txt")).unwrap_err();
+        assert!(e.starts_with("git ls-tree failed: "), "{e}");
     }
 }

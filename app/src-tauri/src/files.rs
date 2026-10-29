@@ -138,7 +138,8 @@ impl Stamp {
 pub const CHANGED_ON_DISK: &str = "changed on disk";
 const NOT_REGULAR: &str = "not a regular file";
 const READ_ONLY: &str = "read-only";
-const TOO_LARGE: &str = "larger than 2 MiB";
+pub(crate) const TOO_LARGE: &str = "larger than 2 MiB";
+pub(crate) const NOT_UTF8: &str = "not UTF-8 text";
 
 /// The stamp of the file at canonical itself; a symlink put in its place is
 /// not followed, as the rename would replace the link.
@@ -152,15 +153,17 @@ fn stamp(canonical: &Path) -> Result<Stamp, String> {
 
 #[derive(Debug, Serialize)]
 pub struct Contents {
-    text: String,
+    pub(crate) text: String,
     stamp: Stamp,
 }
 
-fn read(path: &Path) -> Result<Contents, String> {
+pub(crate) fn read(path: &Path) -> Result<Contents, String> {
     let canonical = std::fs::canonicalize(path).map_err(open_path::io_error)?;
-    // Nonblocking, so a FIFO cannot hang the open; the stamp is the handle's,
-    // taken before the read, so a change during the read shows on save.
-    let f = OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(canonical).map_err(open_path::io_error)?;
+    // Nonblocking, so a FIFO cannot hang the open; not following a link, as
+    // one at a canonical path can only have been swapped in since. The stamp
+    // is the handle's, taken before the read, so a change during the read
+    // shows on save.
+    let f = OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW).open(canonical).map_err(open_path::io_error)?;
     let meta = f.metadata().map_err(open_path::io_error)?;
     if !meta.is_file() {
         return Err(NOT_REGULAR.to_string());
@@ -176,7 +179,7 @@ fn read(path: &Path) -> Result<Contents, String> {
         return Err(TOO_LARGE.to_string());
     }
     // Strict: a lossy read would be saved back lossy.
-    let text = String::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_string())?;
+    let text = String::from_utf8(bytes).map_err(|_| NOT_UTF8.to_string())?;
     Ok(Contents { text, stamp })
 }
 

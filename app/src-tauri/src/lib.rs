@@ -161,6 +161,7 @@ pub fn run() {
             files::write_text,
             folders::read_folder,
             changes::git_changes,
+            changes::diff_sides,
             watch::set_watched,
             update::check_app_update,
             update::install_app_update
