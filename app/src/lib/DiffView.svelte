@@ -74,6 +74,12 @@
 						readOnly: true,
 						renderSideBySide: sideBySide,
 						useInlineViewWhenSpaceIsLimited: true,
+						// Monaco's own 900 px would leave a laptop window inline
+						// with the default sidebar and panel open.
+						renderSideBySideInlineBreakpoint: 600,
+						// Its ruler drew a bright bar that stopped short of the
+						// bottom, beside a short file's diff as much as a long one's.
+						renderOverviewRuler: false,
 						// A long file reads as its hunks.
 						hideUnchangedRegions: { enabled: true },
 					}));
