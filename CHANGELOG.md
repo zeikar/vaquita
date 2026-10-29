@@ -2,6 +2,13 @@
 
 Each release's notes open with its section here.
 
+## 0.1.12
+
+- Files open in tabs inside the app. ⌘-click a text or code file, a Markdown file, an image, or an audio or video file in a session, and it opens in a tab next to the terminal, which is always the first tab. Tabs are kept per repo and come back after a restart. ⌘1 shows the terminal, ⌘⇧[ and ⌘⇧] (or ⌃⇧Tab and ⌃Tab) move between tabs, and ⌘W closes the shown one. PDFs and other files still open in their default app.
+- Text and code open in an editor, for quick edits: ⌘S saves. If the file changed on disk since you opened it, as when an agent wrote to it, saving asks before overwriting it. Closing a tab or the window, or updating the app, asks first while edits are unsaved; quitting with ⌘Q does not. A tab you have not edited shows the file as it is now each time you come back to it.
+- Markdown opens as a preview, with its source a click away. Links open in your browser; images do not show.
+- The editor loads the first time you open a text file, so the app stays as light as before until then; from then on it uses about 100 MB more.
+
 ## 0.1.11
 
 - ⌘B, or the button at the left of the status line, hides the sidebar and brings it back. Drag the sidebar's right edge to make it wider or narrower, and double-click the edge to set it back. Both are kept across restarts. The terminal takes its new width once you let go, so an agent in it redraws once rather than all through the drag.
