@@ -2,6 +2,13 @@
 
 Each release's notes open with its section here.
 
+## 0.1.16
+
+- A file you open with a click in the tree or a ⌘-click in the terminal opens in a preview tab, in italics, and the next file you open takes its place, so looking through what an agent touched no longer piles up tabs. Editing the file, or double-clicking its tab or its row in the tree, keeps the tab.
+- Closing the tab you are looking at brings back the one you looked at before it, the terminal included.
+- Right-click a file tab to close it, the others, those to its right, or all of them, or to copy its path or reveal it in Finder. Unsaved edits among the tabs being closed are asked about once; the terminal tab always stays.
+- Drag file tabs to reorder them. The terminal tab stays first, and the order is kept across restarts.
+
 ## 0.1.15
 
 - A slim bar over every file tab shows the file's path in its repo, so two files with the same name are easy to tell apart. On a Markdown tab, its two icons at the right switch between the preview and the source; the row that held that switch is gone.
