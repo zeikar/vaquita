@@ -5,6 +5,7 @@ mod launchd;
 mod menu;
 mod notify;
 mod open_path;
+mod panic_log;
 mod stop;
 mod update;
 mod wait;
@@ -126,6 +127,7 @@ fn start_and_wait() -> Result<(), String> {
 }
 
 pub fn run() {
+    panic_log::install();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())

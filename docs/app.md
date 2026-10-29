@@ -52,6 +52,10 @@ Each of these was learned the hard way; a change to the app keeps all of them, a
 - **The three header rows line up**: the sidebar's header, the tab bar and the files panel's header are each 30 px plus a 1 px border.
 - **Checking a build by hand**: use the dev daemon (`VAQUITA_HOME=~/.vaquita-dev`), start it before the app and quit the app before stopping it, as a release build installs its LaunchAgent when its daemon goes away. Stop only the processes you started, by their PIDs.
 
+## When the app crashes
+
+A release build aborts on a panic and ships without symbols, so macOS's crash report (`~/Library/Logs/DiagnosticReports/vaquita-*.ips`) shows only addresses. The app appends the panic's message and its `file.rs:line:col` to `app-panic.log` in the vaquita home (`~/Library/Application Support/vaquita`, or `$VAQUITA_HOME`) before it goes; that line names the code that failed.
+
 ## Release build
 
 A release build looks for the daemon and, if none is running, starts its LaunchAgent through launchd. When the agent is not loaded, it first installs it with the vaquitad inside the app, so no separate `vaquitad install` is needed. `tauri dev` never does; it shows a hint instead.
