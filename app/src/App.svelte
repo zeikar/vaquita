@@ -32,7 +32,7 @@
 	import SidebarEdge from './lib/SidebarEdge.svelte';
 	import { load, save } from './lib/storage';
 	import TabBar from './lib/TabBar.svelte';
-	import { closeInGroup, fallback, fileName, groupKey, loadTabs, neighbour, openFileTab, OTHER, prune, saveTabs, touch, unpreview, type Previews, type Recent } from './lib/tabs';
+	import { closeInGroup, fallback, fileName, groupKey, loadTabs, neighbour, openFileTab, OTHER, prune, saveTabs, setOrder, touch, unpreview, type Previews, type Recent } from './lib/tabs';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
 	import { isTauri } from './lib/tauri';
@@ -121,6 +121,13 @@
 		if (r.drop !== undefined) documents.dropDocument(r.drop);
 		saveTabs(groups);
 		void showTab(path);
+	}
+
+	// The order a drag on the bar left the group's tabs in, kept across restarts.
+	function reorderTabs(order: string[]): void {
+		if (group === undefined) return;
+		groups = setOrder(groups, group, order);
+		saveTabs(groups);
 	}
 
 	// A file clicked in the tree goes through the gate a ⌘-click does, so what
@@ -498,6 +505,7 @@
 				onselect={(p) => void showTab(p)}
 				onclose={(ps) => void closeFileTabs(ps)}
 				onpin={(p) => (previews = unpreview(previews, p))}
+				onreorder={reorderTabs}
 				report={(m) => manager.report(m)}
 			/>
 		{/if}

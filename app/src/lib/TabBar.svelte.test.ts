@@ -21,6 +21,7 @@ function show(tabs: string[], active?: string, preview?: string) {
 		onselect: vi.fn(),
 		onclose: vi.fn((_paths: string[]) => {}),
 		onpin: vi.fn((_path: string) => {}),
+		onreorder: vi.fn((_order: string[]) => {}),
 		report: vi.fn(),
 	});
 	target = document.createElement('div');
@@ -259,6 +260,96 @@ describe('TabBar', () => {
 				choose('Reveal in Finder');
 				await vi.waitFor(() => expect(props.report).toHaveBeenCalledWith('reveal in Finder failed: no such file'));
 			});
+		});
+	});
+
+	describe('reorder', () => {
+		const a = '/tmp/repo/a.md';
+		const b = '/tmp/repo/b.md';
+		const c = '/tmp/repo/c.md';
+		// Each tab 100 px wide from the left edge, the terminal first. The stub is
+		// on the element, so it moves with its tab when the bar reorders.
+		function lay() {
+			target.querySelectorAll<HTMLElement>('.tab').forEach((t, i) => {
+				t.getBoundingClientRect = () => ({ left: i * 100, width: 100, right: i * 100 + 100, top: 0, bottom: 30, height: 30, x: i * 100, y: 0 }) as DOMRect;
+			});
+		}
+		const button = (name: string) => tabs().find((t) => t.textContent?.trim() === name)!;
+		function pointer(name: string, type: string, clientX = 0) {
+			button(name).dispatchEvent(new PointerEvent(type, { button: 0, clientX, pointerId: 1, bubbles: true }));
+			flushSync();
+		}
+		function press(name: string, from: number, to?: number) {
+			pointer(name, 'pointerdown', from);
+			if (to !== undefined) pointer(name, 'pointermove', to);
+			pointer(name, 'lostpointercapture');
+		}
+
+		it('does nothing below the threshold', () => {
+			const props = show([a, b, c]);
+			lay();
+			press('b.md', 250, 253);
+			expect(names()).toEqual(['claude', 'a.md', 'b.md', 'c.md']);
+			expect(props.onreorder).not.toHaveBeenCalled();
+		});
+
+		// A press ends with the capture, so a plain click leaves nothing a later
+		// hover could turn into a drag.
+		it('leaves nothing pending after a plain click', () => {
+			const props = show([a, b, c]);
+			lay();
+			press('b.md', 250);
+			button('b.md').click();
+			pointer('b.md', 'pointermove', 351);
+			expect(names()).toEqual(['claude', 'a.md', 'b.md', 'c.md']);
+			expect(props.onreorder).not.toHaveBeenCalled();
+		});
+
+		it('moves the dragged tab past the centres left of the pointer, reports it once and swallows the click', () => {
+			const props = show([a, b, c], a);
+			lay();
+			pointer('b.md', 'pointerdown', 250);
+			pointer('b.md', 'pointermove', 351);
+			expect(names()).toEqual(['claude', 'a.md', 'c.md', 'b.md']);
+			expect(target.querySelector('.tab.dragging')?.textContent?.trim()).toBe('b.md');
+			pointer('b.md', 'lostpointercapture');
+			expect(props.onreorder).toHaveBeenCalledExactlyOnceWith([a, c, b]);
+			expect(target.querySelector('.tab.dragging')).toBeNull();
+			button('b.md').click();
+			expect(props.onselect).not.toHaveBeenCalled();
+			// The next click is a click again.
+			button('b.md').click();
+			expect(props.onselect).toHaveBeenCalledExactlyOnceWith(b);
+		});
+
+		it('never moves a file before the terminal', () => {
+			const props = show([a, b, c]);
+			lay();
+			pointer('c.md', 'pointerdown', 350);
+			pointer('c.md', 'pointermove', 20);
+			expect(names()).toEqual(['claude', 'c.md', 'a.md', 'b.md']);
+			pointer('c.md', 'lostpointercapture');
+			expect(props.onreorder).toHaveBeenCalledExactlyOnceWith([c, a, b]);
+		});
+
+		it('selects on a press without movement', () => {
+			const props = show([a, b, c]);
+			lay();
+			pointer('b.md', 'pointerdown', 250);
+			pointer('b.md', 'pointerup', 250);
+			pointer('b.md', 'lostpointercapture');
+			button('b.md').click();
+			expect(props.onselect).toHaveBeenCalledExactlyOnceWith(b);
+			expect(props.onreorder).not.toHaveBeenCalled();
+		});
+
+		it('keeps a dragged preview tab, and pins no other', () => {
+			const props = show([a, b, c], undefined, b);
+			lay();
+			press('a.md', 150, 351);
+			expect(props.onpin).not.toHaveBeenCalled();
+			press('b.md', 250, 20);
+			expect(props.onpin).toHaveBeenCalledExactlyOnceWith(b);
 		});
 	});
 

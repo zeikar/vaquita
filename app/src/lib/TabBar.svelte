@@ -4,7 +4,7 @@
 	import Icon from './Icon.svelte';
 	import type { MenuAt, MenuItem } from './menu';
 	import { canReveal, revealInFinder } from './reveal';
-	import { fileName } from './tabs';
+	import { fileName, moveTab } from './tabs';
 
 	let {
 		title,
@@ -15,6 +15,7 @@
 		onselect,
 		onclose,
 		onpin,
+		onreorder,
 		report,
 	}: {
 		// The terminal tab's text: the selected session's title.
@@ -29,6 +30,8 @@
 		onclose: (paths: string[]) => void;
 		// A double-click keeps the preview tab.
 		onpin: (path: string) => void;
+		// The file tabs in the order a drag left them, once on release.
+		onreorder: (order: string[]) => void;
 		report: (message: string) => void;
 	} = $props();
 
@@ -66,6 +69,61 @@
 		if (menu && (!tabs.includes(menu.path) || active !== menu.shown)) menu = undefined;
 	});
 
+	// Enough travel that a click with a shaky hand stays a click.
+	const DRAG_PX = 6;
+
+	// A press on a file tab; order is set once it moved far enough to be a
+	// drag, and the bar shows it until release.
+	let drag = $state<{ path: string; x: number; pointerId: number; order?: string[] }>();
+	// The click the browser fires after a drag: a drag arranges tabs and shows
+	// none. Set when the drag starts, not at release, so it does not matter
+	// whether the click comes before or after the capture is lost.
+	let swallow = false;
+
+	// Captured at once, not at the threshold, so every press ends in
+	// lostpointercapture and a plain click leaves no press behind. The capture
+	// is on the button itself, so the up lands on it and its click still fires.
+	function down(e: PointerEvent, path: string) {
+		if (e.button !== 0) return;
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		drag = { path, x: e.clientX, pointerId: e.pointerId };
+		swallow = false;
+	}
+
+	function move(e: PointerEvent) {
+		if (!drag || e.pointerId !== drag.pointerId) return;
+		if (!drag.order) {
+			if (Math.abs(e.clientX - drag.x) < DRAG_PX) return;
+			drag.order = [...tabs];
+			swallow = true;
+		}
+		// The others' centres as laid out now: the dragged tab goes after every
+		// one left of the pointer. The terminal tab has no data-path, so files
+		// never go before it.
+		const { path } = drag;
+		const at = [...bar.querySelectorAll<HTMLElement>('.tab[data-path]')].filter((t) => {
+			if (t.dataset.path === path) return false;
+			const r = t.getBoundingClientRect();
+			return r.left + r.width / 2 < e.clientX;
+		}).length;
+		drag.order = moveTab(drag.order, path, at);
+	}
+
+	// After an up as well as a cancel, which also release the capture. A tab
+	// placed by hand is kept: the next opened file must not take its place.
+	function lost() {
+		const d = drag;
+		drag = undefined;
+		if (!d?.order) return;
+		onreorder(d.order);
+		if (d.path === preview) onpin(d.path);
+	}
+
+	function click(path: string) {
+		if (swallow) swallow = false;
+		else onselect(path);
+	}
+
 	const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 	const failed = (what: string) => (e: unknown) => report(`${what} failed: ${message(e)}`);
 
@@ -101,10 +159,29 @@
 			<span class="label">{title}</span>
 		</button>
 	</div>
-	{#each tabs as path (path)}
+	{#each drag?.order ?? tabs as path (path)}
 		<!-- presentation: the list's tabs are the buttons; this only holds the menu's handler. -->
-		<div class="tab" role="presentation" class:active={active === path} class:preview={path === preview} class:menu={menu?.path === path} oncontextmenu={(e) => context(e, path)}>
-			<button class="name" role="tab" aria-selected={active === path} title={path} onclick={() => onselect(path)} ondblclick={() => onpin(path)}>
+		<div
+			class="tab"
+			role="presentation"
+			data-path={path}
+			class:active={active === path}
+			class:preview={path === preview}
+			class:menu={menu?.path === path}
+			class:dragging={drag?.order !== undefined && drag.path === path}
+			oncontextmenu={(e) => context(e, path)}
+		>
+			<button
+				class="name"
+				role="tab"
+				aria-selected={active === path}
+				title={path}
+				onpointerdown={(e) => down(e, path)}
+				onpointermove={move}
+				onlostpointercapture={lost}
+				onclick={() => click(path)}
+				ondblclick={() => onpin(path)}
+			>
 				<span class="label">{fileName(path)}</span>
 				{#if dirty.has(path)}<span class="dirty" role="img" aria-label="Unsaved" title="Unsaved"></span>{/if}
 			</button>
@@ -148,7 +225,10 @@
 		max-width: 220px;
 		border-right: 1px solid #333;
 	}
-	.tab.active {
+	/* A dragged tab is lifted as the shown one is, with nothing in the layout
+	   changing. */
+	.tab.active,
+	.tab.dragging {
 		background: #1e1e1e;
 		color: #d4d4d4;
 	}

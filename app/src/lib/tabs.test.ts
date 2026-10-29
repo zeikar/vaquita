@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { OTHER, closeInGroup, closeTabs, fallback, fileName, groupKey, neighbour, openFileTab, openPreview, openTab, parseStored, prune, touch, unpreview } from './tabs';
+import { OTHER, closeInGroup, closeTabs, fallback, fileName, groupKey, moveTab, neighbour, openFileTab, openPreview, openTab, parseStored, prune, setOrder, touch, unpreview } from './tabs';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -179,6 +179,37 @@ describe('touch / fallback', () => {
 	it('gives the terminal for an empty list or one with only closed paths', () => {
 		expect(fallback([], ['/a'])).toBeUndefined();
 		expect(fallback(['/gone', '/also'], ['/a'])).toBeUndefined();
+	});
+});
+
+describe('moveTab / setOrder', () => {
+	const tabs = ['/a', '/b', '/c', '/d'];
+	it('moves a path forward and backward among the rest, returning a new array', () => {
+		expect(moveTab(tabs, '/a', 2)).toEqual(['/b', '/c', '/a', '/d']);
+		expect(moveTab(tabs, '/d', 1)).toEqual(['/a', '/d', '/b', '/c']);
+		expect(tabs).toEqual(['/a', '/b', '/c', '/d']);
+	});
+	it('moves a path to either end', () => {
+		expect(moveTab(tabs, '/c', 0)).toEqual(['/c', '/a', '/b', '/d']);
+		expect(moveTab(tabs, '/b', 3)).toEqual(['/a', '/c', '/d', '/b']);
+	});
+	it('leaves the array alone for an unknown path', () => {
+		expect(moveTab(tabs, '/zzz', 1)).toBe(tabs);
+	});
+	it('keeps a reported order and the other groups', () => {
+		const g = { '/tmp/repo': ['/a', '/b', '/c'], [OTHER]: ['/x'] };
+		expect(setOrder(g, '/tmp/repo', ['/c', '/a', '/b'])).toEqual({ '/tmp/repo': ['/c', '/a', '/b'], [OTHER]: ['/x'] });
+		expect(g['/tmp/repo']).toEqual(['/a', '/b', '/c']);
+	});
+	// A tab closed during a drag cannot come back, and one opened meanwhile
+	// cannot vanish.
+	it('drops a path that is no tab any more and appends a tab the report lacks', () => {
+		const g = { '/tmp/repo': ['/a', '/c', '/d'] };
+		expect(setOrder(g, '/tmp/repo', ['/c', '/b', '/a'])).toEqual({ '/tmp/repo': ['/c', '/a', '/d'] });
+	});
+	it('ignores an unknown group', () => {
+		const g = { '/tmp/repo': ['/a'] };
+		expect(setOrder(g, '/tmp/none', ['/a'])).toEqual(g);
 	});
 });
 

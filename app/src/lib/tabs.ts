@@ -76,6 +76,21 @@ export function closeTabs(groups: TabGroups, key: string, paths: string[]): TabG
 	return left.length > 0 ? { ...rest, [key]: left } : rest;
 }
 
+export function moveTab(tabs: string[], path: string, to: number): string[] {
+	if (!tabs.includes(path)) return tabs;
+	const rest = tabs.filter((p) => p !== path);
+	return [...rest.slice(0, to), path, ...rest.slice(to)];
+}
+
+// The order a drag reported, checked against the group's tabs as they are on
+// release: a tab closed during the drag does not come back, and one opened
+// meanwhile goes last instead of vanishing.
+export function setOrder(groups: TabGroups, key: string, order: string[]): TabGroups {
+	const tabs = groups[key];
+	if (tabs === undefined) return groups;
+	return { ...groups, [key]: [...order.filter((p) => tabs.includes(p)), ...tabs.filter((p) => !order.includes(p))] };
+}
+
 // The strip is the terminal (undefined) followed by the tabs, and wraps around.
 export function neighbour(tabs: string[], active: string | undefined, step: number): string | undefined {
 	const n = tabs.length + 1;
