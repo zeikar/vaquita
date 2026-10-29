@@ -19,9 +19,31 @@
 		onselect: (path: string | undefined) => void;
 		onclose: (path: string) => void;
 	} = $props();
+
+	let bar: HTMLElement;
+
+	// The scrollbar is hidden, so the wheel is how a long row is reached: a
+	// vertical wheel scrolls it sideways. Horizontal gestures are left alone.
+	// Added by hand because Svelte's wheel handlers are passive and could not
+	// cancel the vertical scroll.
+	$effect(() => {
+		const onwheel = (e: WheelEvent) => {
+			if (bar.scrollWidth <= bar.clientWidth || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+			e.preventDefault();
+			bar.scrollLeft += e.deltaY;
+		};
+		bar.addEventListener('wheel', onwheel, { passive: false });
+		return () => bar.removeEventListener('wheel', onwheel);
+	});
+
+	// Keep the shown tab visible when it changes or a tab opens off-screen.
+	$effect(() => {
+		void [active, tabs.length];
+		bar.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+	});
 </script>
 
-<div class="tabs" role="tablist">
+<div class="tabs" role="tablist" bind:this={bar}>
 	<div class="tab" class:active={active === undefined}>
 		<button class="name" role="tab" aria-selected={active === undefined} title="{title} (⌘1)" onclick={() => onselect(undefined)}>
 			<Icon name="command-line" />
@@ -50,12 +72,16 @@
 		height: 30px;
 		overflow-x: auto;
 		overflow-y: hidden;
+		scrollbar-width: none;
 		border-bottom: 1px solid #333;
 		background: #252526;
 		color: #999;
 		font-size: 12px;
 		-webkit-user-select: none;
 		user-select: none;
+	}
+	.tabs::-webkit-scrollbar {
+		display: none;
 	}
 	.tab {
 		display: flex;

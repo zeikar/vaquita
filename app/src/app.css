@@ -11,6 +11,8 @@ html, body { overscroll-behavior: none; }
 	--neon: #6cd4f4;
 	--accent: #177ea0;
 	--accent-hover: #146f8e;
+	/* The app is dark-only: WebKit draws native scrollbars and controls dark. */
+	color-scheme: dark;
 }
 
 body {

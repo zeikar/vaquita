@@ -203,7 +203,6 @@
 		background: #252526;
 		color: #d4d4d4;
 		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-		color-scheme: dark;
 		-webkit-user-select: none;
 		user-select: none;
 	}

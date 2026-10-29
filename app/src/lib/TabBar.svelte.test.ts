@@ -75,4 +75,53 @@ describe('TabBar', () => {
 		expect(marks).toHaveLength(1);
 		expect(tabs()[2].contains(marks[0])).toBe(true);
 	});
+
+	describe('overflow', () => {
+		const wheel = (init: WheelEventInit) => {
+			const bar = target.querySelector<HTMLElement>('.tabs')!;
+			const e = new WheelEvent('wheel', { cancelable: true, ...init });
+			bar.dispatchEvent(e);
+			return { bar, e };
+		};
+		const overflow = (bar: HTMLElement, overflowing: boolean) => {
+			Object.defineProperty(bar, 'scrollWidth', { configurable: true, value: overflowing ? 500 : 100 });
+			Object.defineProperty(bar, 'clientWidth', { configurable: true, value: 100 });
+		};
+
+		it('turns a vertical wheel into sideways scrolling when the bar overflows', () => {
+			show(['/tmp/repo/a.md']);
+			const bar = target.querySelector<HTMLElement>('.tabs')!;
+			overflow(bar, true);
+			const { e } = wheel({ deltaY: 40 });
+			expect(bar.scrollLeft).toBe(40);
+			expect(e.defaultPrevented).toBe(true);
+		});
+
+		it('leaves the wheel alone when nothing overflows, and horizontal swipes always', () => {
+			show(['/tmp/repo/a.md']);
+			const bar = target.querySelector<HTMLElement>('.tabs')!;
+			overflow(bar, false);
+			expect(wheel({ deltaY: 40 }).e.defaultPrevented).toBe(false);
+			overflow(bar, true);
+			const swipe = wheel({ deltaX: 40, deltaY: 3 });
+			expect(swipe.e.defaultPrevented).toBe(false);
+			expect(bar.scrollLeft).toBe(0);
+		});
+
+		it('scrolls the shown tab into view when it changes or opens', () => {
+			const scrollIntoView = vi.fn();
+			Element.prototype.scrollIntoView = scrollIntoView;
+			const props = show(['/tmp/repo/a.md', '/tmp/repo/b.md']);
+			scrollIntoView.mockClear();
+			props.active = '/tmp/repo/b.md';
+			flushSync();
+			expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' });
+			expect(scrollIntoView.mock.contexts.at(-1)).toBe(tabs()[2].parentElement);
+			scrollIntoView.mockClear();
+			props.tabs = [...props.tabs, '/tmp/repo/c.md'];
+			props.active = '/tmp/repo/c.md';
+			flushSync();
+			expect(scrollIntoView.mock.contexts.at(-1)).toBe(tabs()[3].parentElement);
+		});
+	});
 });
