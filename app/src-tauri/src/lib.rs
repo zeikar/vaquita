@@ -7,6 +7,7 @@ mod menu;
 mod notify;
 mod open_path;
 mod panic_log;
+mod repo_watch;
 mod stop;
 mod update;
 mod wait;
@@ -138,6 +139,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Pending::default())
         .manage(watch::Watches::default())
+        .manage(repo_watch::RepoWatch::default())
         .setup(|app| {
             notify::setup(app.handle());
             // Without the menu the app still updates on its timed checks.
@@ -163,6 +165,7 @@ pub fn run() {
             changes::git_changes,
             changes::diff_sides,
             watch::set_watched,
+            repo_watch::watch_repo,
             update::check_app_update,
             update::install_app_update
         ])

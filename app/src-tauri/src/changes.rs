@@ -75,18 +75,18 @@ pub struct ChangeList {
     total: usize,
 }
 
-fn git(folder: &Path) -> Result<Command, String> {
+pub(crate) fn git(folder: &Path) -> Result<Command, String> {
     let mut cmd = folders::git_in(folder).ok_or("git is not installed")?;
     cmd.arg("--no-lazy-fetch");
     Ok(cmd)
 }
 
-fn run(mut cmd: Command) -> Result<Output, String> {
+pub(crate) fn run(mut cmd: Command) -> Result<Output, String> {
     cmd.output().map_err(|e| format!("run git: {e}"))
 }
 
 /// The error for an exit status the caller does not name.
-fn failed(what: &str, out: &Output) -> String {
+pub(crate) fn failed(what: &str, out: &Output) -> String {
     let stderr = String::from_utf8_lossy(&out.stderr);
     if out.status.code() == Some(129) && stderr.starts_with("unknown option: --no-lazy-fetch") {
         return "Changes needs git 2.46 or later".to_string();
