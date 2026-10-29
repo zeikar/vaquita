@@ -42,13 +42,13 @@ export async function fileUrl(path: string): Promise<string> {
 	return convertFileSrc(path);
 }
 
-export type TabAction = 'close' | 'terminal' | 'prev' | 'next';
+export type TabAction = 'close' | 'terminal' | 'prev' | 'next' | 'files';
 
 function isTabAction(v: unknown): v is TabAction {
-	return v === 'close' || v === 'terminal' || v === 'prev' || v === 'next';
+	return v === 'close' || v === 'terminal' || v === 'prev' || v === 'next' || v === 'files';
 }
 
-// Runs run on each tab command of the app menu; resolves to a function that
+// Runs run on each action the View menu sends (the tabs' and the file panel's); resolves to a function that
 // stops listening.
 export async function onTabAsked(run: (a: TabAction) => void): Promise<() => void> {
 	if (!isTauri()) return () => {};

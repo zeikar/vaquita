@@ -12,6 +12,10 @@
 //! key-view loop, which WKWebView runs and counts as handled whenever the page
 //! does not cancel the key, so a menu item on ⌃Tab never fires. The page takes
 //! ⌃Tab itself (App.svelte).
+//!
+//! The file panel's key comes the same way, on the same event. It is ⌥⌘B because
+//! AppKit binds nothing to it (it does bind ⌃B and ⌥⌃B) and it mirrors ⌘B, which
+//! hides the sidebar.
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Wry};
@@ -22,14 +26,16 @@ const CLOSE_ID: &str = "tab-close";
 const TERMINAL_ID: &str = "tab-terminal";
 const PREV_ID: &str = "tab-prev";
 const NEXT_ID: &str = "tab-next";
+const FILES_ID: &str = "view-files";
 
 const CLOSE_KEY: &str = "CmdOrCtrl+W";
 
 /// Above Toggle Full Screen, the default View's only item: id, title, key.
-const VIEW_ITEMS: [(&str, &str, &str); 3] = [
+const VIEW_ITEMS: [(&str, &str, &str); 4] = [
     (TERMINAL_ID, "Show Terminal", "CmdOrCtrl+1"),
     (PREV_ID, "Previous Tab", "CmdOrCtrl+Shift+["),
     (NEXT_ID, "Next Tab", "CmdOrCtrl+Shift+]"),
+    (FILES_ID, "Toggle Files", "CmdOrCtrl+Alt+B"),
 ];
 
 /// The title macOS gives PredefinedMenuItem::close_window.
@@ -42,6 +48,7 @@ fn tab_action(id: &str) -> Option<&'static str> {
         TERMINAL_ID => Some("terminal"),
         PREV_ID => Some("prev"),
         NEXT_ID => Some("next"),
+        FILES_ID => Some("files"),
         _ => None,
     }
 }
@@ -171,6 +178,7 @@ mod tests {
             (Modifiers::META, Code::Digit1),
             (Modifiers::META | Modifiers::SHIFT, Code::BracketLeft),
             (Modifiers::META | Modifiers::SHIFT, Code::BracketRight),
+            (Modifiers::META | Modifiers::ALT, Code::KeyB),
             (Modifiers::META, Code::KeyW),
         ];
         assert_eq!(keys.len(), want.len());
