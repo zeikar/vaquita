@@ -2,6 +2,12 @@
 
 Each release's notes open with its section here.
 
+## 0.1.13
+
+- The repo's files beside the terminal. A panel on the right shows the selected session's repo as a tree: folders open with a click, and what you see follows the disk as agents add and remove files, while only the folders you opened are watched. Click a file to open it, as ⌘-click does in the terminal: in a tab, else in its default app. Right-click a row to reveal it in Finder or copy its path. A folder with more than 2000 entries shows the first 2000.
+- ⌥⌘B, or the button at the right of the status line, hides the panel and brings it back, and its left edge drags to set its width (double-click to reset it). Both are kept across restarts.
+- A session outside your repos shows a button that adds its folder as a repo, in place of the tree.
+
 ## 0.1.12
 
 - Files open in tabs inside the app. ⌘-click a text or code file, a Markdown file, an image, or an audio or video file in a session, and it opens in a tab next to the terminal, which is always the first tab. Tabs are kept per repo and come back after a restart. ⌘1 shows the terminal, ⌘⇧[ and ⌘⇧] (or ⌃⇧Tab and ⌃Tab) move between tabs, and ⌘W closes the shown one. PDFs and other files still open in their default app.
