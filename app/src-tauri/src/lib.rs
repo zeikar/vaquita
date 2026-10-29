@@ -1,4 +1,5 @@
 mod files;
+mod folders;
 mod home;
 mod launchd;
 mod menu;
@@ -153,6 +154,7 @@ pub fn run() {
             files::view_path,
             files::read_text,
             files::write_text,
+            folders::read_folder,
             update::check_app_update,
             update::install_app_update
         ])
