@@ -1,8 +1,24 @@
 import { fileName } from './tabs';
+import { MONO_FONT } from './theme';
 
 export type Monaco = typeof import('./monaco-setup');
 
 let loading: Promise<Monaco> | undefined;
+
+// What the text editor and the diff editor share.
+export const EDITOR_OPTIONS = {
+	theme: 'vs-dark',
+	fontFamily: MONO_FONT,
+	fontSize: 13,
+	minimap: { enabled: false },
+	// Long lines wrap, so there is no sideways scrolling.
+	wordWrap: 'on',
+	// WebKit has no EditContext, so typing goes through Monaco's hidden
+	// textarea. With 'auto' it holds a page of text that WebKit scrolls a few
+	// pixels off Monaco's alignment, which shakes the line while an IME
+	// composes (monaco-editor#4796).
+	accessibilitySupport: 'off',
+} as const;
 
 // The one way into Monaco: a dynamic import, so its chunk loads with the first
 // text tab and not before.

@@ -3,6 +3,7 @@
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import FilePane from './FilePane.svelte';
+import { stubs } from './DiffView.stub.svelte';
 import { documents } from './documents';
 import { readText, viewPath } from './files';
 
@@ -28,14 +29,15 @@ vi.mock('./files', () => ({
 	writeText: vi.fn(),
 	fileUrl: vi.fn(async (path: string) => `asset://localhost${path}`),
 }));
-vi.mock('./monaco', () => ({ loadMonaco: async () => hoisted.monaco, languageFor: () => 'markdown' }));
+vi.mock('./monaco', () => ({ EDITOR_OPTIONS: {}, loadMonaco: async () => hoisted.monaco, languageFor: () => 'markdown' }));
 vi.mock('./markdown', () => ({ renderMarkdown: async (text: string) => text }));
+vi.mock('./DiffView.svelte', async () => ({ default: (await import('./DiffView.stub.svelte')).default }));
 
 let target: HTMLElement;
 let shown: ReturnType<typeof mount> | undefined;
 
 function show(path: string, where: { repo?: string; home?: string } = {}) {
-	const props = $state({ path, ...where, onclose: vi.fn(), report: vi.fn() });
+	const props = $state({ path, ...where, onclose: vi.fn(), onopenfile: vi.fn(), report: vi.fn() });
 	target = document.createElement('div');
 	document.body.append(target);
 	shown = mount(FilePane, { target, props });
@@ -57,6 +59,7 @@ afterEach(() => {
 	if (shown) unmount(shown);
 	shown = undefined;
 	target?.remove();
+	stubs.length = 0;
 });
 
 describe('FilePane path bar', () => {
@@ -176,5 +179,97 @@ describe('FilePane with unsaved edits', () => {
 		show('/tmp/repo/gone2.txt');
 		await settle();
 		expect(target.querySelector('.error')?.textContent).toContain('no such file');
+	});
+});
+
+describe('FilePane diff tab', () => {
+	const tab = 'diff:/tmp/repo/src/a.ts';
+	const live = () => stubs.filter((v) => !v.destroyed);
+
+	it('shows the file’s path in the bar, the diff buttons, and no Preview or Source', async () => {
+		vi.mocked(viewPath).mockClear();
+		show(tab, { repo: '/tmp/repo', home: '/Users/me' });
+		await settle();
+		expect(bar().querySelector('.dir')?.textContent).toBe('src/');
+		expect(bar().querySelector('.name')?.textContent).toBe('a.ts');
+		expect(bar().title).toBe('/tmp/repo/src/a.ts');
+		expect(button('Side by side')).not.toBeNull();
+		expect(button('Open file').querySelector('svg[data-icon="arrow-top-right-on-square"]')).not.toBeNull();
+		expect(target.querySelector('.bar button[aria-label="Preview"]')).toBeNull();
+		expect(target.querySelector('.bar button[aria-label="Source"]')).toBeNull();
+		// Nothing opens, so the gate is not asked.
+		expect(viewPath).not.toHaveBeenCalled();
+		expect(live().map((v) => ({ ...v.props }))).toEqual([expect.objectContaining({ repo: '/tmp/repo', path: '/tmp/repo/src/a.ts', sideBySide: true })]);
+	});
+
+	it('opens the file itself from the bar', async () => {
+		const props = show(tab, { repo: '/tmp/repo' });
+		await settle();
+		button('Open file').click();
+		expect(props.onopenfile).toHaveBeenCalledExactlyOnceWith('/tmp/repo/src/a.ts');
+	});
+
+	it('switches between side by side and inline', async () => {
+		show(tab, { repo: '/tmp/repo' });
+		await settle();
+		const toggle = button('Side by side');
+		expect(toggle.getAttribute('aria-pressed')).toBe('true');
+		expect(toggle.querySelector('svg[data-icon="view-columns"]')).not.toBeNull();
+		try {
+			toggle.click();
+			flushSync();
+			expect(toggle.getAttribute('aria-pressed')).toBe('false');
+			expect(toggle.title).toBe('Side by side');
+			expect(toggle.querySelector('svg[data-icon="bars-3"]')).not.toBeNull();
+			expect(live()[0].props.sideBySide).toBe(false);
+		} finally {
+			// The switch is module-wide, so a failure must not leave it off for the next test.
+			if (toggle.getAttribute('aria-pressed') === 'false') toggle.click();
+			flushSync();
+		}
+		expect(live()[0].props.sideBySide).toBe(true);
+	});
+
+	it('mounts the view again, against no repo, when the tab’s repo goes', async () => {
+		const props = show(tab, { repo: '/tmp/repo' });
+		await settle();
+		const first = stubs[0];
+		props.repo = undefined;
+		flushSync();
+		await settle();
+		expect(first.destroyed).toBe(true);
+		expect(live()).toHaveLength(1);
+		expect(live()[0].props.repo).toBeUndefined();
+	});
+
+	it('mounts a new view for another diff tab, so it reads its own file', async () => {
+		const props = show(tab, { repo: '/tmp/repo' });
+		await settle();
+		props.path = 'diff:/tmp/repo/b.ts';
+		flushSync();
+		await settle();
+		expect(stubs[0].destroyed).toBe(true);
+		expect(live().map((v) => v.props.path)).toEqual(['/tmp/repo/b.ts']);
+	});
+
+	it('hands the focus to the diff, and relays it out after a drag', async () => {
+		show(tab, { repo: '/tmp/repo' });
+		await settle();
+		const pane = shown as unknown as { focus: () => void; relayout: () => void };
+		pane.focus();
+		pane.relayout();
+		expect(stubs[0].focuses).toBe(1);
+		expect(stubs[0].relayouts).toBe(1);
+	});
+
+	it('unmounts the diff for a file tab', async () => {
+		const props = show(tab, { repo: '/tmp/repo' });
+		await settle();
+		props.path = '/tmp/repo/a.txt';
+		flushSync();
+		await settle();
+		expect(live()).toHaveLength(0);
+		expect(target.querySelector('.diff')).toBeNull();
+		expect(bar().querySelector('button')).toBeNull();
 	});
 });

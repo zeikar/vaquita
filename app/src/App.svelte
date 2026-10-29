@@ -8,6 +8,7 @@
 	import AppUpdateBanner from './lib/AppUpdateBanner.svelte';
 	import { AppUpdater, releaseUrl } from './lib/app-update';
 	import { ask } from './lib/ask';
+	import { diffTab, tabFile } from './lib/changes';
 	import { DaemonConnection } from './lib/connection';
 	import { runningCount } from './lib/daemon-update';
 	import { documents } from './lib/documents';
@@ -121,6 +122,19 @@
 		if (r.drop !== undefined) documents.dropDocument(r.drop);
 		saveTabs(groups);
 		void showTab(path);
+	}
+
+	// A file's diff against HEAD, as a tab of the selected session's group: the
+	// repo the changes were listed for, which Other is not.
+	function openDiff(path: string, pin = false): void {
+		if (group === undefined || group === OTHER) return;
+		const r = openFileTab(groups, previews, group, diffTab(path), pin);
+		groups = r.groups;
+		previews = r.previews;
+		// The preview it took the place of, a file tab's maybe.
+		if (r.drop !== undefined) documents.dropDocument(r.drop);
+		saveTabs(groups);
+		void showTab(diffTab(path));
 	}
 
 	// The order a drag on the bar left the group's tabs in, kept across restarts.
@@ -518,7 +532,7 @@
 			<TerminalPane sessions={$manager.sessions} selected={$manager.selected} />
 			{#if active !== undefined}
 				{@const path = active}
-				<FilePane bind:this={filePane} {path} repo={root} {home} readOnly={updating} onclose={() => void closeFileTabs([path])} report={(m) => manager.report(m)} />
+				<FilePane bind:this={filePane} {path} repo={root} {home} readOnly={updating} onclose={() => void closeFileTabs([path])} onopenfile={(p) => openFromTree(p)} report={(m) => manager.report(m)} />
 			{/if}
 		</div>
 	</section>
@@ -532,7 +546,7 @@
 			</header>
 			{#if root !== undefined}
 				{#key root}
-					<FileTree {root} highlight={active} onopen={openFromTree} report={(m) => manager.report(m)} />
+					<FileTree {root} highlight={active === undefined ? undefined : tabFile(active)} onopen={openFromTree} report={(m) => manager.report(m)} />
 				{/key}
 			{:else if selectedRow}
 				{@const cwd = selectedRow.info.cwd}

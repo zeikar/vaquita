@@ -3,10 +3,14 @@
 
 	// The markdown files switched to Source, for the app run; the rest preview.
 	const sources = new SvelteSet<string>();
+	// Diffs show side by side until switched, for every diff tab and the app run.
+	let sideBySide = $state(true);
 </script>
 
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
+	import { diffPath, tabFile } from './changes';
+	import DiffView from './DiffView.svelte';
 	import { documents } from './documents';
 	import { fileUrl, viewPath, type FileKind } from './files';
 	import Icon from './Icon.svelte';
@@ -22,12 +26,16 @@
 		readOnly = false,
 		repo,
 		home,
+		onopenfile,
 	}: {
+		// A file's path, or a diff tab's key (changes.ts).
 		path: string;
 		// The repo of the tab's group, which the path bar goes from; none for Other.
 		repo?: string;
 		home?: string;
 		onclose: () => void;
+		// The file behind a diff tab, opened as the tree opens one.
+		onopenfile: (path: string) => void;
 		report: (message: string) => void;
 		readOnly?: boolean;
 	} = $props();
@@ -37,12 +45,13 @@
 	type Shown =
 		| { state: 'loading' }
 		| { state: 'error'; message: string }
-		| { state: 'view'; path: string; kind: FileKind; src?: string; note?: string };
+		| { state: 'view'; path: string; kind: FileKind | 'diff'; src?: string; note?: string };
 
 	let shown = $state<Shown>({ state: 'loading' });
 	let root: HTMLElement;
 	let editor = $state<ReturnType<typeof TextEditor>>();
 	let preview = $state<ReturnType<typeof MarkdownView>>();
+	let diffView = $state<ReturnType<typeof DiffView>>();
 	// The last path shown in the editor. The editor stays mounted, hidden, while
 	// other tabs show, so that one Monaco editor serves every text tab of the
 	// pane, a markdown file's source included.
@@ -52,7 +61,10 @@
 	const source = $derived(markdown !== undefined && sources.has(markdown));
 	const inEditor = (s: Shown) => s.state === 'view' && (s.kind === 'text' || (s.kind === 'markdown' && sources.has(s.path)));
 	const showsEditor = $derived(inEditor(shown));
-	const where = $derived(barPath(path, repo, home));
+	// A diff tab's file, whose diff shows.
+	const diff = $derived(shown.state === 'view' && shown.kind === 'diff' ? shown.path : undefined);
+	const file = $derived(tabFile(path));
+	const where = $derived(barPath(file, repo, home));
 
 	function showEditor(p: string): void {
 		textPath = p;
@@ -60,9 +72,10 @@
 	}
 
 	// Takes the focus from the terminal underneath, so that typing never
-	// reaches it: the editor's once it has the file, else the preview's or
-	// the pane's.
+	// reaches it: the editor's or the diff's once it has the file, else the
+	// preview's or the pane's.
 	export function focus(): void {
+		if (diff !== undefined && diffView?.focus()) return;
 		if (showsEditor && editor?.focus()) return;
 		if (markdown !== undefined && !source && preview) preview.focus();
 		else root.focus();
@@ -71,6 +84,7 @@
 	// After a panel edge's drag, which the editor sat out (layout-hold.ts).
 	export function relayout(): void {
 		editor?.relayout();
+		diffView?.relayout();
 	}
 
 	// Saving needs nothing here: it goes by path, and the document outlives the
@@ -115,6 +129,9 @@
 	// qualifies, as an agent may have deleted, renamed or grown it: the error
 	// is shown beside the text, which is all that is left of the edits.
 	async function load(asked: string): Promise<Shown> {
+		// Not judged: nothing opens, the diff command only reads, inside the repo.
+		const diffOf = diffPath(asked);
+		if (diffOf !== undefined) return { state: 'view', path: diffOf, kind: 'diff' };
 		let viewable;
 		try {
 			viewable = await viewPath(asked);
@@ -131,12 +148,27 @@
 </script>
 
 <div class="file" tabindex="-1" bind:this={root}>
-	<div class="bar" title={path}>
+	<div class="bar" title={file}>
 		<span class="where"><span class="dir">{where.dir}</span><span class="name">{where.name}</span></span>
 		{#if markdown !== undefined}
 			<div class="modes" role="group" aria-label="Markdown view">
 				<button title="Preview" aria-label="Preview" aria-pressed={!source} onclick={() => void setSource(false)}><Icon name="eye" /></button>
 				<button title="Source" aria-label="Source" aria-pressed={source} onclick={() => void setSource(true)}><Icon name="code-bracket-micro" /></button>
+			</div>
+		{:else if diff !== undefined}
+			{@const opened = diff}
+			<div class="modes" role="group" aria-label="Diff view">
+				<!-- Off is inline; on, a pane too narrow for two sides goes inline by
+				     itself (useInlineViewWhenSpaceIsLimited). -->
+				<button
+					title="Side by side"
+					aria-label="Side by side"
+					aria-pressed={sideBySide}
+					onclick={() => (sideBySide = !sideBySide)}
+				>
+					<Icon name={sideBySide ? 'view-columns' : 'bars-3'} />
+				</button>
+				<button title="Open file" aria-label="Open file" onclick={() => onopenfile(opened)}><Icon name="arrow-top-right-on-square" /></button>
 			</div>
 		{/if}
 	</div>
@@ -150,6 +182,15 @@
 	{/if}
 	{#if markdown !== undefined && !source}
 		<MarkdownView bind:this={preview} path={markdown} {report} />
+	{/if}
+	{#if diff !== undefined}
+		<div class="diff">
+			<!-- Keyed by the repo: the pane stays mounted when a removed repo moves
+			     the tab to Other, and the view must read again, against no repo. -->
+			{#key repo}
+				<DiffView bind:this={diffView} {repo} path={diff} {sideBySide} {report} />
+			{/key}
+		</div>
 	{/if}
 	{#if shown.state === 'error'}
 		<div class="error">
@@ -262,7 +303,8 @@
 		color: #d7ba7d;
 		font-size: 12px;
 	}
-	.text {
+	.text,
+	.diff {
 		place-self: stretch;
 		position: relative;
 	}

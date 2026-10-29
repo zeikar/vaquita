@@ -90,6 +90,17 @@ describe('TabBar', () => {
 		expect(props.onselect).toHaveBeenCalledExactlyOnceWith('/tmp/repo/a.md');
 	});
 
+	it('shows a diff tab by its file’s name with a diff mark, the file’s path as its title', () => {
+		show(['/tmp/repo/src/main.ts', 'diff:/tmp/repo/src/main.ts']);
+		expect(names()).toEqual(['claude', 'main.ts', 'main.ts diff']);
+		expect(tabs()[1].querySelector('.mark')).toBeNull();
+		expect(tabs()[2].querySelector('.label')?.textContent).toBe('main.ts');
+		expect(tabs()[2].querySelector('.mark')?.textContent).toBe('diff');
+		expect(tabs()[2].title).toBe('/tmp/repo/src/main.ts');
+		expect(target.querySelector('button[aria-label="Close main.ts"]')).not.toBeNull();
+		expect(target.querySelector('button[aria-label="Close main.ts diff"]')).not.toBeNull();
+	});
+
 	it('marks a tab with unsaved edits', () => {
 		const props = show(['/tmp/repo/a.md', '/tmp/repo/b.md']);
 		expect(target.querySelectorAll('[aria-label="Unsaved"]')).toHaveLength(0);
@@ -193,6 +204,15 @@ describe('TabBar', () => {
 			rightClick('b.md');
 			choose('Close All');
 			expect(props.onclose).toHaveBeenCalledWith([a, b, c]);
+		});
+
+		it('copies a diff tab’s file path', () => {
+			const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+			show([a, 'diff:/tmp/repo/c.md']);
+			rightClick('c.md diff');
+			choose('Copy path');
+			expect(write).toHaveBeenCalledWith(c);
+			write.mockRestore();
 		});
 
 		it('copies the path, and reports a failure', async () => {

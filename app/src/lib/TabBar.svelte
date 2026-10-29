@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { diffPath, tabFile } from './changes';
 	import { writeClipboard } from './clipboard';
 	import ContextMenu from './ContextMenu.svelte';
 	import Icon from './Icon.svelte';
@@ -151,8 +152,9 @@
 			},
 			{ label: 'Close to the Right', disabled: path === tabs.at(-1), run: () => onclose(tabs.slice(tabs.indexOf(path) + 1)) },
 			{ label: 'Close All', run: () => onclose([...tabs]) },
-			{ label: 'Copy path', run: () => void writeClipboard(path).catch(failed('copy path')) },
-			...(canReveal() ? [{ label: 'Reveal in Finder', run: () => void revealInFinder(path).catch(failed('reveal in Finder')) }] : []),
+			// A diff tab's are its file's.
+			{ label: 'Copy path', run: () => void writeClipboard(tabFile(path)).catch(failed('copy path')) },
+			...(canReveal() ? [{ label: 'Reveal in Finder', run: () => void revealInFinder(tabFile(path)).catch(failed('reveal in Finder')) }] : []),
 		];
 		menu = { at: { x: e.clientX, y: e.clientY }, items, path, shown: active, key: ++opens };
 	}
@@ -190,17 +192,18 @@
 				class="name"
 				role="tab"
 				aria-selected={active === path}
-				title={path}
+				title={tabFile(path)}
 				onpointerdown={(e) => down(e, path)}
 				onpointermove={move}
 				onlostpointercapture={lost}
 				onclick={() => click(path)}
 				ondblclick={() => onpin(path)}
 			>
-				<span class="label">{fileName(path)}</span>
+				<span class="label">{fileName(tabFile(path))}</span>
+				{#if diffPath(path) !== undefined}<span class="mark">diff</span>{/if}
 				{#if dirty.has(path)}<span class="dirty" role="img" aria-label="Unsaved" title="Unsaved"></span>{/if}
 			</button>
-			<button class="icon-btn close" aria-label="Close {fileName(path)}" title="Close" onclick={() => onclose([path])}>
+			<button class="icon-btn close" aria-label="Close {fileName(tabFile(path))}{diffPath(path) !== undefined ? ' diff' : ''}" title="Close" onclick={() => onclose([path])}>
 				<Icon name="x-mark" />
 			</button>
 		</div>
@@ -279,6 +282,11 @@
 	}
 	.tab.preview .label {
 		font-style: italic;
+	}
+	.mark {
+		flex: none;
+		color: #777;
+		font-size: 10px;
 	}
 	.dirty {
 		flex: none;

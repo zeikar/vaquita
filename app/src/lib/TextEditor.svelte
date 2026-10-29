@@ -2,9 +2,8 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { documents as shared, type Documents } from './documents';
 	import { layoutHeld } from './layout-hold';
-	import { loadMonaco, type Monaco } from './monaco';
+	import { EDITOR_OPTIONS, loadMonaco, type Monaco } from './monaco';
 	import { fileName } from './tabs';
-	import { MONO_FONT } from './theme';
 
 	type Editor = import('./monaco-setup').editor.IStandaloneCodeEditor;
 
@@ -58,17 +57,7 @@
 				editor = monaco.editor.create(host, {
 					// No model of its own: every model is a document's.
 					model: null,
-					theme: 'vs-dark',
-					fontFamily: MONO_FONT,
-					fontSize: 13,
-					minimap: { enabled: false },
-					// Long lines wrap, so there is no sideways scrolling.
-					wordWrap: 'on',
-					// WebKit has no EditContext, so typing goes through Monaco's
-					// hidden textarea. With 'auto' it holds a page of text that
-					// WebKit scrolls a few pixels off Monaco's alignment, which
-					// shakes the line while an IME composes (monaco-editor#4796).
-					accessibilitySupport: 'off',
+					...EDITOR_OPTIONS,
 				});
 				// Not automaticLayout, which relays out at every step of a panel
 				// edge's drag and flashes the scrollbars each time: the layout is
