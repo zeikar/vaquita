@@ -14,6 +14,10 @@
 //! and the global excludes file, which a parser here would have to copy. It
 //! runs only on the reads the tree makes anyway, never on a timer, and a folder
 //! outside a repo, or a Mac without git, lists with nothing ignored.
+//!
+//! Every git the app runs starts from git_in, with optional locks off: a
+//! status or diff would otherwise rewrite a stat-dirty .git/index, which a
+//! watch would see as a change and answer with another status, forever.
 
 use std::collections::HashSet;
 use std::io::Write;
@@ -94,28 +98,40 @@ fn git() -> Option<&'static str> {
     })
 }
 
+/// A git command in `folder`, or None when git cannot run.
+pub(crate) fn git_in(folder: &Path) -> Option<Command> {
+    let mut cmd = Command::new(git()?);
+    cmd.arg("--no-optional-locks")
+        .arg("-C")
+        .arg(folder)
+        // Nothing the app runs may run a command the repo configures, so the
+        // fsmonitor hook is off.
+        .args(["-c", "core.fsmonitor=false"])
+        // Set in the app's environment, as by a git hook that started a
+        // dev build, these would make git judge another repo's files, or run
+        // a program on a diff.
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_EXTERNAL_DIFF")
+        // Callers match git's English messages.
+        .env("LC_ALL", "C")
+        .stderr(Stdio::piped());
+    Some(cmd)
+}
+
 /// The names in `names`, entries of `folder`, that git ignores; none when
 /// `folder` is not in a repo or git cannot run, as the tree must list a folder
 /// whatever git says. A tracked file is not ignored, whatever the patterns.
-fn ignored_names(folder: &Path, names: &[&str]) -> HashSet<String> {
+pub(crate) fn ignored_names(folder: &Path, names: &[&str]) -> HashSet<String> {
     if names.is_empty() {
         return HashSet::new();
     }
-    let Some(git) = git() else { return HashSet::new() };
-    let child = Command::new(git)
-        .arg("-C")
-        .arg(folder)
-        // Listing a folder must never run a command the repo configures, so
-        // the fsmonitor hook is off.
-        .args(["-c", "core.fsmonitor=false", "check-ignore", "-z", "--stdin"])
-        // Set in the app's environment, as by a git hook that started a
-        // dev build, these would make git judge another repo's files.
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn();
+    let Some(mut cmd) = git_in(folder) else { return HashSet::new() };
+    let child = cmd.args(["check-ignore", "-z", "--stdin"]).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn();
     let Ok(mut child) = child else { return HashSet::new() };
     let mut input = Vec::new();
     for n in names {

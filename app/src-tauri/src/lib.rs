@@ -1,3 +1,4 @@
+mod changes;
 mod files;
 mod folders;
 mod home;
@@ -159,6 +160,7 @@ pub fn run() {
             files::read_text,
             files::write_text,
             folders::read_folder,
+            changes::git_changes,
             watch::set_watched,
             update::check_app_update,
             update::install_app_update
