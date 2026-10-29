@@ -105,7 +105,9 @@ fn ignored_names(folder: &Path, names: &[&str]) -> HashSet<String> {
     let child = Command::new(git)
         .arg("-C")
         .arg(folder)
-        .args(["check-ignore", "-z", "--stdin"])
+        // Listing a folder must never run a command the repo configures, so
+        // the fsmonitor hook is off.
+        .args(["-c", "core.fsmonitor=false", "check-ignore", "-z", "--stdin"])
         // Set in the app's environment, as by a git hook that started a
         // dev build, these would make git judge another repo's files.
         .env_remove("GIT_DIR")
@@ -117,6 +119,8 @@ fn ignored_names(folder: &Path, names: &[&str]) -> HashSet<String> {
     let Ok(mut child) = child else { return HashSet::new() };
     let mut input = Vec::new();
     for n in names {
+        // "./" keeps a name like ":(literal)x" from reading as pathspec magic.
+        input.extend_from_slice(b"./");
         input.extend_from_slice(n.as_bytes());
         input.push(0);
     }
@@ -132,7 +136,7 @@ fn ignored_names(folder: &Path, names: &[&str]) -> HashSet<String> {
     // Exit 1 is no name ignored, 128 not a repo or any other failure.
     match out {
         Ok(out) if out.status.success() => {
-            out.stdout.split(|&b| b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n).into_owned()).collect()
+            out.stdout.split(|&b| b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n.strip_prefix(b"./").unwrap_or(n)).into_owned()).collect()
         }
         _ => HashSet::new(),
     }
@@ -265,6 +269,29 @@ mod tests {
         assert_eq!(ignored(&list(&d, FOLDER_CAP).unwrap()), ["dist", "a.log", "new\nline.log"]);
         // Inside an ignored folder, its entries are ignored too.
         assert_eq!(ignored(&list(&d.join("dist"), FOLDER_CAP).unwrap()), ["app.js"]);
+    }
+
+    #[test]
+    fn a_repo_hook_is_not_run_and_magic_looking_names_are_literal() {
+        let d = dir("folders-hook");
+        let git = |args: &[&str]| {
+            let s = Command::new("git").arg("-C").arg(&d).args(args).env_remove("GIT_DIR").env_remove("GIT_WORK_TREE").status();
+            assert!(s.unwrap().success());
+        };
+        git(&["init", "-q"]);
+        std::fs::write(d.join(".gitignore"), "*.log\n").unwrap();
+        file(&d, "tracked.txt", 0o644);
+        git(&["add", "tracked.txt"]);
+        let marker = d.join("hook-ran");
+        let hook = d.join("hook.sh");
+        std::fs::write(&hook, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+        std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        git(&["config", "core.fsmonitor", hook.to_str().unwrap()]);
+        file(&d, ":(literal)foo", 0o644);
+        file(&d, "a.log", 0o644);
+        let l = list(&d, FOLDER_CAP).unwrap();
+        assert!(!marker.exists());
+        assert_eq!(ignored(&l), ["a.log"]);
     }
 
     #[test]
