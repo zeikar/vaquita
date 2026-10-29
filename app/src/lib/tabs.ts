@@ -23,9 +23,9 @@ export function openTab(groups: TabGroups, key: string, path: string): TabGroups
 }
 
 // A group left with no tabs is dropped so the stored JSON does not collect empties.
-export function closeTab(groups: TabGroups, key: string, path: string): TabGroups {
+export function closeTabs(groups: TabGroups, key: string, paths: string[]): TabGroups {
 	const { [key]: tabs, ...rest } = groups;
-	const left = (tabs ?? []).filter((p) => p !== path);
+	const left = (tabs ?? []).filter((p) => !paths.includes(p));
 	return left.length > 0 ? { ...rest, [key]: left } : rest;
 }
 

@@ -1,5 +1,9 @@
 <script lang="ts">
+	import { writeClipboard } from './clipboard';
+	import ContextMenu from './ContextMenu.svelte';
 	import Icon from './Icon.svelte';
+	import type { MenuAt, MenuItem } from './menu';
+	import { canReveal, revealInFinder } from './reveal';
 	import { fileName } from './tabs';
 
 	let {
@@ -9,6 +13,7 @@
 		dirty,
 		onselect,
 		onclose,
+		report,
 	}: {
 		// The terminal tab's text: the selected session's title.
 		title: string;
@@ -17,7 +22,8 @@
 		active?: string;
 		dirty: ReadonlySet<string>;
 		onselect: (path: string | undefined) => void;
-		onclose: (path: string) => void;
+		onclose: (paths: string[]) => void;
+		report: (message: string) => void;
 	} = $props();
 
 	let bar: HTMLElement;
@@ -41,6 +47,45 @@
 		void [active, tabs.length];
 		bar.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 	});
+
+	// The one context menu; key changes on every open, as the menu takes its
+	// opener and the focus when it mounts. shown is the tab shown when it opened.
+	let menu = $state<{ at: MenuAt; items: MenuItem[]; path: string; shown?: string; key: number }>();
+	let opens = 0;
+
+	// The menu gives the focus back to what had it when it opened, which a file
+	// shown since may cover, so it is dropped (unmounting gives no focus back)
+	// once its tab is gone or another tab shows: showTab focuses what shows.
+	$effect(() => {
+		if (menu && (!tabs.includes(menu.path) || active !== menu.shown)) menu = undefined;
+	});
+
+	const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+	const failed = (what: string) => (e: unknown) => report(`${what} failed: ${message(e)}`);
+
+	// No focus call, unlike the tree's rows: the focus stays on the content
+	// under the bar, where the menu gives it back and typing belongs. The items
+	// read tabs when clicked, not when the menu opened.
+	function context(e: MouseEvent, path: string) {
+		e.preventDefault();
+		const items: MenuItem[] = [
+			{ label: 'Close', run: () => onclose([path]) },
+			{
+				label: 'Close Others',
+				disabled: tabs.length < 2,
+				// Shown first, so the shown tab survives and nothing falls back.
+				run: () => {
+					onselect(path);
+					onclose(tabs.filter((p) => p !== path));
+				},
+			},
+			{ label: 'Close to the Right', disabled: path === tabs.at(-1), run: () => onclose(tabs.slice(tabs.indexOf(path) + 1)) },
+			{ label: 'Close All', run: () => onclose([...tabs]) },
+			{ label: 'Copy path', run: () => void writeClipboard(path).catch(failed('copy path')) },
+			...(canReveal() ? [{ label: 'Reveal in Finder', run: () => void revealInFinder(path).catch(failed('reveal in Finder')) }] : []),
+		];
+		menu = { at: { x: e.clientX, y: e.clientY }, items, path, shown: active, key: ++opens };
+	}
 </script>
 
 <div class="tabs" role="tablist" bind:this={bar}>
@@ -51,17 +96,24 @@
 		</button>
 	</div>
 	{#each tabs as path (path)}
-		<div class="tab" class:active={active === path}>
+		<!-- presentation: the list's tabs are the buttons; this only holds the menu's handler. -->
+		<div class="tab" role="presentation" class:active={active === path} class:menu={menu?.path === path} oncontextmenu={(e) => context(e, path)}>
 			<button class="name" role="tab" aria-selected={active === path} title={path} onclick={() => onselect(path)}>
 				<span class="label">{fileName(path)}</span>
 				{#if dirty.has(path)}<span class="dirty" role="img" aria-label="Unsaved" title="Unsaved"></span>{/if}
 			</button>
-			<button class="icon-btn close" aria-label="Close {fileName(path)}" title="Close" onclick={() => onclose(path)}>
+			<button class="icon-btn close" aria-label="Close {fileName(path)}" title="Close" onclick={() => onclose([path])}>
 				<Icon name="x-mark" />
 			</button>
 		</div>
 	{/each}
 </div>
+
+{#if menu}
+	{#key menu.key}
+		<ContextMenu at={menu.at} items={menu.items} onclose={() => (menu = undefined)} />
+	{/key}
+{/if}
 
 <style>
 	/* The sidebar's grey, so the bar reads as part of the window's frame; the
@@ -93,6 +145,11 @@
 	.tab.active {
 		background: #1e1e1e;
 		color: #d4d4d4;
+	}
+	/* The tab a menu was opened on, as the tree marks its row. */
+	.tab.menu {
+		outline: 2px solid rgba(79, 193, 255, 0.5);
+		outline-offset: -2px;
 	}
 	.name {
 		display: flex;

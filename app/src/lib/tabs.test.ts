@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { OTHER, closeTab, fallback, fileName, groupKey, neighbour, openTab, parseStored, prune, touch } from './tabs';
+import { OTHER, closeTabs, fallback, fileName, groupKey, neighbour, openTab, parseStored, prune, touch } from './tabs';
 
 afterEach(() => vi.restoreAllMocks());
 
-describe('openTab / closeTab', () => {
+describe('openTab / closeTabs', () => {
 	it('appends, does not duplicate, and returns a new object', () => {
 		const a = { '/tmp/repo': ['/tmp/repo/a.md'] };
 		const b = openTab(a, '/tmp/repo', '/tmp/repo/b.md');
@@ -20,15 +20,26 @@ describe('openTab / closeTab', () => {
 
 	it('drops a group that closing emptied', () => {
 		const g = { '/tmp/repo': ['/tmp/repo/a.md'], [OTHER]: ['/tmp/x.txt'] };
-		expect(closeTab(g, '/tmp/repo', '/tmp/repo/a.md')).toEqual({ [OTHER]: ['/tmp/x.txt'] });
+		expect(closeTabs(g, '/tmp/repo', ['/tmp/repo/a.md'])).toEqual({ [OTHER]: ['/tmp/x.txt'] });
 		expect(g['/tmp/repo']).toEqual(['/tmp/repo/a.md']);
 	});
 
 	it('keeps the other tabs and ignores an unknown path or group', () => {
 		const g = { '/tmp/repo': ['/a', '/b'] };
-		expect(closeTab(g, '/tmp/repo', '/a')).toEqual({ '/tmp/repo': ['/b'] });
-		expect(closeTab(g, '/tmp/repo', '/zzz')).toEqual(g);
-		expect(closeTab(g, '/tmp/none', '/a')).toEqual(g);
+		expect(closeTabs(g, '/tmp/repo', ['/a'])).toEqual({ '/tmp/repo': ['/b'] });
+		expect(closeTabs(g, '/tmp/repo', ['/zzz'])).toEqual(g);
+		expect(closeTabs(g, '/tmp/none', ['/a'])).toEqual(g);
+	});
+
+	it('closes several at once, in the order the group has them', () => {
+		const g = { '/tmp/repo': ['/a', '/b', '/c'] };
+		expect(closeTabs(g, '/tmp/repo', ['/c', '/a'])).toEqual({ '/tmp/repo': ['/b'] });
+		expect(closeTabs(g, '/tmp/repo', ['/a', '/b', '/c'])).toEqual({});
+	});
+
+	it('closes the known paths when an unknown one is among them', () => {
+		const g = { '/tmp/repo': ['/a', '/b', '/c'] };
+		expect(closeTabs(g, '/tmp/repo', ['/b', '/zzz'])).toEqual({ '/tmp/repo': ['/a', '/c'] });
 	});
 });
 

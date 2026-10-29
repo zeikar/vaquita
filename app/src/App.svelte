@@ -32,7 +32,7 @@
 	import SidebarEdge from './lib/SidebarEdge.svelte';
 	import { load, save } from './lib/storage';
 	import TabBar from './lib/TabBar.svelte';
-	import { closeTab, fallback, fileName, groupKey, loadTabs, neighbour, openTab, OTHER, prune, saveTabs, touch, type Recent } from './lib/tabs';
+	import { closeTabs, fallback, fileName, groupKey, loadTabs, neighbour, openTab, OTHER, prune, saveTabs, touch, type Recent } from './lib/tabs';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
 	import { isTauri } from './lib/tauri';
@@ -148,19 +148,29 @@
 		}
 	}
 
-	async function closeFileTab(path: string): Promise<void> {
+	// One question for all the unsaved among them; declined, nothing closes,
+	// so the bar is not left half-changed under the answer.
+	async function closeFileTabs(paths: string[]): Promise<void> {
 		const key = group;
 		if (key === undefined) return;
-		if (documents.isDirty(path) && !(await mayLose(`${fileName(path)} has unsaved changes. Close it?`, 'Close'))) return;
-		documents.dropDocument(path);
-		groups = closeTab(groups, key, path);
+		const present = paths.filter((p) => groups[key]?.includes(p));
+		const unsaved = present.filter((p) => documents.isDirty(p));
+		if (unsaved.length > 0) {
+			const question =
+				unsaved.length === 1
+					? `${fileName(unsaved[0])} has unsaved changes. Close it?`
+					: `${unsaved.length} files have unsaved changes. Close them?`;
+			if (!(await mayLose(question, 'Close'))) return;
+		}
+		for (const p of present) documents.dropDocument(p);
+		groups = closeTabs(groups, key, present);
 		saveTabs(groups);
-		if (active === path) void showTab(fallback(recent.get(key) ?? [], groups[key] ?? []));
+		if (active !== undefined && present.includes(active)) void showTab(fallback(recent.get(key) ?? [], groups[key] ?? []));
 	}
 
 	// ⌘W: the file tab shown, else the window, as the menu's Close Window did.
 	function closeActive(): void {
-		if (active !== undefined) void closeFileTab(active);
+		if (active !== undefined) void closeFileTabs([active]);
 		else getCurrentWindow().close().catch((e) => manager.report(`closing the window failed: ${e instanceof Error ? e.message : String(e)}`));
 	}
 
@@ -458,13 +468,13 @@
 	/>
 	<section class="content">
 		{#if selectedRow}
-			<TabBar title={sessionTitle(selectedRow.info)} tabs={groupTabs} {active} {dirty} onselect={(p) => void showTab(p)} onclose={(p) => void closeFileTab(p)} />
+			<TabBar title={sessionTitle(selectedRow.info)} tabs={groupTabs} {active} {dirty} onselect={(p) => void showTab(p)} onclose={(ps) => void closeFileTabs(ps)} report={(m) => manager.report(m)} />
 		{/if}
 		<div class="stack">
 			<TerminalPane sessions={$manager.sessions} selected={$manager.selected} />
 			{#if active !== undefined}
 				{@const path = active}
-				<FilePane bind:this={filePane} {path} repo={root} {home} readOnly={updating} onclose={() => void closeFileTab(path)} report={(m) => manager.report(m)} />
+				<FilePane bind:this={filePane} {path} repo={root} {home} readOnly={updating} onclose={() => void closeFileTabs([path])} report={(m) => manager.report(m)} />
 			{/if}
 		</div>
 	</section>
