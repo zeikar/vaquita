@@ -2,6 +2,11 @@
 
 Each release's notes open with its section here.
 
+## 0.1.14
+
+- The file tree shows an icon for each kind of file, with lines that mark each level, and what git ignores, such as `node_modules` or `.env`, is dimmed.
+- The editor wraps long lines, and it no longer flickers its scrollbars while you drag the edge of the sidebar or the files panel; it lays out once when you let go, as the terminal does.
+
 ## 0.1.13
 
 - The repo's files beside the terminal. A panel on the right shows the selected session's repo as a tree: folders open with a click, and what you see follows the disk as agents add and remove files, while only the folders you opened are watched. Click a file to open it, as ⌘-click does in the terminal: in a tab, else in its default app. Right-click a row to reveal it in Finder or copy its path. A folder with more than 2000 entries shows the first 2000.
