@@ -8,6 +8,7 @@ mod open_path;
 mod stop;
 mod update;
 mod wait;
+mod watch;
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -133,6 +134,7 @@ pub fn run() {
         // commands below are the only way in.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(update::Pending::default())
+        .manage(watch::Watches::default())
         .setup(|app| {
             notify::setup(app.handle());
             // Without the menu the app still updates on its timed checks.
@@ -155,6 +157,7 @@ pub fn run() {
             files::read_text,
             files::write_text,
             folders::read_folder,
+            watch::set_watched,
             update::check_app_update,
             update::install_app_update
         ])

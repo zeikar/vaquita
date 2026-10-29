@@ -37,6 +37,9 @@ block2 = "0.6.2"
 # tauri-plugin-opener already builds objc2-app-kit and objc2-foundation with
 # these features, so nothing new is compiled.
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSWorkspace"] }
+# File events for the expanded folders of the file tree, through its default
+# FSEvents backend; it adds notify, notify-types and objc2-core-services.
+notify = "8.2.1"
 
 [dev-dependencies]
 # The menu library tauri already builds, so the menu's key strings can be parsed in a test.
