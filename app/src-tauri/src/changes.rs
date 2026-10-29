@@ -147,7 +147,8 @@ fn overrides_from(mut cmd: Command) -> Result<Vec<String>, String> {
             b"system" | b"global" | b"command" => continue,
             _ => return Err(format!("git config: unexpected scope {:?}", String::from_utf8_lossy(scope))),
         }
-        let key = String::from_utf8_lossy(record.split(|&b| b == b'\n').next().unwrap_or_default()).into_owned();
+        // A lossy decode would name a different driver and leave this one running.
+        let key = std::str::from_utf8(record.split(|&b| b == b'\n').next().unwrap_or_default()).map_err(|_| "a filter driver with a name that is not UTF-8 cannot be turned off".to_string())?;
         let Some(name) = key.strip_prefix("filter.").and_then(|k| k.rsplit_once('.')).map(|(n, _)| n) else { continue };
         // `-c` splits at the first `=`, so such a name could not be emptied.
         if name.contains('=') {
@@ -624,6 +625,20 @@ mod tests {
         let mut cmd = git(&top(&d)).unwrap();
         cmd.env("GIT_CONFIG_GLOBAL", &global).env("GIT_CONFIG_NOSYSTEM", "1");
         assert_eq!(driver_names(&overrides_from(cmd).unwrap()), ["inc", "loc"]);
+    }
+
+    #[test]
+    fn a_filter_name_that_is_not_utf8_fails() {
+        use std::io::Write;
+        let d = repo("changes-filter-bytes");
+        let marker = marker_script(&d);
+        std::fs::write(d.join(".gitattributes"), b"*.txt filter=a\xffb\n").unwrap();
+        let mut cfg = std::fs::OpenOptions::new().append(true).open(d.join(".git/config")).unwrap();
+        cfg.write_all(b"[filter \"a\xffb\"]\n\tclean = ").unwrap();
+        cfg.write_all(marker.to_str().unwrap().as_bytes()).unwrap();
+        cfg.write_all(b"\n").unwrap();
+        assert!(list(&d, CHANGES_CAP).unwrap_err().contains("not UTF-8"));
+        assert!(!d.join("marker").exists());
     }
 
     #[test]

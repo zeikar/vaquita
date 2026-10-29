@@ -71,6 +71,8 @@ fn gitdir_kept(parts: &[&OsStr]) -> bool {
     match parts {
         [one] => *one == "index" || *one == "HEAD",
         [first, ..] if *first == "reftable" => true,
+        // Adding or lifting an exclusion changes which untracked files are listed.
+        [info, exclude] => *info == "info" && *exclude == "exclude",
         [refs, heads, _, ..] => *refs == "refs" && *heads == "heads",
         _ => false,
     }
@@ -302,6 +304,7 @@ mod tests {
             "src/a.ts",
             ".git/index",
             ".git/HEAD",
+            ".git/info/exclude",
             ".git/refs/heads/main.lock",
             ".git/refs/heads/feature/x",
             ".git/reftable/tables.list",

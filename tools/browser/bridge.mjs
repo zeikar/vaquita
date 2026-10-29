@@ -84,7 +84,7 @@ function readFolder(p) {
 	entries.sort((a, b) => (a.dir !== b.dir ? (a.dir ? -1 : 1) : a.name.toLowerCase() < b.name.toLowerCase() ? -1 : a.name.toLowerCase() > b.name.toLowerCase() ? 1 : 0));
 	const total = entries.length;
 	const kept = entries.slice(0, CAP);
-	const r = spawnSync('git', ['-C', p, 'check-ignore', '-z', '--stdin'], { input: kept.map((e) => e.name + '\0').join(''), encoding: 'utf8' });
+	const r = git(p, ['check-ignore', '-z', '--stdin'], { input: kept.map((e) => e.name + '\0').join(''), encoding: 'utf8' });
 	const ign = new Set(r.status === 0 ? r.stdout.split('\0').filter(Boolean) : []);
 	for (const e of kept) e.ignored = ign.has(e.name);
 	return { entries: kept, total, canonical };
@@ -108,7 +108,11 @@ function openPath(p) {
 	return { action: 'opened' };
 }
 
-const git = (cwd, args, opts = {}) => spawnSync('git', ['--no-optional-locks', '-C', cwd, '-c', 'core.fsmonitor=false', ...args], { encoding: 'utf8', maxBuffer: 1 << 28, ...opts });
+// The one place git starts, with what changes.rs's git_in sets: nothing the repo
+// configures runs, and the environment cannot point git at another repo.
+const gitEnv = { ...process.env, LC_ALL: 'C' };
+for (const k of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_EXTERNAL_DIFF']) delete gitEnv[k];
+const git = (cwd, args, opts = {}) => spawnSync('git', ['--no-optional-locks', '-C', cwd, '-c', 'core.fsmonitor=false', '--no-lazy-fetch', ...args], { encoding: 'utf8', maxBuffer: 1 << 28, env: gitEnv, ...opts });
 const toplevelOf = (p) => {
 	const r = git(p, ['rev-parse', '--show-toplevel']);
 	if (r.status !== 0) throw 'not a git repository';
@@ -121,10 +125,45 @@ function letterOf(xy) {
 	return xy.includes('A') || xy.includes('C') ? 'A' : 'M';
 }
 
+// The repo's own filter drivers (local or worktree scope) are emptied, as in changes.rs.
+function filterOverrides(top) {
+	const r = git(top, ['config', '--show-scope', '--null', '--get-regexp', '^filter\\..*\\.(clean|smudge|process|required)$'], { encoding: 'buffer' });
+	if (r.status === 1) return [];
+	if (r.status !== 0) throw 'git config failed';
+	const strict = new TextDecoder('utf-8', { fatal: true });
+	const names = new Set();
+	const parts = [];
+	for (let at = 0; at < r.stdout.length; ) {
+		let end = r.stdout.indexOf(0, at);
+		if (end < 0) end = r.stdout.length;
+		parts.push(r.stdout.subarray(at, end));
+		at = end + 1;
+	}
+	for (let i = 0; i + 1 < parts.length; i += 2) {
+		const scope = parts[i].toString('latin1');
+		if (scope === 'system' || scope === 'global' || scope === 'command') continue;
+		if (scope !== 'local' && scope !== 'worktree') throw `git config: unexpected scope ${scope}`;
+		const nl = parts[i + 1].indexOf(10);
+		let key;
+		try {
+			key = strict.decode(nl < 0 ? parts[i + 1] : parts[i + 1].subarray(0, nl));
+		} catch {
+			throw 'a filter driver with a name that is not UTF-8 cannot be turned off';
+		}
+		const m = /^filter\.(.*)\.[^.]*$/s.exec(key);
+		if (!m) continue;
+		// `-c` splits at the first `=`, so such a name could not be emptied.
+		if (m[1].includes('=')) throw `a filter driver named ${JSON.stringify(m[1])} cannot be turned off`;
+		names.add(m[1]);
+	}
+	return [...names].flatMap((n) => ['clean=', 'smudge=', 'process=', 'required=false'].flatMap((v) => ['-c', `filter.${n}.${v}`]));
+}
+
 function gitChanges(root) {
 	const top = toplevelOf(root);
+	const ov = filterOverrides(top);
 	const hasHead = git(top, ['rev-parse', '--verify', '-q', 'HEAD']).status === 0;
-	const st = git(top, ['status', '--porcelain=v2', '-z', '--untracked-files=all', '--renames', '--ignore-submodules=dirty']);
+	const st = git(top, [...ov, 'status', '--porcelain=v2', '-z', '--untracked-files=all', '--renames', '--ignore-submodules=dirty']);
 	if (st.status !== 0) throw 'git status failed';
 	const rows = [];
 	const recs = st.stdout.split('\0').filter(Boolean);
@@ -137,7 +176,7 @@ function gitChanges(root) {
 	}
 	const counts = new Map();
 	if (hasHead) {
-		const ns = git(top, ['diff', '--numstat', '-z', '-M', '--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty', 'HEAD']);
+		const ns = git(top, [...ov, '-c', 'diff.autoRefreshIndex=false', 'diff', '--numstat', '-z', '-M', '--no-ext-diff', '--no-textconv', '--ignore-submodules=dirty', 'HEAD']);
 		const parts = ns.stdout.split('\0');
 		for (let i = 0; i < parts.length; i++) {
 			const m = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(parts[i]);
@@ -188,7 +227,7 @@ function diffSides(root, given) {
 	const id = git(top, ['rev-parse', '--verify', '-q', `HEAD:${rel}`]);
 	let head = null;
 	if (id.status === 0) {
-		const blob = spawnSync('git', ['-C', top, 'cat-file', 'blob', id.stdout.trim()], { encoding: 'buffer', maxBuffer: 1 << 28 });
+		const blob = git(top, ['cat-file', 'blob', id.stdout.trim()], { encoding: 'buffer' });
 		if (blob.stdout.includes(0)) throw 'binary';
 		head = blob.stdout.toString('utf8');
 	}
@@ -223,7 +262,7 @@ function watchRepo(generation, root) {
 		const paths = [...w.batch];
 		w.batch.clear();
 		w.timer = null;
-		const r = spawnSync('git', ['-C', top, 'check-ignore', '-z', '--stdin'], { input: paths.map((x) => x + '\0').join(''), encoding: 'utf8' });
+		const r = git(top, ['check-ignore', '-z', '--stdin'], { input: paths.map((x) => x + '\0').join(''), encoding: 'utf8' });
 		const ign = new Set(r.status === 0 ? r.stdout.split('\0').filter(Boolean) : []);
 		if (paths.some((x) => !ign.has(x))) emit('repo-changed', root);
 	};
@@ -232,7 +271,7 @@ function watchRepo(generation, root) {
 		const rel = String(name);
 		const parts = rel.split(path.sep);
 		if (parts[0] === '.git') {
-			const keep = parts.length === 2 ? ['index', 'HEAD'].includes(parts[1]) : parts[1] === 'refs' && parts[2] === 'heads';
+			const keep = parts.length === 2 ? ['index', 'HEAD'].includes(parts[1]) : parts.join('/') === '.git/info/exclude' || parts[1] === 'refs' && parts[2] === 'heads';
 			if (!keep) return;
 		} else if (parts.includes('.git')) return;
 		w.batch.add(rel);
