@@ -21,7 +21,7 @@
 	import type { MenuAt, MenuItem } from './menu';
 	import { canReveal, revealInFinder } from './reveal';
 	import { fileName } from './tabs';
-	import { joinPath, visibleExpanded } from './tree';
+	import { fileIcon, joinPath, visibleExpanded } from './tree';
 
 	let {
 		root,
@@ -226,6 +226,18 @@
 	const indent = (depth: number) => `${8 + depth * 12}px`;
 </script>
 
+<!-- A line per ancestor, through the middle of its chevron, so a folder's rows read as one block. -->
+{#snippet guides(depth: number)}
+	{#each { length: depth }, i}
+		<span class="guide" style:left="{8 + i * 12 + 7}px"></span>
+	{/each}
+{/snippet}
+
+{#snippet kind(name: string, dir: boolean, open: boolean)}
+	{@const k = fileIcon(name, dir, open)}
+	<span class="kind" style:color={k.tint}><Icon name={k.icon} /></span>
+{/snippet}
+
 {#snippet rows(folder: string, depth: number)}
 	{@const listing = listings.get(folder)}
 	{#if listing && 'error' in listing}
@@ -238,12 +250,15 @@
 				<button
 					class="row"
 					class:menu={menu?.path === path}
+					class:ignored={entry.ignored}
 					style:padding-left={indent(depth)}
 					aria-expanded={open}
 					onclick={() => toggle(path)}
 					oncontextmenu={(e) => context(e, path)}
 				>
+					{@render guides(depth)}
 					<Icon name={open ? 'chevron-down' : 'chevron-right'} />
+					{@render kind(entry.name, true, open)}
 					<span class="name">{entry.name}</span>
 				</button>
 				{#if open}{@render rows(path, depth + 1)}{/if}
@@ -251,19 +266,24 @@
 				<button
 					class="row"
 					class:menu={menu?.path === path}
+					class:ignored={entry.ignored}
 					style:padding-left={indent(depth)}
 					aria-current={isHighlighted(path) || undefined}
 					onclick={() => onopen(path)}
 					oncontextmenu={(e) => context(e, path)}
 				>
+					{@render guides(depth)}
 					<!-- Where a folder's chevron is, so the names line up. -->
 					<span class="space"></span>
+					{@render kind(entry.name, false, false)}
 					<span class="name">{entry.name}</span>
 				</button>
 			{/if}
 		{/each}
 		{#if listing.total > listing.entries.length}
 			<div class="row more" style:padding-left={indent(depth)}>
+				{@render guides(depth)}
+				<span class="space"></span>
 				<span class="space"></span>
 				<span class="name">{listing.total - listing.entries.length} more not shown</span>
 			</div>
@@ -288,6 +308,7 @@
 		padding: 4px 0;
 	}
 	.row {
+		position: relative;
 		display: flex;
 		align-items: center;
 		gap: 4px;
@@ -318,11 +339,34 @@
 		outline: 2px solid rgba(79, 193, 255, 0.5);
 		outline-offset: -2px;
 	}
-	.row :global(svg),
-	.space {
+	.row > :global(svg),
+	.space,
+	.kind {
 		flex: none;
 		width: 14px;
+	}
+	.row > :global(svg),
+	.space {
 		color: #999;
+	}
+	/* Its colour is the kind's tint, set on the element. */
+	.kind {
+		display: flex;
+	}
+	.guide {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		width: 1px;
+		background: #3a3a3a;
+	}
+	/* What git ignores is dimmed by its content, not the row, so the
+	   highlight and the guides through it keep their full colour. */
+	.row.ignored > :global(:not(.guide)) {
+		opacity: 0.5;
+	}
+	.row.ignored .name {
+		font-style: italic;
 	}
 	.name {
 		min-width: 0;

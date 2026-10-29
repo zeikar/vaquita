@@ -173,6 +173,52 @@ describe('FileTree', () => {
 		expect(row('file2').hasAttribute('aria-expanded')).toBe(false);
 	});
 
+	it('draws each row its kind icon, a folder open while expanded, without changing its name', async () => {
+		fake.disk[root] = listing('src/', 'a.ts');
+		fake.disk[at('src')] = listing('b.md');
+		show();
+		await settle();
+		const kind = (name: string) => row(name).querySelector<SVGElement>('.kind svg')!.dataset.icon;
+		expect(kind('src')).toBe('folder');
+		expect(kind('a.ts')).toBe('code-bracket');
+		await click(row('src'));
+		expect(kind('src')).toBe('folder-open');
+		expect(kind('b.md')).toBe('document-text');
+		expect(names()).toEqual(['src', 'b.md', 'a.ts']);
+	});
+
+	it('draws one indent guide per depth', async () => {
+		fake.disk[root] = listing('src/');
+		fake.disk[at('src')] = listing('lib/');
+		fake.disk[at('src/lib')] = listing('a.ts');
+		show();
+		await settle();
+		await click(row('src'));
+		await click(row('lib'));
+		const guides = (name: string) => [...row(name).querySelectorAll<HTMLElement>('.guide')].map((g) => g.style.left);
+		expect(guides('src')).toEqual([]);
+		expect(guides('lib')).toEqual(['15px']);
+		expect(guides('a.ts')).toEqual(['15px', '27px']);
+	});
+
+	it('marks an ignored entry, and still highlights it when it is the shown tab', async () => {
+		fake.disk[root] = {
+			...listing('a.ts'),
+			entries: [
+				{ name: 'dist', dir: true, ignored: true },
+				{ name: '.env', dir: false, ignored: true },
+				{ name: 'a.ts', dir: false, ignored: false },
+			],
+			total: 3,
+		};
+		show(at('.env'));
+		await settle();
+		expect(row('dist').classList.contains('ignored')).toBe(true);
+		expect(row('.env').classList.contains('ignored')).toBe(true);
+		expect(row('.env').getAttribute('aria-current')).toBe('true');
+		expect(row('a.ts').classList.contains('ignored')).toBe(false);
+	});
+
 	it('watches an expanded folder, reads every shown folder again, and drops it on a collapse', async () => {
 		fake.disk[root] = listing('src/', 'z.ts');
 		fake.disk[at('src')] = listing('lib.ts');

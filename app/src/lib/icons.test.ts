@@ -18,4 +18,22 @@ describe('Icon', () => {
 			target.remove();
 		});
 	}
+
+	it('outlines a stroke icon and fills the others', () => {
+		const target = document.createElement('div');
+		document.body.append(target);
+		const outline = mount(Icon, { target, props: { name: 'folder' } });
+		const svg = target.querySelector('svg')!;
+		expect(svg.getAttribute('fill')).toBe('none');
+		expect(svg.getAttribute('stroke')).toBe('currentColor');
+		expect(svg.getAttribute('stroke-width')).toBe('1.5');
+		expect(svg.getAttribute('stroke-linecap')).toBe('round');
+		expect(svg.getAttribute('stroke-linejoin')).toBe('round');
+		unmount(outline);
+		const filled = mount(Icon, { target, props: { name: 'plus' } });
+		expect(target.querySelector('svg')!.getAttribute('fill')).toBe('currentColor');
+		expect(target.querySelector('svg')!.hasAttribute('stroke')).toBe(false);
+		unmount(filled);
+		target.remove();
+	});
 });
