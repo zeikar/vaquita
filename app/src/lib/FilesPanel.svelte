@@ -1,7 +1,7 @@
 <script module lang="ts">
-	// Files or Changes, for every repo and the app run: hiding the panel or
-	// selecting a session of another repo keeps the view chosen.
-	let view = $state<'files' | 'changes'>('files');
+	// Files, Changes or Past, for every repo and the app run: hiding the panel
+	// or selecting a session of another repo keeps the view chosen.
+	let view = $state<'files' | 'changes' | 'past'>('files');
 </script>
 
 <script lang="ts">
@@ -13,6 +13,7 @@
 	import FileTree from './FileTree.svelte';
 	import { repoName, repoOf } from './groups';
 	import Icon from './Icon.svelte';
+	import PastList from './PastList.svelte';
 	import { shortPath } from './paths';
 	import type { SessionInfo } from './protocol';
 
@@ -21,12 +22,17 @@
 		cwd,
 		home,
 		connected,
+		creating,
 		sessions,
 		repos,
 		highlight,
 		onopen,
 		onopendiff,
 		onaddrepo,
+		onresume,
+		onselect,
+		onreopen,
+		onleave,
 		report,
 	}: {
 		// The selected session's repo, undefined when it is in none.
@@ -35,6 +41,7 @@
 		cwd?: string;
 		home?: string;
 		connected: boolean;
+		creating: boolean;
 		sessions: SessionInfo[];
 		repos: string[];
 		// The shown tab's file.
@@ -42,8 +49,16 @@
 		onopen: (path: string, pin?: boolean) => void;
 		onopendiff: (path: string, pin?: boolean) => void;
 		onaddrepo: (folder: string) => void;
+		// A past conversation resumed in a new session, in its folder.
+		onresume: (cwd: string, cmd: string) => void;
+		onselect: (sid: number) => void;
+		onreopen: (sid: number) => void;
+		// The focus given back from the past list's filter.
+		onleave: () => void;
 		report: (message: string) => void;
 	} = $props();
+
+	let pastList = $state<ReturnType<typeof PastList>>();
 
 	const snap = $derived(root === undefined ? undefined : changeLists.lists[root]);
 	// The last count known in this app run; none before one was taken:
@@ -96,23 +111,26 @@
 		<div class="switch" role="group" aria-label="Files panel view">
 			<button aria-pressed={view === 'files'} onclick={() => (view = 'files')}>Files</button>
 			<button
+				class="changes"
 				aria-pressed={view === 'changes'}
 				aria-label={badge === undefined ? undefined : `Changes, ${badge} changed`}
 				onclick={() => (view = 'changes')}
 			>
 				<span class="label">Changes</span>{#if badge !== undefined}<span class="badge">{badge}</span>{/if}
 			</button>
+			<button aria-pressed={view === 'past'} aria-label="Past conversations" onclick={() => (view = 'past')}>Past</button>
 		</div>
 		<span class="repo" title={r}>{repoName(r)}</span>
-		{#if view === 'changes'}
+		{#if view !== 'files'}
+			{@const label = view === 'changes' ? 'Refresh changes' : 'Refresh past conversations'}
 			<!-- Not disabled while busy, which would drop its keyboard focus; a
 			     click then is one more run after this one. -->
 			<button
 				class="refresh"
-				title="Refresh changes"
-				aria-label="Refresh changes"
-				aria-disabled={snap?.busy ?? false}
-				onclick={() => void changeLists.refresh(r)}
+				title={label}
+				aria-label={label}
+				aria-disabled={(view === 'changes' ? snap?.busy : pastList?.isBusy()) ?? false}
+				onclick={() => void (view === 'changes' ? changeLists.refresh(r) : pastList?.refresh())}
 			>
 				<Icon name="arrow-path" />
 			</button>
@@ -125,8 +143,10 @@
 	{#key root}
 		{#if view === 'files'}
 			<FileTree {root} {highlight} {onopen} {report} />
-		{:else}
+		{:else if view === 'changes'}
 			<ChangesList {root} {highlight} onopen={onopendiff} {report} />
+		{:else}
+			<PastList bind:this={pastList} {root} {sessions} {repos} disabled={!connected || creating} {onresume} {onselect} {onreopen} {onleave} {report} />
 		{/if}
 	{/key}
 {:else if cwd !== undefined}
@@ -146,8 +166,9 @@
 	header {
 		gap: 8px;
 	}
-	/* At the panel's narrowest the repo name goes first, then the Changes
-	   label is cut, so Refresh stays inside. */
+	/* As the panel narrows the repo name goes first, then the Changes label
+	   is cut; at its narrowest (file-panel.ts) the badge still fits beside
+	   Files, Past and Refresh. */
 	.switch {
 		display: flex;
 		min-width: 0;
@@ -170,11 +191,11 @@
 		gap: 5px;
 		padding: 0 8px;
 	}
-	.switch button:first-child,
+	.switch button:not(.changes),
 	.badge {
 		flex: none;
 	}
-	.switch button:last-child {
+	.switch .changes {
 		min-width: 0;
 	}
 	.label {

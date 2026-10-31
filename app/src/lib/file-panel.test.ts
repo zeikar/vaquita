@@ -3,7 +3,8 @@ import { clampPanelWidth, PANEL_DEFAULT_WIDTH, parsePanelWidth } from './file-pa
 
 describe('file panel width', () => {
 	it('stays within bounds', () => {
-		expect(clampPanelWidth(100)).toBe(180);
+		expect(clampPanelWidth(100)).toBe(210);
+		expect(clampPanelWidth(200)).toBe(210);
 		expect(clampPanelWidth(1000)).toBe(600);
 		expect(clampPanelWidth(300.4)).toBe(300);
 	});
@@ -13,6 +14,8 @@ describe('file panel width', () => {
 		expect(parsePanelWidth('')).toBe(PANEL_DEFAULT_WIDTH);
 		expect(parsePanelWidth('wide')).toBe(PANEL_DEFAULT_WIDTH);
 		expect(parsePanelWidth('320')).toBe(320);
+		// Stored when the least was lower.
+		expect(parsePanelWidth('180')).toBe(210);
 		expect(parsePanelWidth('9999')).toBe(600);
 	});
 });

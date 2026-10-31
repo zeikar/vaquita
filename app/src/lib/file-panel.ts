@@ -5,8 +5,9 @@ export const PANEL_WIDTH = 'vaquita.file-panel-width';
 export const PANEL_HIDDEN = 'vaquita.file-panel-hidden';
 
 export const PANEL_DEFAULT_WIDTH = 260;
-// Narrower cuts file names to a few letters; wider leaves the terminal little room.
-const MIN_WIDTH = 180;
+// Narrower cuts file names to a few letters and lets the Changes badge run
+// over the Past button; wider leaves the terminal little room.
+const MIN_WIDTH = 210;
 const MAX_WIDTH = 600;
 
 export function clampPanelWidth(w: number): number {

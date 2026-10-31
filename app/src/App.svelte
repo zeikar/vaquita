@@ -307,6 +307,14 @@
 			.catch((e) => manager.report(`bringing the window up failed: ${e instanceof Error ? e.message : String(e)}`));
 	}
 
+	// A past conversation's open row asks for its terminal: as openNotified,
+	// the same session staying selected, the file covering it goes.
+	function selectFromPast(sid: number): void {
+		const same = sid === $manager.selected;
+		manager.select(sid);
+		if (same) void showTab(undefined);
+	}
+
 	// The manager starts once the notifier is set up, so the notifications it
 	// sends on connecting, such as the missed summary, do not go to the console.
 	const tauriNotifier = isTauri()
@@ -544,12 +552,19 @@
 				cwd={selectedRow?.info.cwd}
 				{home}
 				connected={$manager.status === 'connected'}
+				creating={$manager.creating}
 				sessions={$manager.sessions.map((r) => r.info)}
 				repos={$manager.repos}
 				highlight={active === undefined ? undefined : tabFile(active)}
 				onopen={openFromTree}
 				onopendiff={openDiff}
 				onaddrepo={(f) => manager.addRepo(f)}
+				onresume={(cwd, cmd) => void manager.create(cwd, cmd, '')}
+				onselect={selectFromPast}
+				onreopen={(sid) => manager.reopen(sid)}
+				onleave={() => {
+					if (!dialogOpen) focusContent();
+				}}
 				report={(m) => manager.report(m)}
 			/>
 			<SidebarEdge

@@ -6,6 +6,7 @@ import FilesPanel from './FilesPanel.svelte';
 import { endedTurns } from './changes';
 import { changeLists } from './changes.svelte';
 import { gitChanges, type Change } from './files';
+import { pastBusy, pastStub } from './PastList.stub.svelte';
 import type { SessionInfo } from './protocol';
 
 // The save listeners the panel installed.
@@ -13,6 +14,7 @@ const saved = vi.hoisted(() => new Set<(path: string) => void>());
 
 vi.mock('./FileTree.svelte', async () => ({ default: (await import('./FileTree.stub.svelte')).default }));
 vi.mock('./ChangesList.svelte', async () => ({ default: (await import('./ChangesList.stub.svelte')).default }));
+vi.mock('./PastList.svelte', async () => ({ default: (await import('./PastList.stub.svelte')).default }));
 vi.mock('./files', () => ({ gitChanges: vi.fn() }));
 // Counted, so a rerun of the turn-end effect shows.
 vi.mock('./changes', async (actual) => {
@@ -39,7 +41,7 @@ let refresh: ReturnType<typeof vi.fn<(root: string) => Promise<void>>>;
 // Restored by a test that runs the real refresh, with gitChanges mocked.
 let spy: { mockRestore: () => void };
 
-type Where = { root?: string; cwd?: string; home?: string; connected?: boolean; sessions?: SessionInfo[]; repos?: string[] };
+type Where = { root?: string; cwd?: string; home?: string; connected?: boolean; creating?: boolean; sessions?: SessionInfo[]; repos?: string[] };
 
 function show(where: Where = {}) {
 	const props = $state({
@@ -47,12 +49,17 @@ function show(where: Where = {}) {
 		cwd: where.cwd,
 		home: where.home,
 		connected: where.connected ?? true,
+		creating: where.creating ?? false,
 		sessions: where.sessions ?? [],
 		repos: where.repos ?? ['/tmp/repo'],
 		highlight: '/tmp/repo/a.ts' as string | undefined,
 		onopen: vi.fn(),
 		onopendiff: vi.fn(),
 		onaddrepo: vi.fn(),
+		onresume: vi.fn(),
+		onselect: vi.fn(),
+		onreopen: vi.fn(),
+		onleave: vi.fn(),
 		report: vi.fn(),
 	});
 	target = document.createElement('div');
@@ -66,6 +73,7 @@ const button = (label: string) => [...target.querySelectorAll<HTMLButtonElement>
 const badge = () => target.querySelector('.badge')?.textContent;
 const tree = () => target.querySelector<HTMLElement>('.tree-stub');
 const list = () => target.querySelector<HTMLElement>('.changes-stub');
+const past = () => target.querySelector<HTMLElement>('.past-stub');
 
 async function settle() {
 	for (let i = 0; i < 20; i++) await Promise.resolve();
@@ -82,6 +90,9 @@ beforeEach(() => {
 	refresh = vi.fn(async (_root: string) => {});
 	spy = vi.spyOn(changeLists, 'refresh').mockImplementation(refresh);
 	vi.mocked(gitChanges).mockReset();
+	pastStub.props = undefined;
+	pastStub.refresh.mockClear();
+	pastBusy.busy = false;
 });
 
 afterEach(() => {
@@ -125,6 +136,44 @@ describe('FilesPanel', () => {
 		click(button('Files')!);
 		expect(list()).toBeNull();
 		expect(tree()).not.toBeNull();
+	});
+
+	it('switches among three views, Past mounting the list with what it needs', () => {
+		const sessions = [session(1, '/tmp/repo', 'working')];
+		const props = show({ root: '/tmp/repo', cwd: '/tmp/repo', sessions, repos: ['/tmp/repo', '/tmp/other'] });
+		expect([...target.querySelectorAll('.switch button')].map((b) => b.textContent?.trim())).toEqual(['Files', 'Changes', 'Past']);
+		click(button('Past conversations')!);
+		expect(button('Past conversations')!.getAttribute('aria-pressed')).toBe('true');
+		expect(tree()).toBeNull();
+		expect(list()).toBeNull();
+		expect(past()?.dataset.root).toBe('/tmp/repo');
+		expect(pastStub.props?.sessions).toEqual(sessions);
+		expect(pastStub.props?.repos).toEqual(['/tmp/repo', '/tmp/other']);
+		expect(past()?.dataset.disabled).toBe('false');
+		props.creating = true;
+		flushSync();
+		expect(past()?.dataset.disabled).toBe('true');
+		props.creating = false;
+		props.connected = false;
+		flushSync();
+		expect(past()?.dataset.disabled).toBe('true');
+		pastStub.props!.onselect(3);
+		expect(props.onselect).toHaveBeenCalledWith(3);
+		pastStub.props!.onleave();
+		expect(props.onleave).toHaveBeenCalledOnce();
+	});
+
+	it('refreshes the past conversations, not the changes, from the Past view', () => {
+		show({ root: '/tmp/repo', cwd: '/tmp/repo' });
+		click(button('Past conversations')!);
+		expect(button('Refresh changes')).toBeUndefined();
+		click(button('Refresh past conversations')!);
+		expect(pastStub.refresh).toHaveBeenCalledOnce();
+		expect(refresh).not.toHaveBeenCalled();
+		expect(button('Refresh past conversations')!.getAttribute('aria-disabled')).toBe('false');
+		pastBusy.busy = true;
+		flushSync();
+		expect(button('Refresh past conversations')!.getAttribute('aria-disabled')).toBe('true');
 	});
 
 	it('badges the last count known, 2000+ past the cap, and nothing for none', () => {
