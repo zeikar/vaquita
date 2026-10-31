@@ -2,6 +2,12 @@
 
 Each release's notes open with its section here.
 
+## 0.1.19
+
+- The files panel has a Past view beside Files and Changes. It lists the repo's earlier Claude Code and Codex conversations, including ones started in another terminal, by title and time, newest first. Filter them by title; click one to continue it in a new session, or to jump to the session that already has it open.
+- The files panel's minimum width is a little wider, so the Changes count fits beside the third button.
+- Updating to this release restarts the daemon once (on its own when no session is running, otherwise when you choose), because the daemon now tells the app which conversation each session holds.
+
 ## 0.1.18
 
 - The files panel has a Changes view beside the tree. It lists what changed in the repo since the last commit, staged or not, new files included, with a letter for each kind of change and how many lines each file gained and lost, and the number of changes shows on its button. The list follows the disk while it shows, and catches up when an agent in the repo ends a turn or you save a file, without polling; Refresh reads it again.
