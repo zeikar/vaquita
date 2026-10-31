@@ -130,3 +130,13 @@ export async function onRepoChanged(run: (root: string) => void): Promise<() => 
 		if (typeof e.payload === 'string') run(e.payload);
 	});
 }
+
+// `last_active` is in Unix milliseconds; `entries` holds at most the newest 500 of `total`.
+export type Conversation = { agent: 'claude' | 'codex'; id: string; title: string; cwd: string; last_active: number };
+
+export type ConversationList = { entries: Conversation[]; total: number };
+
+// The past Claude Code and Codex conversations of root, one of repos, newest first.
+export function pastConversations(root: string, repos: string[]): Promise<ConversationList> {
+	return call('past_conversations', { root, repos });
+}
