@@ -1,6 +1,4 @@
 mod changes;
-// Its command comes with the Codex scan; until then only the tests call it.
-#[allow(dead_code)]
 mod conversations;
 mod files;
 mod folders;
@@ -168,6 +166,7 @@ pub fn run() {
             folders::read_folder,
             changes::git_changes,
             changes::diff_sides,
+            conversations::past_conversations,
             watch::set_watched,
             repo_watch::watch_repo,
             update::check_app_update,
