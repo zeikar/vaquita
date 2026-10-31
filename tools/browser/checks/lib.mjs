@@ -41,6 +41,15 @@ export async function until(read, ok, timeout = 5000) {
 	}
 }
 
+// The sidebar's header, the tab row and the panel's header line up at the
+// bottom: level(await headerBottoms(page)).
+export const headerBottoms = (page) =>
+	page.evaluate(() => {
+		const b = (sel) => document.querySelector(sel)?.getBoundingClientRect().bottom ?? null;
+		return [b('main > aside:not(.files) > header'), b('.tabs'), b('aside.files > header')];
+	});
+export const level = (bottoms) => bottoms.every((b) => b !== null && Math.abs(b - bottoms[0]) < 0.5);
+
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Records PASS/FAIL lines; a step that throws fails and the next still runs.

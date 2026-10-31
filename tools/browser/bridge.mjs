@@ -1,7 +1,8 @@
 // A stand-in for the app's Rust commands, so the webview can be driven in a
 // plain browser (Playwright) against a real daemon and the real disk. It keeps
 // to what the UI needs, not to every rule of the Rust side (the open gate is a
-// rough copy, and the sort is not natural), so it checks the UI, not the gate.
+// rough copy, the sort is not natural, and past conversations are a fixed
+// list), so it checks the UI, not the gate.
 // node bridge.mjs <port> <vaquita home> <log file>; see run.sh.
 import http from 'node:http';
 import fs from 'node:fs';
@@ -282,6 +283,25 @@ function watchRepo(generation, root) {
 	log('watch_repo', { generation, root: top });
 }
 
+// Past conversations are a fixed answer built from the root, not a copy of the
+// Rust side's discovery, ordering or ownership rules (its tests cover those).
+// checks/past.mjs repeats the ids.
+const ID_RENAME = 'c0ffee00-0000-4000-8000-000000000001';
+const ID_SORT = 'c0ffee00-0000-4000-8000-000000000002';
+const ID_CODEX = 'c0ffee00-0000-4000-8000-000000000003';
+const ID_LOGIN = 'c0ffee00-0000-4000-8000-000000000004';
+const HOUR = 3600_000;
+function pastConversations(root) {
+	const now = Date.now();
+	const entries = [
+		{ agent: 'claude', id: ID_RENAME, title: 'Rename util to helpers', cwd: root, last_active: now - 2 * HOUR },
+		{ agent: 'claude', id: ID_SORT, title: 'Sort the tree', cwd: path.join(root, 'src'), last_active: now - 24 * HOUR },
+		{ agent: 'codex', id: ID_CODEX, title: 'Codex in the repo', cwd: root, last_active: now - 3 * 24 * HOUR },
+		{ agent: 'claude', id: ID_LOGIN, title: 'Fix the login form', cwd: root, last_active: now - 6 * 24 * HOUR },
+	];
+	return { entries, total: entries.length };
+}
+
 const unknown = new Set();
 function run(cmd, args) {
 	switch (cmd) {
@@ -305,6 +325,8 @@ function run(cmd, args) {
 			return diffSides(args.root, args.path);
 		case 'watch_repo':
 			return watchRepo(args.generation, args.root);
+		case 'past_conversations':
+			return pastConversations(args.root);
 		case 'view_path': {
 			const real = fs.realpathSync(args.path);
 			return { path: real, kind: kindOf(real) };
@@ -372,7 +394,7 @@ http
 				res.setHeader('content-type', 'application/json');
 				try {
 					const value = run(cmd, args ?? {});
-					if (cmd !== 'endpoint' && !cmd.startsWith('plugin:path')) log('invoke', cmd, cmd === 'read_folder' ? { path: args.path, ms: +(performance.now() - t0).toFixed(1), n: value.entries.length, total: value.total } : cmd === 'git_changes' ? { root: args.root, n: value.entries.length, total: value.total, ms: +(performance.now() - t0).toFixed(1) } : args);
+					if (cmd !== 'endpoint' && !cmd.startsWith('plugin:path')) log('invoke', cmd, cmd === 'read_folder' ? { path: args.path, ms: +(performance.now() - t0).toFixed(1), n: value.entries.length, total: value.total } : cmd === 'git_changes' ? { root: args.root, n: value.entries.length, total: value.total, ms: +(performance.now() - t0).toFixed(1) } : cmd === 'past_conversations' ? { root: args.root, n: value.entries.length } : args);
 					res.end(JSON.stringify({ ok: true, value: value ?? null }));
 				} catch (e) {
 					log('invoke-err', cmd, args, String(e));

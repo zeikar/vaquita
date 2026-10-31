@@ -8,8 +8,11 @@
 # no other vaquita instance is touched; makes a small git repo in <dir>/repo
 # with ignored files, registers it and starts two sessions (one in the repo,
 # one outside any repo); starts bridge.mjs (the app's Rust commands, on
-# 127.0.0.1:14999) and vite on port 1420. Then, in Playwright: add init.js as
-# an init script and open http://localhost:1420. Needs go and node.
+# 127.0.0.1:14999) and vite on port 1420. The daemon's shell is a stand-in,
+# <dir>/shell.sh, that prints the command a session starts with and runs a
+# plain sh: a check can start a session for any command, claude --resume say,
+# and no real agent runs. Then, in Playwright: add init.js as an init script
+# and open http://localhost:1420. Needs go and node.
 set -eu
 
 usage() {
@@ -61,6 +64,23 @@ chmod +x "$r/run.sh"
 git -C "$r" init --quiet
 git -C "$r" add -A
 git -C "$r" -c user.name=check -c user.email=check@example.com commit --quiet -m init
+
+# The daemon runs it as `shell.sh -l -i`, or with `-c "<cmd>\nexec shell.sh -l
+# -i"` for a command (session.Start); it prints <cmd>'s first line rather
+# than run it, then stays open as sh.
+cat >"$dir/shell.sh" <<'EOF'
+#!/bin/sh
+prev=
+for a; do
+	[ "$prev" = -c ] && printf '%s\n' "${a%%
+*}"
+	prev=$a
+done
+exec /bin/sh -i
+EOF
+chmod +x "$dir/shell.sh"
+# state.json's shell is the one sessions run; read when the daemon starts.
+printf '{"shell":"%s"}\n' "$dir/shell.sh" >"$vh/state.json"
 
 make -s -C "$repo/daemon" BIN="$dir/bin/vaquitad" >/dev/null
 cd "$dir"

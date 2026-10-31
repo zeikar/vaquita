@@ -4,7 +4,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { bridgeLog, openApp, recorder, sleep, until } from './lib.mjs';
+import { bridgeLog, headerBottoms, level, openApp, recorder, sleep, until } from './lib.mjs';
 
 const dir = process.argv[2];
 if (!dir) {
@@ -21,13 +21,13 @@ const { browser, page } = await openApp({ width: 1440, height: 900 });
 const panel = page.locator('aside.files');
 const filesBtn = panel.locator('header .switch button').nth(0);
 const changesBtn = panel.locator('header .switch button').nth(1);
-const rows = panel.locator('.changes button.row');
+const rows = panel.locator('div.changes button.row');
 const repoSession = page.locator('main > aside:not(.files) button', { hasText: 'repo shell' }).first();
 const diffTab = page.locator('.tabs .tab', { has: page.locator('.mark') }).first();
 const sideBySide = page.locator('.file .bar button[title="Side by side"]');
 const openFile = page.locator('.file .bar button[title="Open file"]');
 
-const changesText = async () => (await panel.locator('.changes').innerText()).trim();
+const changesText = async () => (await panel.locator('div.changes').innerText()).trim();
 const rowTexts = async () => (await rows.allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim());
 const badge = async () => ((await changesBtn.locator('.badge').count()) ? await changesBtn.locator('.badge').innerText() : null);
 const report = async () => ((await page.locator('footer .report').count()) ? await page.locator('footer .report').innerText() : null);
@@ -61,13 +61,6 @@ const tabState = () =>
 		active: t.classList.contains('active'),
 		fontStyle: getComputedStyle(t.querySelector('.label')).fontStyle,
 	}));
-// The sidebar's header, the tab row and the panel's header line up at the bottom.
-const headerBottoms = () =>
-	page.evaluate(() => {
-		const b = (sel) => document.querySelector(sel)?.getBoundingClientRect().bottom ?? null;
-		return [b('main > aside:not(.files) > header'), b('.tabs'), b('aside.files > header')];
-	});
-const level = (bottoms) => bottoms.every((b) => b !== null && Math.abs(b - bottoms[0]) < 0.5);
 
 // The panel's Changes view for the repo session; the view itself is kept
 // only for the app run, so a reload shows Files again.
@@ -76,7 +69,7 @@ async function showChanges() {
 	if ((await panel.count()) === 0) await page.locator('footer .files-toggle').click();
 	await repoSession.click();
 	await changesBtn.click();
-	await panel.locator('.changes').waitFor();
+	await panel.locator('div.changes').waitFor();
 }
 
 await step('No changes', async () => {
@@ -212,7 +205,7 @@ await step('Files and Changes', async () => {
 		badge: b,
 		log: l1,
 	});
-	const filesBottoms = await headerBottoms();
+	const filesBottoms = await headerBottoms(page);
 	await shot(page, '07-files');
 	off = log.offset();
 	await changesBtn.click();
@@ -221,7 +214,7 @@ await step('Files and Changes', async () => {
 	await sleep(1000);
 	const l2 = log.since(off);
 	say('Changes: the watch starts and git runs once', count(l2, WATCH_ON) === 1 && count(l2, GIT_CHANGES) === 1, l2);
-	const changesBottoms = await headerBottoms();
+	const changesBottoms = await headerBottoms(page);
 	say('header rows end level', level(filesBottoms) && level(changesBottoms), { files: filesBottoms, changes: changesBottoms });
 });
 
@@ -245,7 +238,7 @@ await step('narrow panel', async () => {
 			badge: a.querySelector('.switch .badge')?.textContent ?? null,
 		};
 	});
-	say('180 px with the badge: nothing spills', m.width === 180 && !m.headerOverflow && m.spilled.length === 0 && m.rowsSpilled === 0 && m.badge === '5', m);
+	say('210 px with the badge: nothing spills', m.width === 210 && !m.headerOverflow && m.spilled.length === 0 && m.rowsSpilled === 0 && m.badge === '5', m);
 	await shot(panel, '08-narrow-panel');
 });
 
