@@ -186,6 +186,11 @@ type SessionInfo struct {
 	// an older daemon ever sends. The app picks a row's icon by it, else by
 	// the first word of Cmd.
 	Agent string `json:"agent,omitempty"`
+	// Conversation is the agent's conversation id as the daemon last read it
+	// (state.SessionRecord.Conversation); left out when there is none, which
+	// is all an older daemon ever sends. The app uses it to mark, in its list
+	// of past conversations, the ones a session holds.
+	Conversation string `json:"conversation,omitempty"`
 	// Status and Unread are left out when the row shows nothing, which is
 	// all an older daemon ever sends.
 	Status *StatusInfo `json:"status,omitempty"`

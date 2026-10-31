@@ -149,6 +149,10 @@ export interface SessionInfo {
 	// is none, which is all an older daemon sends. A row's icon follows it,
 	// else the first word of cmd.
 	agent?: string;
+	// The agent's conversation id as the daemon last read it; left out when
+	// there is none, which is all an older daemon sends. The list of past
+	// conversations marks the ones a session holds by it.
+	conversation?: string;
 }
 // What a session's row shows. kind (permission or question) refines input
 // and auth; msg is the text to show.

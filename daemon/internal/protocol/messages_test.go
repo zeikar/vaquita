@@ -38,11 +38,11 @@ func TestMessageJSON(t *testing.T) {
 		{Shutdown{T: TShutdown}, `{"t":"shutdown","idle":false}`},
 		{
 			Sessions{T: TSessions, List: []SessionInfo{
-				{SID: 1, Inc: "a", State: StateExited, Restorable: true, Agent: "claude"},
+				{SID: 1, Inc: "a", State: StateExited, Restorable: true, Agent: "claude", Conversation: "0ab31fb3-7a05-4f5a-a5b5-6cca3da4d887"},
 				{SID: 2, Inc: "a", State: StateRunning},
 			}},
 			`{"t":"sessions","list":[` +
-				`{"sid":1,"inc":"a","cwd":"","cmd":"","name":"","cols":0,"rows":0,"state":"exited","pid":0,"code":0,"restorable":true,"agent":"claude"},` +
+				`{"sid":1,"inc":"a","cwd":"","cmd":"","name":"","cols":0,"rows":0,"state":"exited","pid":0,"code":0,"restorable":true,"agent":"claude","conversation":"0ab31fb3-7a05-4f5a-a5b5-6cca3da4d887"},` +
 				`{"sid":2,"inc":"a","cwd":"","cmd":"","name":"","cols":0,"rows":0,"state":"running","pid":0,"code":0}]}`,
 		},
 		{

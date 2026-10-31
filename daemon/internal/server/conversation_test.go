@@ -125,6 +125,7 @@ func claudeSteps(t *testing.T) (*Server, *tclient, uint32) {
 	sid := a.create(`sleep 60 & printf '{"sessionId":"%s","cwd":"%s","startedAt":%d}' ` + convA +
 		` "$PWD" $(( $(date +%s) * 1000 )) > "$HOME/.claude/sessions/$!.json"; ` + agentReport("working", "", "claude-code"))
 	waitRecord(t, srv, sid, "claude's id", func(r state.SessionRecord) bool { return r.Agent == "claude" && r.Conversation == convA })
+	a.waitListed(sid, func(i protocol.SessionInfo) bool { return i.Conversation == convA })
 
 	files, err := filepath.Glob(filepath.Join(dir, "*.json"))
 	if err != nil || len(files) != 1 {
@@ -139,6 +140,7 @@ func claudeSteps(t *testing.T) (*Server, *tclient, uint32) {
 	}
 	a.typeLine(sid, report("done", "", ""))
 	waitRecord(t, srv, sid, "the id after a /clear", func(r state.SessionRecord) bool { return r.Conversation == convB })
+	a.waitListed(sid, func(i protocol.SessionInfo) bool { return i.Conversation == convB })
 
 	if err := os.Remove(files[0]); err != nil {
 		t.Fatal(err)
@@ -170,6 +172,7 @@ func TestCodexConversationRecorded(t *testing.T) {
 	writeRollout(t, started.Add(-time.Second), codex1, cwd)
 	a.typeLine(sid, osc9("pong")+"; "+agentReport("idle", "", "codex"))
 	waitRecord(t, srv, sid, "codex's id", func(r state.SessionRecord) bool { return r.Agent == "codex" && r.Conversation == codex1 })
+	a.waitListed(sid, func(i protocol.SessionInfo) bool { return i.Conversation == codex1 })
 
 	// A second done only updates the msg of the first, so a working comes
 	// between them.
