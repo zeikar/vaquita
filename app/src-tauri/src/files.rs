@@ -42,7 +42,7 @@ pub const TEXT_MAX: u64 = 2 * 1024 * 1024;
 const SNIFF: u64 = 8 * 1024;
 
 /// At most n bytes from the start of f.
-fn head(f: &File, n: u64) -> io::Result<Vec<u8>> {
+pub(crate) fn head(f: &File, n: u64) -> io::Result<Vec<u8>> {
     let mut buf = Vec::new();
     f.take(n).read_to_end(&mut buf)?;
     Ok(buf)
@@ -129,9 +129,13 @@ pub struct Stamp {
 }
 
 impl Stamp {
-    fn of(meta: &Metadata) -> io::Result<Stamp> {
+    pub(crate) fn of(meta: &Metadata) -> io::Result<Stamp> {
         let modified = meta.modified()?.duration_since(UNIX_EPOCH).map_err(|_| io::Error::other("modified before 1970"))?;
         Ok(Stamp { secs: modified.as_secs(), nanos: modified.subsec_nanos(), len: meta.len() })
+    }
+
+    pub(crate) fn unix_ms(&self) -> u64 {
+        self.secs * 1000 + u64::from(self.nanos) / 1_000_000
     }
 }
 

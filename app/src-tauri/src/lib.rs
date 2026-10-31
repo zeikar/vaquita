@@ -1,4 +1,7 @@
 mod changes;
+// Its command comes with the Codex scan; until then only the tests call it.
+#[allow(dead_code)]
+mod conversations;
 mod files;
 mod folders;
 mod home;
@@ -140,6 +143,7 @@ pub fn run() {
         .manage(update::Pending::default())
         .manage(watch::Watches::default())
         .manage(repo_watch::RepoWatch::default())
+        .manage(conversations::Cache::default())
         .setup(|app| {
             notify::setup(app.handle());
             // Without the menu the app still updates on its timed checks.
