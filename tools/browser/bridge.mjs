@@ -347,6 +347,8 @@ function run(cmd, args) {
 			return os.homedir();
 		case 'plugin:window|is_focused':
 			return true;
+		case 'plugin:app|version':
+			return '0.0.0-browser';
 		case 'notification_permission':
 			return true;
 		case 'app_build':
