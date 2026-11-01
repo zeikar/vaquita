@@ -26,6 +26,17 @@ describe('SessionManager sessions', () => {
 		t.m.stop();
 	});
 
+	it('deselects for good: a reconnect selects nothing, as after a relaunch', async () => {
+		const t = await connected([info(1), info(2)]);
+		t.m.select(2);
+		t.m.deselect();
+		expect(t.state().selected).toBeUndefined();
+		expect(localStorage.getItem('vaquita.selected')).toBeNull();
+		await reconnect(t, [info(1), info(2)]);
+		expect(t.state().selected).toBeUndefined();
+		t.m.stop();
+	});
+
 	it('sends a create asked for during a subscribe before the next subscribe, and resolves it by its replay', async () => {
 		const t = await connected([info(1), info(2)]);
 		t.m.create('/tmp/repo', '', 'w');

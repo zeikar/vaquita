@@ -46,9 +46,9 @@ aside.files {
 
 /* The tab bar over the terminal and the file shown. They share the stack's
    one cell, so switching tabs never resizes the terminal; the bar is always
-   there while a session is selected, so the first file tab does not either.
-   Each layer is isolated so that xterm's z-indexed layers stay inside the
-   terminal's and the file, coming later, paints over all of them. */
+   there while a session or a repo is selected, so the first file tab does not
+   either. Each layer is isolated so that xterm's z-indexed layers stay inside
+   the terminal's and the file, coming later, paints over all of them. */
 .content {
 	grid-column: 2;
 	display: grid;

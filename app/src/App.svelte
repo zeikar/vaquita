@@ -1,11 +1,13 @@
 <script lang="ts">
+	import { getVersion } from '@tauri-apps/api/app';
 	import { homeDir } from '@tauri-apps/api/path';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { onDestroy, tick } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import AddRepo from './lib/AddRepo.svelte';
 	import AppUpdateBanner from './lib/AppUpdateBanner.svelte';
+	import AppWelcome from './lib/AppWelcome.svelte';
 	import { AppUpdater, releaseUrl } from './lib/app-update';
 	import { ask } from './lib/ask';
 	import { diffTab, tabFile } from './lib/changes';
@@ -16,7 +18,7 @@
 	import { openPath } from './lib/file-links';
 	import { clampPanelWidth, loadPanelWidth, PANEL_DEFAULT_WIDTH, PANEL_HIDDEN, PANEL_WIDTH } from './lib/file-panel';
 	import FilePane from './lib/FilePane.svelte';
-	import FilesPanel from './lib/FilesPanel.svelte';
+	import FilesPanel, { showView } from './lib/FilesPanel.svelte';
 	import { onTabAsked } from './lib/files';
 	import { watchFocus } from './lib/focus';
 	import { repoOf } from './lib/groups';
@@ -27,18 +29,20 @@
 	import { SessionManager } from './lib/manager';
 	import NewSessionDialog, { LAST_CWD } from './lib/NewSessionDialog.svelte';
 	import { sessionTitle, type Notifier, type Target } from './lib/notify';
+	import RepoWelcome from './lib/RepoWelcome.svelte';
 	import SessionList from './lib/SessionList.svelte';
 	import { loadWidth, SIDEBAR_HIDDEN, SIDEBAR_WIDTH } from './lib/sidebar';
 	import SidebarEdge from './lib/SidebarEdge.svelte';
 	import { load, save } from './lib/storage';
 	import TabBar from './lib/TabBar.svelte';
-	import { closeInGroup, fallback, fileName, groupKey, loadTabs, neighbour, openFileTab, OTHER, prune, saveTabs, setOrder, touch, unpreview, type Previews, type Recent } from './lib/tabs';
+	import { closeInGroup, fallback, fileName, groupKey, loadTabs, neighbour, openFileTab, openWelcomeTab, OTHER, prune, saveTabs, setOrder, touch, unpreview, WELCOME, type Previews, type Recent } from './lib/tabs';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
 	import { isTauri } from './lib/tauri';
 	import { createTauriNotifier } from './lib/tauri-notify';
 	import { createTerminal, TermView } from './lib/term-view';
 	import UpdateBanner from './lib/UpdateBanner.svelte';
+	import { newRepos } from './lib/welcome';
 
 	// Replaced by the Tauri notifier once it is ready; the console one stays in
 	// a plain browser and when the Tauri one cannot be set up.
@@ -56,7 +60,8 @@
 		notifier: { show: (n) => notifier.show(n) },
 	});
 	// The file tabs of every group, and the one shown; undefined is the
-	// terminal, as after a relaunch and whenever another session is selected.
+	// terminal, as after a relaunch and whenever another session is selected,
+	// and nothing at all while no session is.
 	let groups = $state(loadTabs());
 	let active = $state<string>();
 	// The preview tab of each group, for the app run only.
@@ -76,12 +81,19 @@
 		}),
 	);
 	let filePane = $state<ReturnType<typeof FilePane>>();
+	let repoWelcome = $state<ReturnType<typeof RepoWelcome>>();
+	let appWelcome = $state<ReturnType<typeof AppWelcome>>();
 
+	// The repo chosen by its name while no session is selected, for the app
+	// run only: a relaunch selects the stored session, or nothing.
+	let selectedRepo = $state<string>();
 	const selectedRow = $derived($manager.sessions.find((r) => r.info.sid === $manager.selected));
-	const group = $derived(selectedRow && groupKey(selectedRow.info.cwd, $manager.repos));
+	// A repo selected without a session has tabs, as a session's group does.
+	const group = $derived(selectedRow ? groupKey(selectedRow.info.cwd, $manager.repos) : selectedRepo);
+	const hasTerminal = $derived(selectedRow !== undefined);
 	const groupTabs = $derived((group !== undefined && groups[group]) || []);
 	// The repo whose tree the file panel shows: the selected session's group,
-	// unless that is no repo.
+	// unless that is no repo, or the repo selected by its name.
 	const root = $derived(group !== OTHER ? group : undefined);
 
 	// Not before the daemon has sent its list: the empty one the app starts
@@ -98,17 +110,59 @@
 	// A file covers the terminal, whose session is then not being looked at.
 	$effect(() => manager.setCovered(active !== undefined));
 
-	let shownSid: number | undefined;
+	// Null at first, which no selection is, so the first run shows what there
+	// is (the app welcome before the daemon's list) and it takes the focus.
+	let shownSid: number | undefined | null = null;
 	$effect(() => {
-		if ($manager.selected === shownSid) return;
-		shownSid = $manager.selected;
-		void showTab(undefined);
+		const sid = $manager.selected;
+		if (sid === shownSid) return;
+		shownSid = sid;
+		if (sid !== undefined) selectedRepo = undefined;
+		// A session deselected for a repo leaves that repo's welcome, not a terminal.
+		void showTab(sid === undefined && selectedRepo !== undefined ? WELCOME : undefined);
 	});
 	// A repo added or removed can move the session to another group, whose
 	// tabs do not include the one shown.
 	$effect(() => {
 		if (active !== undefined && !groupTabs.includes(active)) void showTab(undefined);
 	});
+	// A removed repo is no selection; the app welcome shows instead. Not before
+	// the daemon's list, as the one the app starts with is empty.
+	$effect(() => {
+		if ($manager.reposListed && selectedRepo !== undefined && !$manager.repos.includes(selectedRepo)) selectedRepo = undefined;
+	});
+
+	// The daemon sends the whole repo list on every change and does not say
+	// which request it answers, so a repo new to the list is the sign that it
+	// was added, here or by anyone else. The first list is what was already
+	// there and opens nothing. Of several at once, as from a drop of many
+	// folders, the last in the list opens, so one welcome shows.
+	let knownRepos: string[] | undefined;
+	$effect(() => {
+		if (!$manager.reposListed) return;
+		const repos = $manager.repos;
+		if (repos === knownRepos) return;
+		const prev = knownRepos;
+		knownRepos = repos;
+		if (prev === undefined) return;
+		const added = newRepos(prev, repos).at(-1);
+		if (added !== undefined) untrack(() => openWelcome(added));
+	});
+
+	// A repo's name in the sidebar shows its welcome tab. A session of that
+	// repo stays selected, its terminal covered as by a file; any other is
+	// deselected, so the repo is the selection. Not under the new-session
+	// dialog, which keeps what it opened over, as showTab does.
+	function openWelcome(repo: string): void {
+		if (dialogOpen) return;
+		if (selectedRow === undefined || group !== repo) {
+			manager.deselect();
+			selectedRepo = repo;
+		}
+		groups = openWelcomeTab(groups, repo);
+		saveTabs(groups);
+		void showTab(WELCOME);
+	}
 
 	// A ⌘-clicked file in a session's terminal; cwd is its starting folder.
 	// Unpinned, it opens as the group's preview. A dirty document opens pinned:
@@ -145,18 +199,21 @@
 
 	// A file clicked in the tree goes through the gate a ⌘-click does, so what
 	// the app does not show in a tab is opened or revealed the same way. Its tab
-	// lands in the selected session's group, the tree's repo.
+	// lands in the selected session's group, the tree's repo, or in the repo
+	// selected by its name.
 	function openFromTree(path: string, pin = false): void {
-		const cwd = selectedRow?.info.cwd;
+		const cwd = selectedRow?.info.cwd ?? root;
 		if (cwd === undefined) return;
 		void openPath(path, '', (m, tone) => manager.report(m, tone), (p) => openFile(cwd, p, pin));
 	}
 
 	// What shows takes the focus, so that typing never reaches a terminal
-	// covered by a file.
+	// covered by a file or a welcome.
 	function focusContent(): void {
-		if (active !== undefined) filePane?.focus();
-		else selectedView()?.focus();
+		if (active === WELCOME) repoWelcome?.focus();
+		else if (active !== undefined) filePane?.focus();
+		else if (hasTerminal) selectedView()?.focus();
+		else appWelcome?.focus();
 	}
 
 	// No file under the new-session dialog: it gives the focus back to what had
@@ -211,7 +268,11 @@
 		groups = r.groups;
 		previews = r.previews;
 		saveTabs(groups);
-		if (active !== undefined && paths.includes(active)) void showTab(fallback(recent.get(key) ?? [], groups[key] ?? []));
+		if (active === undefined || !paths.includes(active)) return;
+		const next = fallback(recent.get(key) ?? [], groups[key] ?? [], hasTerminal);
+		// A repo selected by its name with no tab left is no selection any more.
+		if (next === undefined && !hasTerminal) selectedRepo = undefined;
+		void showTab(next);
 	}
 
 	// ⌘W: the file tab shown, else the window, as the menu's Close Window did.
@@ -249,7 +310,7 @@
 	}
 
 	function stepTab(step: number): void {
-		void showTab(neighbour(groupTabs, active, step));
+		void showTab(neighbour(groupTabs, active, step, hasTerminal));
 	}
 	let destroyed = false;
 	onDestroy(() => {
@@ -282,7 +343,8 @@
 			case 'close':
 				return closeActive();
 			case 'terminal':
-				return void showTab(undefined);
+				if (hasTerminal) void showTab(undefined);
+				return;
 			case 'prev':
 				return stepTab(-1);
 			case 'next':
@@ -307,9 +369,10 @@
 			.catch((e) => manager.report(`bringing the window up failed: ${e instanceof Error ? e.message : String(e)}`));
 	}
 
-	// A past conversation's open row asks for its terminal: as openNotified,
-	// the same session staying selected, the file covering it goes.
-	function selectFromPast(sid: number): void {
+	// A session's row in the sidebar, or a past conversation's open row, asks
+	// for its terminal: as openNotified, the same session staying selected,
+	// the file or its repo's welcome covering it goes.
+	function selectSession(sid: number): void {
 		const same = sid === $manager.selected;
 		manager.select(sid);
 		if (same) void showTab(undefined);
@@ -341,13 +404,14 @@
 	let dialogOpen = $state(false);
 	let dialogCwd = $state('');
 
-	// The dialog starts in the selected session's repo, else in the folder it
-	// last created a session in, else in the home folder.
+	// The dialog starts in the selected session's repo or the repo selected by
+	// its name, else in the folder it last created a session in, else in the
+	// home folder.
 	function newSession() {
 		if (dialogOpen) return;
 		const { sessions, selected, repos } = $manager;
 		const cwd = sessions.find((r) => r.info.sid === selected)?.info.cwd;
-		dialogCwd = (cwd !== undefined ? repoOf(cwd, repos) : undefined) ?? load(LAST_CWD) ?? '';
+		dialogCwd = (cwd !== undefined ? repoOf(cwd, repos) : selectedRepo) ?? load(LAST_CWD) ?? '';
 		dialogOpen = true;
 	}
 
@@ -401,6 +465,12 @@
 		if (!dialogOpen) focusContent();
 	}
 
+	// The welcome's "All past conversations": the panel's Past view, shown.
+	function showPast(): void {
+		showView('past');
+		if (panelHidden) togglePanel();
+	}
+
 	function panelResized() {
 		holdLayout(false);
 		selectedView()?.refit();
@@ -441,6 +511,14 @@
 		homeDir().then(
 			(h) => (home = h),
 			(e) => manager.report(`home folder unavailable: ${e instanceof Error ? e.message : String(e)}`),
+		);
+	}
+	// For the app welcome's corner; unknown in a plain browser, as home is.
+	let version = $state<string>();
+	if (isTauri()) {
+		getVersion().then(
+			(v) => (version = v),
+			(e) => manager.report(`app version unavailable: ${e instanceof Error ? e.message : String(e)}`),
 		);
 	}
 
@@ -487,7 +565,9 @@
 		<SessionList
 			sessions={$manager.sessions}
 			selected={$manager.selected}
-			onselect={(sid) => manager.select(sid)}
+			selectedRepo={selectedRow ? undefined : selectedRepo}
+			onselect={selectSession}
+			onselectrepo={openWelcome}
 			onkill={(sid) => manager.kill(sid)}
 			repos={$manager.repos}
 			{home}
@@ -521,9 +601,10 @@
 		fallbackFocus={focusContent}
 	/>
 	<section class="content">
-		{#if selectedRow}
+		{#if group !== undefined}
 			<TabBar
-				title={sessionTitle(selectedRow.info)}
+				title={selectedRow ? sessionTitle(selectedRow.info) : undefined}
+				repo={root}
 				tabs={groupTabs}
 				{active}
 				preview={group !== undefined ? previews[group] : undefined}
@@ -537,9 +618,32 @@
 		{/if}
 		<div class="stack">
 			<TerminalPane sessions={$manager.sessions} selected={$manager.selected} />
-			{#if active !== undefined}
+			{#if active === WELCOME && root !== undefined}
+				{@const repo = root}
+				<!-- Keyed, so another repo's welcome reads its own changes and past conversations. -->
+				{#key repo}
+					<RepoWelcome
+						bind:this={repoWelcome}
+						{repo}
+						{home}
+						sessions={$manager.sessions.map((r) => r.info)}
+						repos={$manager.repos}
+						connected={$manager.status === 'connected'}
+						creating={$manager.creating}
+						onstart={(cmd) => manager.create(repo, cmd, '')}
+						onallpast={showPast}
+						onresume={(cwd, cmd) => void manager.create(cwd, cmd, '')}
+						onselect={selectSession}
+						onreopen={(sid) => manager.reopen(sid)}
+						report={(m) => manager.report(m)}
+					/>
+				{/key}
+			{:else if active !== undefined}
 				{@const path = active}
 				<FilePane bind:this={filePane} {path} repo={root} {home} readOnly={updating} onclose={() => void closeFileTabs([path])} onopenfile={(p) => openFromTree(p)} report={(m) => manager.report(m)} />
+			{/if}
+			{#if group === undefined}
+				<AppWelcome bind:this={appWelcome} {version} addDisabled={$manager.status !== 'connected'} onaddrepo={() => void addRepo?.open()} onnewsession={newSession} />
 			{/if}
 		</div>
 	</section>
@@ -555,12 +659,12 @@
 				creating={$manager.creating}
 				sessions={$manager.sessions.map((r) => r.info)}
 				repos={$manager.repos}
-				highlight={active === undefined ? undefined : tabFile(active)}
+				highlight={active === undefined || active === WELCOME ? undefined : tabFile(active)}
 				onopen={openFromTree}
 				onopendiff={openDiff}
 				onaddrepo={(f) => manager.addRepo(f)}
 				onresume={(cwd, cmd) => void manager.create(cwd, cmd, '')}
-				onselect={selectFromPast}
+				onselect={selectSession}
 				onreopen={(sid) => manager.reopen(sid)}
 				onleave={() => {
 					if (!dialogOpen) focusContent();

@@ -18,3 +18,11 @@ export function save(key: string, value: string): void {
 		console.warn(`localStorage write of ${key} failed:`, e);
 	}
 }
+
+export function remove(key: string): void {
+	try {
+		globalThis.localStorage?.removeItem(key);
+	} catch (e) {
+		console.warn(`localStorage removal of ${key} failed:`, e);
+	}
+}

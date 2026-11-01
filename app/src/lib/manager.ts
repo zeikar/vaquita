@@ -18,7 +18,7 @@ import {
 } from './protocol';
 import { RequestSlot, type CreateRequest } from './requests';
 import { SessionCore, type CoreOut, type Size, type TermLike } from './session-core';
-import { load, save } from './storage';
+import { load, remove, save } from './storage';
 
 // A terminal the manager disposes with its session.
 export interface ManagedTerm extends TermLike {
@@ -163,6 +163,13 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		}
 		this.publish({ selected: sid });
 		this.seeSelected();
+	}
+
+	// A repo chosen by its name selects no session. The stored sid goes too, or
+	// a reconnect would select it again under the repo's welcome.
+	deselect(): void {
+		remove(SELECTED_KEY);
+		this.set({ selected: undefined });
 	}
 
 	// A file tab covers the terminal: the selected session is then not looked
