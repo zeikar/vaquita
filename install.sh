@@ -55,7 +55,9 @@ main() {
 	ditto -xk "$tmp/$zip" "$tmp/out"
 	[[ -d "$tmp/out/vaquita.app" ]] || fail "$zip has no vaquita.app."
 	ditto "$tmp/out/vaquita.app" "$staging"
-	mv "$staging" "$dest/vaquita.app"
+	# rename(2), not mv: mv would move it inside an app another run put there meanwhile.
+	perl -e 'rename($ARGV[0], $ARGV[1]) or die "$!\n"' "$staging" "$dest/vaquita.app" ||
+		fail "could not put vaquita.app in $dest."
 
 	echo "Installed vaquita $version in $dest."
 	open "$dest/vaquita.app" || echo "Open $dest/vaquita.app to start it."
