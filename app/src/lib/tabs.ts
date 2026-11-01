@@ -9,6 +9,10 @@ export const OTHER = 'other';
 
 export type TabGroups = Record<string, string[]>;
 
+// The tab a repo selected without a session shows. File tabs are absolute
+// paths and diff tabs start with "diff:", so it collides with neither.
+export const WELCOME = 'welcome';
+
 export function groupKey(cwd: string, repos: string[]): string {
 	return repoOf(cwd, repos) ?? OTHER;
 }
@@ -20,6 +24,11 @@ export function fileName(path: string): string {
 export function openTab(groups: TabGroups, key: string, path: string): TabGroups {
 	const tabs = groups[key] ?? [];
 	return tabs.includes(path) ? { ...groups } : { ...groups, [key]: [...tabs, path] };
+}
+
+export function openWelcomeTab(groups: TabGroups, key: string): TabGroups {
+	const tabs = groups[key] ?? [];
+	return tabs.includes(WELCOME) ? { ...groups } : { ...groups, [key]: [WELCOME, ...tabs] };
 }
 
 // The preview tab of each group, by key: the one the next opened file takes the
@@ -91,13 +100,17 @@ export function setOrder(groups: TabGroups, key: string, order: string[]): TabGr
 	return { ...groups, [key]: [...order.filter((p) => tabs.includes(p)), ...tabs.filter((p) => !order.includes(p))] };
 }
 
-// The strip is the terminal (undefined) followed by the tabs, and wraps around.
-export function neighbour(tabs: string[], active: string | undefined, step: number): string | undefined {
-	const n = tabs.length + 1;
-	const at = active === undefined ? 0 : tabs.indexOf(active) + 1;
-	// An active path that is not in the list counts as the terminal.
-	const next = (((at + step) % n) + n) % n;
-	return next === 0 ? undefined : tabs[next - 1];
+// The strip is the terminal (undefined) followed by the tabs, or the tabs
+// alone while no session is selected, and wraps around.
+export function neighbour(tabs: string[], active: string | undefined, step: number, terminal = true): string | undefined {
+	const strip: (string | undefined)[] = terminal ? [undefined, ...tabs] : tabs;
+	const n = strip.length;
+	if (n === 0) return undefined;
+	// An active path that is not in the strip counts as the terminal; without
+	// one, a step forward lands on the first tab and one back on the last.
+	let at = strip.indexOf(active);
+	if (at < 0) at = terminal || step < 0 ? 0 : -1;
+	return strip[(((at + step) % n) + n) % n];
 }
 
 // The tabs of one group in the order they were last shown, most recent first;
@@ -111,23 +124,28 @@ export function touch(recent: Recent, shown: string | undefined): Recent {
 }
 
 // Where closing the shown tab goes: the most recently shown tab still open,
-// else the terminal.
-export function fallback(recent: Recent, tabs: string[]): string | undefined {
-	return recent.find((p) => p === undefined || tabs.includes(p));
+// else the terminal. Without a terminal, the first open tab is the last
+// resort, and undefined means no tab is left.
+export function fallback(recent: Recent, tabs: string[], terminal = true): string | undefined {
+	if (terminal) return recent.find((p) => p === undefined || tabs.includes(p));
+	return recent.find((p) => p !== undefined && tabs.includes(p)) ?? tabs[0];
 }
 
 // Tabs of a repo that is no longer registered would never be shown again, so
 // they move to the group its sessions fall into now (a registered parent repo,
-// else OTHER), where an unsaved edit in one is still reachable. The same object
-// comes back when no repo went.
+// else OTHER), where an unsaved edit in one is still reachable. The welcome
+// tab is the repo's own, not one of its files, so it goes with the repo. The
+// same object comes back when no repo went.
 export function prune(groups: TabGroups, repos: string[]): TabGroups {
 	const gone = Object.keys(groups).filter((key) => key !== OTHER && !repos.includes(key));
 	if (gone.length === 0) return groups;
 	const kept: TabGroups = Object.fromEntries(Object.entries(groups).filter(([key]) => !gone.includes(key)));
 	for (const key of gone) {
+		const moved = groups[key].filter((p) => p !== WELCOME);
+		if (moved.length === 0) continue;
 		const to = groupKey(key, repos);
 		let tabs = kept[to] ?? [];
-		for (const p of groups[key]) if (!tabs.includes(p)) tabs = [...tabs, p];
+		for (const p of moved) if (!tabs.includes(p)) tabs = [...tabs, p];
 		kept[to] = tabs;
 	}
 	return kept;
