@@ -2,7 +2,7 @@
 // Named .svelte.test.ts so that the props can be $state, as the app's are.
 import { flushSync, mount, unmount } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import FilesPanel from './FilesPanel.svelte';
+import FilesPanel, { showView } from './FilesPanel.svelte';
 import { endedTurns } from './changes';
 import { changeLists } from './changes.svelte';
 import { gitChanges, type Change } from './files';
@@ -159,8 +159,16 @@ describe('FilesPanel', () => {
 		expect(past()?.dataset.disabled).toBe('true');
 		pastStub.props!.onselect(3);
 		expect(props.onselect).toHaveBeenCalledWith(3);
-		pastStub.props!.onleave();
+		pastStub.props!.onleave!();
 		expect(props.onleave).toHaveBeenCalledOnce();
+	});
+
+	it('can be set to a view from outside', () => {
+		show({ root: '/tmp/repo', cwd: '/tmp/repo' });
+		showView('past');
+		flushSync();
+		expect(past()).not.toBeNull();
+		expect(button('Past conversations')!.getAttribute('aria-pressed')).toBe('true');
 	});
 
 	it('refreshes the past conversations, not the changes, from the Past view', () => {

@@ -2,6 +2,11 @@
 	// Files, Changes or Past, for every repo and the app run: hiding the panel
 	// or selecting a session of another repo keeps the view chosen.
 	let view = $state<'files' | 'changes' | 'past'>('files');
+
+	// The welcome tab's "All past conversations" opens the Past view.
+	export function showView(v: 'files' | 'changes' | 'past') {
+		view = v;
+	}
 </script>
 
 <script lang="ts">
