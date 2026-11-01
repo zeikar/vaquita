@@ -131,10 +131,10 @@ export async function onRepoChanged(run: (root: string) => void): Promise<() => 
 	});
 }
 
-// `last_active` is in Unix milliseconds; `entries` holds at most the newest 500 of `total`.
+// `last_active` is in Unix milliseconds.
 export type Conversation = { agent: 'claude' | 'codex'; id: string; title: string; cwd: string; last_active: number };
 
-export type ConversationList = { entries: Conversation[]; total: number };
+export type ConversationList = { entries: Conversation[] };
 
 // The past Claude Code and Codex conversations of root, one of repos, newest first.
 export function pastConversations(root: string, repos: string[]): Promise<ConversationList> {

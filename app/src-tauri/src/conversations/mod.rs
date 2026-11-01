@@ -3,11 +3,10 @@
 //! (codex.rs), in one list.
 //!
 //! Which repo a conversation belongs to is decided here, against the whole
-//! registered list and before the cap: the registered repo with the most path
-//! components that are a prefix of its canonical cwd, the sidebar's rule. So
-//! a repo registered inside the root keeps its conversations out of the
-//! root's list and out of its total, and a git worktree outside the folder
-//! belongs to no repo.
+//! registered list: the registered repo with the most path components that
+//! are a prefix of its canonical cwd, the sidebar's rule. So a repo registered
+//! inside the root keeps its conversations out of the root's list, and a git
+//! worktree outside the folder belongs to no repo.
 //!
 //! What was read is cached by path with the file's stamp, so a second show
 //! only stats what did not change. Only a successful read is cached: a file
@@ -29,7 +28,6 @@ use serde_json::Value;
 use crate::files::Stamp;
 
 const HEAD_MAX: u64 = 64 * 1024;
-const CAP: usize = 500;
 const TITLE_MAX: usize = 200;
 const UNTITLED: &str = "Untitled";
 /// The most cache entries kept that the last scan did not see.
@@ -49,8 +47,6 @@ pub struct Conversation {
 #[derive(Debug, Serialize)]
 pub struct ConversationList {
     entries: Vec<Conversation>,
-    /// Before the cap.
-    total: usize,
 }
 
 /// What a transcript says about itself, as cached.
@@ -240,7 +236,8 @@ fn prune(cache: &Cache, seen: &HashSet<PathBuf>) {
     }
 }
 
-/// The root's conversations, newest first, at most CAP of them. repos is the
+/// The root's conversations, newest first, all of them: the view filters by
+/// title over this list, so a cut here would make the oldest unreachable. repos is the
 /// whole registered list; the root is added when a list that raced a repo
 /// change lacks it. A conversation is the root's when its owner is the same
 /// folder, so the root's list is whole even when another spelling of it,
@@ -273,15 +270,26 @@ pub fn list(home: &Path, root: &str, repos: &[String], cache: &Cache) -> Result<
             agent: meta.agent,
             id: meta.id,
             title: named.unwrap_or(meta.title),
-            cwd: meta.cwd.to_string_lossy().into_owned(),
+            cwd: in_roots_spelling(root, &root_canonical, &meta.cwd),
             last_active: stamp.unix_ms(),
         });
     }
     prune(cache, &seen);
     entries.sort_by(|a, b| b.last_active.cmp(&a.last_active).then_with(|| a.id.cmp(&b.id)));
-    let total = entries.len();
-    entries.truncate(CAP);
-    Ok(ConversationList { entries, total })
+    Ok(ConversationList { entries })
+}
+
+/// cwd under the root's registered spelling: the sidebar groups sessions by
+/// literal path, so a resume in a transcript's other spelling of the folder
+/// (/private/tmp/repo for /tmp/repo) would land outside the repo. A cwd that
+/// is not under the canonical root is kept as given.
+fn in_roots_spelling(root: &str, root_canonical: &Path, cwd: &Path) -> String {
+    let canonical = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    match canonical.strip_prefix(root_canonical) {
+        Ok(rest) if rest.as_os_str().is_empty() => root.to_string(),
+        Ok(rest) => Path::new(root).join(rest).to_string_lossy().into_owned(),
+        Err(_) => cwd.to_string_lossy().into_owned(),
+    }
 }
 
 #[tauri::command]
@@ -381,18 +389,18 @@ mod tests {
         transcript(&home, &project(&root), ID_B, &[&user(&root, "in root")]);
         let cache = Cache::default();
         let l = run(&home, &root, &[&root, &sub], &cache);
-        assert_eq!((titles(&l), l.total), (vec!["in root"], 1));
+        assert_eq!(titles(&l), ["in root"]);
 
         let dir_name = format!("{}-sub", project(&root));
-        for i in 0..CAP {
+        for i in 0..3 {
             transcript(&home, &dir_name, &id(i), &[&user(&sub, "many")]);
         }
         let l = run(&home, &root, &[&root, &sub], &cache);
-        assert_eq!((titles(&l), l.total), (vec!["in root"], 1));
+        assert_eq!(titles(&l), ["in root"]);
     }
 
     #[test]
-    fn newest_first_and_at_most_cap_with_the_total() {
+    fn newest_first_and_every_row_is_returned() {
         let (home, root) = setup("order");
         let p = project(&root);
         for (i, (id, secs)) in [(ID_A, 2_000), (ID_B, 3_000), (ID_C, 1_000)].into_iter().enumerate() {
@@ -403,14 +411,14 @@ mod tests {
         assert_eq!(l.entries.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), [ID_B, ID_A, ID_C]);
         assert_eq!(l.entries[0].last_active, 3_000_000);
 
-        for i in 0..CAP {
+        for i in 0..600 {
             let f = transcript(&home, &p, &id(i), &[&user(&root, "many")]);
             set_mtime(&f, 10_000 + i as u64);
         }
         let l = run(&home, &root, &[&root], &Cache::default());
-        assert_eq!((l.entries.len(), l.total), (CAP, CAP + 3));
-        assert_eq!(l.entries[0].id, id(CAP - 1));
-        assert!(!l.entries.iter().any(|c| c.id == ID_C));
+        assert_eq!(l.entries.len(), 603);
+        assert_eq!(l.entries[0].id, id(599));
+        assert_eq!(l.entries[602].id, ID_C);
     }
 
     #[test]
@@ -421,7 +429,6 @@ mod tests {
         set_mtime(&rollout(&home, "2026/10/23", "2026-10-23T10-00-00", ID_C, &root, &[&message("user", "codex old")]), 1_000);
         let l = run(&home, &root, &[&root], &Cache::default());
         assert_eq!(l.entries.iter().map(|c| (c.agent, c.title.as_str())).collect::<Vec<_>>(), [("codex", "codex new"), ("claude", "claude one"), ("codex", "codex old")]);
-        assert_eq!(l.total, 3);
     }
 
     #[test]
@@ -518,6 +525,29 @@ mod tests {
         let cache = Cache::default();
         assert_eq!(titles(&run(&home, &root, &[&canonical, &root], &cache)), ["here"]);
         assert_eq!(titles(&run(&home, &canonical, &[&canonical, &root], &cache)), ["here"]);
+    }
+
+    #[test]
+    fn a_cwd_is_given_in_the_roots_registered_spelling() {
+        let (_, root) = setup("spelling");
+        std::fs::create_dir_all(format!("{root}/src")).unwrap();
+        let canonical = Path::new(&root).canonicalize().unwrap();
+        assert_ne!(canonical.to_str().unwrap(), root);
+        let at = |cwd: &Path| in_roots_spelling(&root, &canonical, cwd);
+        assert_eq!(at(&canonical), root);
+        assert_eq!(at(&canonical.join("src")), format!("{root}/src"));
+        // Not on disk: the rest is carried over, or the cwd kept when outside.
+        assert_eq!(at(&canonical.join("gone")), format!("{root}/gone"));
+        assert_eq!(at(Path::new("/tmp/elsewhere")), "/tmp/elsewhere");
+    }
+
+    #[test]
+    fn a_listed_conversation_resumes_under_the_registered_spelling() {
+        let (home, root) = setup("spelling-list");
+        let canonical = Path::new(&root).canonicalize().unwrap().to_str().unwrap().to_string();
+        transcript(&home, &project(&canonical), ID_A, &[&user(&canonical, "here")]);
+        let l = run(&home, &root, &[&root], &Cache::default());
+        assert_eq!(l.entries[0].cwd, root);
     }
 
     #[test]

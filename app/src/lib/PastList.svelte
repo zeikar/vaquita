@@ -8,6 +8,8 @@
 	import { belongsToIME } from './keys';
 	import type { SessionInfo } from './protocol';
 
+	const PAGE = 500;
+
 	let {
 		root,
 		sessions,
@@ -32,7 +34,7 @@
 		report: (message: string) => void;
 	} = $props();
 
-	// Replaced whole, never edited in place: no deep proxy for up to 500 rows.
+	// Replaced whole, never edited in place: no deep proxy for every row.
 	let snap = $state.raw<{ list?: ConversationList; error?: string; busy: boolean }>({ busy: false });
 	let query = $state('');
 	// Taken when a list lands, so the times hold still until the next one and
@@ -88,7 +90,14 @@
 
 	const held = $derived(heldConversations(sessions));
 	// No path test: Rust decided which conversations are this repo's.
-	const rows = $derived(snap.list?.entries.filter((c) => matchesTitle(c, query)) ?? []);
+	// Rust returns every conversation so the filter reaches the oldest; only
+	// the rendering is capped, after filtering, to keep the DOM small.
+	const matched = $derived(snap.list?.entries.filter((c) => matchesTitle(c, query)) ?? []);
+	// A raised limit holds for the query and list it was raised on only, so a
+	// new query or list starts at one page again.
+	let more = $state.raw<{ query: string; list?: ConversationList; limit: number }>({ query: '', limit: PAGE });
+	const limit = $derived(more.query === query && more.list === snap.list ? more.limit : PAGE);
+	const rows = $derived(matched.slice(0, limit));
 
 	// What a click on the row does, undefined when it can do nothing.
 	function action(c: Conversation): (() => void) | undefined {
@@ -145,10 +154,11 @@
 				<p class="empty">No past conversations</p>
 			{/if}
 		{/each}
-		{#if list.total > list.entries.length}
-			<div class="row more">
-				<span class="title">{list.total - list.entries.length} more not shown</span>
-			</div>
+		{#if matched.length > rows.length}
+			<!-- Rows past a page stay reachable even when they share a title. -->
+			<button class="row more" onclick={() => (more = { query, list: snap.list, limit: limit + PAGE })}>
+				<span class="title">Show {Math.min(PAGE, matched.length - rows.length)} more</span>
+			</button>
 		{/if}
 	{/if}
 </div>
@@ -233,7 +243,6 @@
 	}
 	.more {
 		color: #999;
-		cursor: default;
 	}
 	.empty,
 	.error {

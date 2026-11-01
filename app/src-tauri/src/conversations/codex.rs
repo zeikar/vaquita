@@ -17,18 +17,18 @@
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::io;
+use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::{HEAD_MAX, Meta, UNTITLED, clean_title, entries, entries_below, json_lines, lines, open_regular, read_tail, shown, valid_id};
+use super::{HEAD_MAX, Meta, UNTITLED, clean_title, entries, entries_below, lines, open_regular, shown, valid_id};
 use crate::files;
 
 const SESSIONS: &str = ".codex/sessions";
 const INDEX: &str = ".codex/session_index.jsonl";
-/// The index is only appended to, a line per naming, so only its end is read.
-const INDEX_MAX: u64 = 1024 * 1024;
+/// A longer index line is passed over unread, not held whole.
+const INDEX_LINE_MAX: usize = 64 * 1024;
 
 /// The uuid in a rollout's file name, `rollout-<time>-<uuid>.jsonl`.
 fn rollout_id(name: &str) -> Option<&str> {
@@ -53,11 +53,15 @@ pub(super) fn index_titles(home: &Path) -> HashMap<String, String> {
 }
 
 fn read_index(path: &Path) -> io::Result<HashMap<String, String>> {
-    let (f, opened) = open_regular(path)?;
-    let tail = read_tail(&f, opened.len(), INDEX_MAX)?;
-    // An id's last line is its latest name, as each naming is appended.
+    let (f, _) = open_regular(path)?;
+    // The whole index is read, as busy repos' lines would push a small
+    // repo's names out of a tail. An id's last line is its latest name, as
+    // each naming is appended.
+    let mut reader = BufReader::new(f);
     let mut latest = HashMap::new();
-    for v in json_lines(&tail) {
+    let mut line = Vec::new();
+    while next_line(&mut reader, &mut line)? {
+        let Ok(v) = serde_json::from_slice::<Value>(&line) else { continue };
         let field = |k: &str| v.get(k).and_then(Value::as_str);
         if let (Some(id), Some(name)) = (field("id"), field("thread_name"))
             && valid_id(id)
@@ -66,6 +70,40 @@ fn read_index(path: &Path) -> io::Result<HashMap<String, String>> {
         }
     }
     Ok(latest)
+}
+
+/// The next complete line of r into line, false at the end. A line over
+/// INDEX_LINE_MAX is read through and skipped (line left empty), and a last
+/// line without its `\n` is still being written, so it is not one.
+fn next_line(r: &mut impl BufRead, line: &mut Vec<u8>) -> io::Result<bool> {
+    line.clear();
+    let mut too_long = false;
+    loop {
+        let buf = r.fill_buf()?;
+        if buf.is_empty() {
+            line.clear();
+            return Ok(false);
+        }
+        let (take, done) = match buf.iter().position(|&b| b == b'\n') {
+            Some(i) => (i + 1, true),
+            None => (buf.len(), false),
+        };
+        if !too_long {
+            if line.len() + take > INDEX_LINE_MAX {
+                too_long = true;
+                line.clear();
+            } else {
+                line.extend_from_slice(&buf[..take]);
+            }
+        }
+        r.consume(take);
+        if done {
+            if too_long {
+                line.clear();
+            }
+            return Ok(true);
+        }
+    }
 }
 
 /// The first text of a user message line that is not a tag.
@@ -170,7 +208,7 @@ pub(super) mod tests {
         rollout(&home, "2026/10/24", "2026-10-24T10-00-00", ID_A, &root, &[&message("user", "fix the tests please")]);
         index(&home, &[(ID_A, "Fix tests", "2026-10-24T10:00:00.000000Z"), (ID_A, "Fix the tests", "2026-10-24T11:00:00.000000Z")]);
         let l = run(&home, &root, &[&root], &Cache::default());
-        assert_eq!(l.total, 1);
+        assert_eq!(l.entries.len(), 1);
         let c = &l.entries[0];
         assert_eq!((c.agent, c.id.as_str(), c.title.as_str(), c.cwd.as_str()), ("codex", ID_A, "Fix the tests", root.as_str()));
     }
@@ -200,7 +238,7 @@ pub(super) mod tests {
         rollout(&home, "2026/10/25", "2026-10-25T10-00-00", ID_C, &format!("{sub}/x"), &[&message("user", "in sub")]);
         let cache = Cache::default();
         let l = run(&home, &root, &[&root, &sub], &cache);
-        assert_eq!((titles(&l), l.total), (vec!["in root"], 1));
+        assert_eq!(titles(&l), ["in root"]);
         assert_eq!(titles(&run(&home, &sub, &[&root, &sub], &cache)), ["in sub"]);
     }
 
@@ -246,7 +284,7 @@ pub(super) mod tests {
         std::fs::write(home.join(SESSIONS).join("2026/notes"), "").unwrap();
         let rollouts = rollouts(&home).unwrap();
         assert_eq!(rollouts, [day.join(format!("rollout-2026-10-24T10-00-00-{ID_A}.jsonl"))]);
-        assert_eq!(run(&home, &root, &[&root], &Cache::default()).total, 1);
+        assert_eq!(run(&home, &root, &[&root], &Cache::default()).entries.len(), 1);
     }
 
     #[test]
@@ -262,12 +300,12 @@ pub(super) mod tests {
         let locked = list(&home, &root, std::slice::from_ref(&root), &cache);
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         let locked = locked.unwrap();
-        assert_eq!((by_id(&locked)[ID_A], by_id(&locked)[ID_B], locked.total), ("first", "second", 2));
+        assert_eq!((by_id(&locked)[ID_A], by_id(&locked)[ID_B], locked.entries.len()), ("first", "second", 2));
         assert_eq!(by_id(&run(&home, &root, &[&root], &cache))[ID_A], "Named");
     }
 
     #[test]
-    fn index_lines_with_a_bad_id_or_shape_are_ignored_and_only_the_last_mib_is_read() {
+    fn index_lines_with_a_bad_id_or_shape_are_ignored_and_an_early_name_in_a_large_index_is_found() {
         let (home, _) = setup("codex-index-lines");
         let filler = serde_json::json!({"id": ID_C, "thread_name": "x".repeat(1000), "updated_at": "2026-10-24T09:00:00.000000Z"}).to_string();
         let early = serde_json::json!({"id": ID_D, "thread_name": "Too early", "updated_at": "2026-10-24T09:00:00.000000Z"}).to_string();
@@ -276,11 +314,24 @@ pub(super) mod tests {
         let good = serde_json::json!({"id": ID_A, "thread_name": "Good", "updated_at": "2026-10-24T10:00:00.000000Z"}).to_string();
         let lines: Vec<&str> = [early.as_str()].into_iter().chain(std::iter::repeat_n(filler.as_str(), 1100)).chain([bad_id.as_str(), "{not json", no_name.as_str(), good.as_str()]).collect();
         let path = write_lines(&home.join(INDEX), &lines);
-        assert!(std::fs::metadata(&path).unwrap().len() > INDEX_MAX);
+        assert!(std::fs::metadata(&path).unwrap().len() > 1024 * 1024);
         let names = index_titles(&home);
         assert_eq!(names.get(ID_A).map(String::as_str), Some("Good"));
-        assert!(names.contains_key(ID_C));
-        assert!(!names.contains_key(ID_D) && !names.contains_key(ID_B) && !names.contains_key("not-an-id"));
+        assert_eq!(names.get(ID_D).map(String::as_str), Some("Too early"));
+        assert!(!names.contains_key(ID_B) && !names.contains_key("not-an-id"));
+    }
+
+    #[test]
+    fn an_overlong_index_line_is_skipped_without_losing_the_next() {
+        let long = serde_json::json!({"id": ID_C, "thread_name": "x".repeat(INDEX_LINE_MAX)}).to_string();
+        let ok = serde_json::json!({"id": ID_A, "thread_name": "Kept"}).to_string();
+        let data = format!("{long}\n{ok}\n{ok}");
+        let mut r = io::BufReader::with_capacity(16, data.as_bytes());
+        let mut line = Vec::new();
+        assert!(next_line(&mut r, &mut line).unwrap() && line.is_empty());
+        assert!(next_line(&mut r, &mut line).unwrap());
+        assert_eq!(line, format!("{ok}\n").as_bytes());
+        assert!(!next_line(&mut r, &mut line).unwrap());
     }
 
     #[test]
@@ -311,7 +362,7 @@ pub(super) mod tests {
         assert_eq!(sorted_titles(&first.unwrap()), ["claude row", "codex row"]);
         // With the other repo unregistered, its rollout is the root's.
         let l = run(&home, &root, &[&root], &cache);
-        assert_eq!((by_id(&l)[ID_C], l.total), ("locked", 3));
+        assert_eq!((by_id(&l)[ID_C], l.entries.len()), ("locked", 3));
     }
 
     #[test]

@@ -299,7 +299,7 @@ function pastConversations(root) {
 		{ agent: 'codex', id: ID_CODEX, title: 'Codex in the repo', cwd: root, last_active: now - 3 * 24 * HOUR },
 		{ agent: 'claude', id: ID_LOGIN, title: 'Fix the login form', cwd: root, last_active: now - 6 * 24 * HOUR },
 	];
-	return { entries, total: entries.length };
+	return { entries };
 }
 
 const unknown = new Set();

@@ -26,7 +26,7 @@ const CODEX_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 
 const claude: Conversation = { agent: 'claude', id: CLAUDE_ID, title: 'Fix the Login form', cwd: '/tmp/repo', last_active: NOW - 6 * DAY };
 const codex: Conversation = { agent: 'codex', id: CODEX_ID, title: 'Add a parser', cwd: '/tmp/repo/sub', last_active: NOW - 3 * 3600_000 };
-const listOf = (...entries: Conversation[]): ConversationList => ({ entries, total: entries.length });
+const listOf = (...entries: Conversation[]): ConversationList => ({ entries });
 
 const session = (sid: number, info: Partial<SessionInfo>): SessionInfo =>
 	({ sid, cwd: '/tmp/repo', cmd: 'claude', state: 'running', ...info }) as SessionInfo;
@@ -241,10 +241,26 @@ describe('PastList', () => {
 		expect(props.report.mock.calls).toEqual([['listing past conversations in repo failed: disk gone']]);
 	});
 
-	it('tells how many rows were left out', async () => {
-		const entries = Array.from({ length: 500 }, (_, i) => ({ ...claude, id: `${String(i).padStart(8, '0')}-2222-3333-4444-555555555555` }));
-		await showList({ entries, total: 501 });
-		expect(target.querySelector('.more')?.textContent?.trim()).toBe('1 more not shown');
+	it('renders 500 rows at a time and shows more on a click, a new query starting over', async () => {
+		const entries = Array.from({ length: 501 }, (_, i) => ({ ...claude, id: `${String(i).padStart(8, '0')}-2222-3333-4444-555555555555`, title: 'Same' }));
+		await showList({ entries });
+		const more = () => target.querySelector<HTMLButtonElement>('button.more');
+		const shown = () => rows().filter((r) => !r.classList.contains('more')).length;
+		const type = async (value: string) => {
+			const input = target.querySelector('input')!;
+			input.value = value;
+			input.dispatchEvent(new Event('input', { bubbles: true }));
+			await settle();
+		};
+		expect(shown()).toBe(500);
+		expect(more()?.textContent?.trim()).toBe('Show 1 more');
+		more()!.click();
+		await settle();
+		expect(shown()).toBe(501);
+		expect(more()).toBeNull();
+		await type('sam');
+		expect(shown()).toBe(500);
+		expect(more()?.textContent?.trim()).toBe('Show 1 more');
 	});
 
 	it('drops an answer that comes after it is gone', async () => {

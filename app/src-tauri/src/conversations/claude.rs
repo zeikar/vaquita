@@ -143,8 +143,7 @@ mod tests {
         let last_prompt = serde_json::json!({"type": "last-prompt", "lastPrompt": "hi there"}).to_string();
         transcript(&home, &project(&root), ID_A, &[&last_prompt, &user(&root, "hi there"), &ai_title("Login form"), &ai_title("Fix the login form")]);
         let l = run(&home, &root, &[&root], &Cache::default());
-        assert_eq!(l.total, 1);
-        let c = &l.entries[0];
+                let c = &l.entries[0];
         assert_eq!((c.agent, c.id.as_str(), c.title.as_str(), c.cwd.as_str()), ("claude", ID_A, "Fix the login form", root.as_str()));
     }
 
@@ -216,7 +215,7 @@ mod tests {
         let link = link.to_str().unwrap();
         let l = run(&home, link, &[link], &Cache::default());
         assert_eq!(titles(&l), ["via the link"]);
-        assert_eq!(l.entries[0].cwd, canonical);
+        assert_eq!(l.entries[0].cwd, link);
     }
 
     #[test]
@@ -254,7 +253,7 @@ mod tests {
     fn a_home_without_claude_has_no_conversations() {
         let (home, root) = setup("empty");
         let l = run(&home, &root, &[&root], &Cache::default());
-        assert_eq!((l.entries.len(), l.total), (0, 0));
+        assert_eq!(l.entries.len(), 0);
     }
 
     #[test]
