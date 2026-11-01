@@ -2,6 +2,13 @@
 
 Each release's notes open with its section here.
 
+## 0.1.20
+
+- With nothing selected, the app shows a welcome: Add a repo, New session, and a hint that you can drop a folder on the sidebar.
+- A repo has a welcome tab with its path, current branch, number of changed files and running sessions, buttons to start Claude Code, Codex or a shell there, and its 5 latest past conversations to continue.
+- Clicking a repo's name in the sidebar opens that welcome; only the arrow, or a double-click on the name, collapses it. Clicking the selected session's row brings its terminal back over any tab.
+- A repo you add, by any route, opens its welcome.
+
 ## 0.1.19
 
 - The files panel has a Past view beside Files and Changes. It lists the repo's earlier Claude Code and Codex conversations, including ones started in another terminal, by title and time, newest first. Filter them by title; click one to continue it in a new session, or to jump to the session that already has it open.
