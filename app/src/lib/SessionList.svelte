@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { SvelteSet } from 'svelte/reactivity';
 	import { writeClipboard } from './clipboard';
+	import { OTHER } from './tabs';
 	import { Confirm } from './confirm.svelte';
 	import ContextMenu from './ContextMenu.svelte';
 	import { groupRows } from './groups';
@@ -29,6 +30,7 @@
 		onaddrepo,
 		onnewsession,
 		selectedRepo,
+		otherTabs = false,
 		onselectrepo = () => {},
 	}: {
 		sessions: SessionRow<unknown>[];
@@ -54,10 +56,16 @@
 		onnewsession: () => void;
 		// The repo whose header shows selected, as its welcome tab is the one shown.
 		selectedRepo?: string;
+		// File tabs sit in the Other group, which then shows even without a
+		// session and can be selected, as nothing else leads to those tabs.
+		otherTabs?: boolean;
 		onselectrepo?: (repo: string) => void;
 	} = $props();
 
-	const groups = $derived(groupRows(sessions, repos));
+	const groups = $derived.by(() => {
+		const all = groupRows(sessions, repos);
+		return otherTabs && all.every((g) => g.repo !== undefined) ? [...all, { rows: [] }] : all;
+	});
 
 	// What a collapsed group's header shows for its hidden rows.
 	const needs = (rows: SessionRow<unknown>[]) =>
@@ -155,19 +163,20 @@
 
 <ul oncontextmenu={listMenu}>
 	{#each groups as g (g.repo ?? '')}
-		{@const key = g.repo ?? 'other'}
+		{@const key = g.repo ?? OTHER}
 		{@const owner = `repo:${g.repo}`}
 		{@const shut = collapsed.has(key)}
 		<RepoHeader
 			repo={g.repo}
 			collapsed={shut}
-			selected={g.repo !== undefined && g.repo === selectedRepo}
+			selected={key === selectedRepo}
+			selectable={g.repo !== undefined || otherTabs}
 			needs={shut ? needs(g.rows) : undefined}
 			unread={shut && g.rows.some((r) => r.info.unread)}
 			{disabled}
 			menuOpen={menu?.owner === owner}
 			ontoggle={() => toggle(key)}
-			onselect={() => g.repo !== undefined && onselectrepo(g.repo)}
+			onselect={() => onselectrepo(key)}
 			onstart={(cmd) => g.repo !== undefined && onstart(g.repo, cmd)}
 			onmenu={(at) => g.repo !== undefined && openMenu(owner, at, repoMenu(g.repo))}
 		/>

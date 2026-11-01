@@ -42,7 +42,7 @@
 	import { createTauriNotifier } from './lib/tauri-notify';
 	import { createTerminal, TermView } from './lib/term-view';
 	import UpdateBanner from './lib/UpdateBanner.svelte';
-	import { newRepos } from './lib/welcome';
+	import { newRepos, selectionAfterRemoval } from './lib/welcome';
 
 	// Replaced by the Tauri notifier once it is ready; the console one stays in
 	// a plain browser and when the Tauri one cannot be set up.
@@ -101,10 +101,19 @@
 	// so that no one is left without a way to save the edits they may hold.
 	$effect(() => {
 		if (!$manager.reposListed) return;
-		const kept = prune(groups, $manager.repos);
-		if (kept === groups) return;
+		const before = groups;
+		const kept = prune(before, $manager.repos);
+		if (kept === before) return;
 		groups = kept;
 		saveTabs(kept);
+		// With no session the moved tabs are reached only by selecting their
+		// group, which may be Other: tabs and no terminal, no welcome, no tree.
+		if (selectedRepo === undefined || $manager.repos.includes(selectedRepo)) return;
+		const to = selectionAfterRemoval(before, selectedRepo, $manager.repos);
+		if (to === undefined) return;
+		selectedRepo = to;
+		const moved = kept[to] ?? [];
+		void showTab(active !== undefined && moved.includes(active) ? active : moved[0]);
 	});
 
 	// A file covers the terminal, whose session is then not being looked at.
@@ -119,7 +128,9 @@
 		shownSid = sid;
 		if (sid !== undefined) selectedRepo = undefined;
 		// A session deselected for a repo leaves that repo's welcome, not a terminal.
-		void showTab(sid === undefined && selectedRepo !== undefined ? WELCOME : undefined);
+		// Other has no welcome: openOther() has shown one of its tabs already.
+		if (sid === undefined && selectedRepo === OTHER) void showTab(active !== undefined && groupTabs.includes(active) ? active : groupTabs[0]);
+		else void showTab(sid === undefined && selectedRepo !== undefined ? WELCOME : undefined);
 	});
 	// A repo added or removed can move the session to another group, whose
 	// tabs do not include the one shown.
@@ -129,7 +140,7 @@
 	// A removed repo is no selection; the app welcome shows instead. Not before
 	// the daemon's list, as the one the app starts with is empty.
 	$effect(() => {
-		if ($manager.reposListed && selectedRepo !== undefined && !$manager.repos.includes(selectedRepo)) selectedRepo = undefined;
+		if ($manager.reposListed && selectedRepo !== undefined && selectedRepo !== OTHER && !$manager.repos.includes(selectedRepo)) selectedRepo = undefined;
 	});
 
 	// The daemon sends the whole repo list on every change and does not say
@@ -139,7 +150,9 @@
 	// folders, the last in the list opens, so one welcome shows.
 	let knownRepos: string[] | undefined;
 	$effect(() => {
-		if (!$manager.reposListed) return;
+		// Under the dialog nothing is consumed, so that its close, which reruns
+		// this, still finds the additions that came meanwhile.
+		if (!$manager.reposListed || dialogOpen) return;
 		const repos = $manager.repos;
 		if (repos === knownRepos) return;
 		const prev = knownRepos;
@@ -165,6 +178,21 @@
 	}
 
 	// A ⌘-clicked file in a session's terminal; cwd is its starting folder.
+	// The Other group's name, shown while it holds tabs, selects them: the way
+	// back to edits that moved there when their repo was removed. Its most
+	// recent tab shows, as closing one would go; no welcome, it is no repo.
+	function openOther(): void {
+		if (dialogOpen) return;
+		const inGroup = selectedRow !== undefined && group === OTHER;
+		if (!inGroup) {
+			manager.deselect();
+			selectedRepo = OTHER;
+		}
+		const tabs = groups[OTHER] ?? [];
+		if (tabs.length === 0) return;
+		void showTab(fallback(recent.get(OTHER) ?? [], tabs, false) ?? tabs[0]);
+	}
+
 	// Unpinned, it opens as the group's preview. A dirty document opens pinned:
 	// documents are shared by path across groups, so it may hold another
 	// group's edits, and a preview, which the next file replaces, holds none.
@@ -411,7 +439,7 @@
 		if (dialogOpen) return;
 		const { sessions, selected, repos } = $manager;
 		const cwd = sessions.find((r) => r.info.sid === selected)?.info.cwd;
-		dialogCwd = (cwd !== undefined ? repoOf(cwd, repos) : selectedRepo) ?? load(LAST_CWD) ?? '';
+		dialogCwd = (cwd !== undefined ? repoOf(cwd, repos) : selectedRepo !== OTHER ? selectedRepo : undefined) ?? load(LAST_CWD) ?? '';
 		dialogOpen = true;
 	}
 
@@ -569,8 +597,9 @@
 			sessions={$manager.sessions}
 			selected={$manager.selected}
 			selectedRepo={selectedRow ? undefined : selectedRepo}
+			otherTabs={(groups[OTHER]?.length ?? 0) > 0}
 			onselect={selectSession}
-			onselectrepo={openWelcome}
+			onselectrepo={(r) => (r === OTHER ? openOther() : openWelcome(r))}
 			onkill={(sid) => manager.kill(sid)}
 			repos={$manager.repos}
 			{home}

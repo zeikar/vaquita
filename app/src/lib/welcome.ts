@@ -1,4 +1,5 @@
 import { repoOf } from './groups';
+import { groupKey, WELCOME, type TabGroups } from './tabs';
 import { STATE_RUNNING, type SessionInfo } from './protocol';
 
 // Undefined until a git status has counted them: showing the welcome runs none of its own.
@@ -21,4 +22,14 @@ export function repoSessions(sessions: SessionInfo[], repos: string[], repo: str
 export function newRepos(prev: string[], next: string[]): string[] {
 	const known = new Set(prev);
 	return next.filter((r) => !known.has(r));
+}
+
+// Where the selection goes when the selected repo leaves the list: the group
+// its file tabs moved to, since without a session nothing else in the sidebar
+// reaches them (and any unsaved edit in them); undefined when none moved, and
+// the app welcome shows instead. A repo still listed stays selected.
+export function selectionAfterRemoval(before: TabGroups, selected: string, repos: string[]): string | undefined {
+	if (repos.includes(selected)) return selected;
+	if (!(before[selected] ?? []).some((p) => p !== WELCOME)) return undefined;
+	return groupKey(selected, repos);
 }

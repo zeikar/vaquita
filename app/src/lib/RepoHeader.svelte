@@ -8,6 +8,7 @@
 		repo,
 		collapsed,
 		selected,
+		selectable,
 		needs,
 		unread,
 		disabled,
@@ -21,6 +22,9 @@
 		repo?: string;
 		collapsed: boolean;
 		selected: boolean;
+		// A repo's name selects it, as does the other group's when file tabs moved
+		// there; otherwise the group has nothing to select and the name toggles.
+		selectable: boolean;
 		// What the group's hidden rows would show: one waits on the user, one
 		// is unread. Given only while collapsed.
 		needs?: 'input' | 'auth';
@@ -28,7 +32,7 @@
 		disabled: boolean;
 		menuOpen: boolean;
 		ontoggle: () => void;
-		// Never called for the group without a repo, whose name toggles.
+		// Only called while selectable.
 		onselect: () => void;
 		onstart: (cmd: string) => void;
 		onmenu: (at: MenuAt) => void;
@@ -70,14 +74,14 @@
 		<Icon name={collapsed ? 'chevron-right' : 'chevron-down'} />
 	</button>
 	<!-- A double-click collapses too, as the chevron is a small target; its
-	     clicks have selected the repo already. The group without a repo has
-	     only the toggle, and two clicks of it are already a double-click's. -->
+	     clicks have selected the repo already. Without a selection to make the
+	     name is only the toggle, and two clicks of it are already a double-click's. -->
 	<button
 		class="name"
 		bind:this={nameButton}
 		title={repo ?? 'other'}
-		onclick={() => (repo === undefined ? ontoggle() : onselect())}
-		ondblclick={() => repo !== undefined && ontoggle()}
+		onclick={() => (selectable ? onselect() : ontoggle())}
+		ondblclick={() => selectable && ontoggle()}
 	>
 		{label}
 	</button>

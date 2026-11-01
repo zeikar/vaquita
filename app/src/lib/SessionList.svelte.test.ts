@@ -38,6 +38,7 @@ function show(sessions: SessionRow<unknown>[], repos: string[] = []) {
 		onaddrepo: vi.fn(),
 		onnewsession: vi.fn(),
 		selectedRepo: undefined as string | undefined,
+		otherTabs: false,
 		onselectrepo: vi.fn(),
 	});
 	target = document.createElement('div');
@@ -441,7 +442,7 @@ describe('SessionList repo groups', () => {
 		expect(chevron('other').getAttribute('aria-label')).toBe('Collapse other');
 		expect(target.querySelector('button[aria-label="Repo menu"]')).not.toBeNull();
 		expect(target.querySelectorAll('button[aria-label="Repo menu"]')).toHaveLength(1);
-		// It has no repo to select, so its name toggles as its chevron does.
+		// Without tabs it has nothing to select, so its name toggles as its chevron does.
 		click(header('other'));
 		expect(rowCount()).toBe(1);
 		expect(chevron('other').getAttribute('aria-expanded')).toBe('false');
@@ -449,6 +450,25 @@ describe('SessionList repo groups', () => {
 		click(chevron('other'));
 		expect(rowCount()).toBe(2);
 		expect(p.onselectrepo).not.toHaveBeenCalled();
+	});
+
+	it('shows the other group for file tabs alone, and its name selects it', () => {
+		const p = show([row(1)], ['/tmp/repo']);
+		expect(target.querySelector('button[aria-label="Collapse other"]')).toBeNull();
+		p.otherTabs = true;
+		flushSync();
+		expect(rowCount()).toBe(1);
+		click(header('other'));
+		expect(p.onselectrepo).toHaveBeenCalledWith('other');
+		// Its chevron still collapses.
+		click(chevron('other'));
+		expect(chevron('other').getAttribute('aria-expanded')).toBe('false');
+		p.selectedRepo = 'other';
+		flushSync();
+		expect(header('other').closest('li')!.classList.contains('selected')).toBe(true);
+		p.otherTabs = false;
+		flushSync();
+		expect(target.querySelector('button[aria-label="Expand other"]')).toBeNull();
 	});
 
 	it('starts claude or codex in the repo from its header', () => {

@@ -241,5 +241,25 @@ await step('add a repo', async () => {
 	await shot(page, '04-repo2');
 });
 
+await step('Other from a session', async () => {
+	// A file open in a repo that then goes: its tab moves to Other, which has no session of its own.
+	await nameBtn(repo).click();
+	await repoHello.waitFor({ timeout: 5000 });
+	await panel.locator('.tree button.row', { hasText: 'README.md' }).click();
+	await until(tabs, (t) => t.some((x) => x.label === 'README.md'));
+	execFileSync(path.join(dir, 'bin', 'vaquitad'), ['repos', 'rm', repo], { env: { ...process.env, VAQUITA_HOME: path.join(dir, 'vaquita-home') } });
+	await nameBtn('other').waitFor({ timeout: 5000 });
+	// A session of another repo is shown, then Other is chosen.
+	await nameBtn(repo2).click();
+	await repoHello.waitFor({ timeout: 5000 });
+	await repoHello.locator('button.start.shell').click();
+	await until(() => selectedRows.count(), (n) => n === 1, 3000);
+	await nameBtn('other').click();
+	const t = await until(tabs, (t) => t.length === 1 && t[0].file && t[0].active);
+	const s = { tabs: t, hello: await hello.count(), repoHello: await repoHello.count(), selected: await selectedRows.count(), pane: await page.locator('.file .bar .name', { hasText: 'README.md' }).count() };
+	say('Other from a selected session: its file open in the pane, no welcome, no session selected', t[0]?.label === 'README.md' && s.hello === 0 && s.repoHello === 0 && s.selected === 0 && s.pane === 1, s);
+	await shot(page, '05-other');
+});
+
 await browser.close();
 process.exitCode = Math.min(finish(), 125);

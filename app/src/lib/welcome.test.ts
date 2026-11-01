@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionInfo } from './protocol';
-import { changesText, newRepos, repoSessions, sessionsText } from './welcome';
+import { changesText, newRepos, repoSessions, selectionAfterRemoval, sessionsText } from './welcome';
 
 describe('changesText', () => {
 	it('says nothing before a count', () => {
@@ -45,5 +45,21 @@ describe('newRepos', () => {
 		expect(newRepos(['/tmp/a'], ['/tmp/c', '/tmp/a', '/tmp/b'])).toEqual(['/tmp/c', '/tmp/b']);
 		expect(newRepos([], ['/tmp/a'])).toEqual(['/tmp/a']);
 		expect(newRepos(['/tmp/a', '/tmp/b'], ['/tmp/a'])).toEqual([]);
+	});
+});
+
+describe('selectionAfterRemoval', () => {
+	const before = { '/tmp/repo': ['welcome', '/tmp/repo/a.ts'], '/tmp/empty': ['welcome'] };
+	it('keeps a repo that is still listed', () => {
+		expect(selectionAfterRemoval(before, '/tmp/repo', ['/tmp/repo'])).toBe('/tmp/repo');
+	});
+	it('follows the file tabs to Other', () => {
+		expect(selectionAfterRemoval(before, '/tmp/repo', [])).toBe('other');
+	});
+	it('follows them to the parent repo', () => {
+		expect(selectionAfterRemoval({ '/tmp/repo/sub': ['/tmp/repo/sub/a.ts'] }, '/tmp/repo/sub', ['/tmp/repo'])).toBe('/tmp/repo');
+	});
+	it('selects nothing when only the welcome tab was there', () => {
+		expect(selectionAfterRemoval(before, '/tmp/empty', [])).toBeUndefined();
 	});
 });
