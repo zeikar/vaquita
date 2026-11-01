@@ -47,7 +47,7 @@ const pastRows = () =>
 	rows.evaluateAll((rs) =>
 		rs.map((r) => ({
 			title: r.querySelector('.title')?.textContent,
-			when: r.querySelector('.when')?.textContent,
+			when: r.querySelector('.when')?.getAttribute('aria-label') ?? r.querySelector('.when')?.textContent,
 			icon: r.querySelector('svg')?.getAttribute('data-icon'),
 		})),
 	);

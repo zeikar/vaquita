@@ -155,7 +155,7 @@ describe('PastList', () => {
 	it('marks a conversation a running session holds open, and selects that session', async () => {
 		const props = await showList(listOf(claude), { sessions: [session(7, { conversation: CLAUDE_ID })] });
 		const r = row('Fix the Login form');
-		expect(r.querySelector('.when')?.textContent).toBe('open');
+		expect(r.querySelector('.when')?.getAttribute('aria-label')).toBe('open');
 		expect(r.querySelector('.when')?.classList.contains('open')).toBe(true);
 		r.click();
 		expect(props.onselect).toHaveBeenCalledWith(7);
@@ -164,7 +164,7 @@ describe('PastList', () => {
 
 	it('knows a running session by its typed resume command alone', async () => {
 		const props = await showList(listOf(codex), { sessions: [session(4, { cmd: `codex resume ${CODEX_ID}` })] });
-		expect(row('Add a parser').querySelector('.when')?.textContent).toBe('open');
+		expect(row('Add a parser').querySelector('.when')?.getAttribute('aria-label')).toBe('open');
 		row('Add a parser').click();
 		expect(props.onselect).toHaveBeenCalledWith(4);
 		expect(props.onresume).not.toHaveBeenCalled();
@@ -184,7 +184,7 @@ describe('PastList', () => {
 			sessions: [session(3, { state: 'exited', orphans: [123], conversation: CLAUDE_ID })],
 		});
 		const r = row('Fix the Login form');
-		expect(r.querySelector('.when')?.textContent).toBe('earlier run');
+		expect(r.querySelector('.when')?.getAttribute('aria-label')).toBe('earlier run');
 		expect(r.getAttribute('aria-disabled')).toBe('true');
 		expect(r.title.split('\n')[2]).toBe('its earlier session still has processes; kill them in the sidebar first');
 		r.click();

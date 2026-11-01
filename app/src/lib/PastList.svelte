@@ -110,7 +110,9 @@
 
 	function tooltip(c: Conversation): string {
 		const lines = [c.cwd, stamp.dates.get(key(c)) ?? ''];
-		if (held.get(c.id)?.how === 'orphans') lines.push('its earlier session still has processes; kill them in the sidebar first');
+		const how = held.get(c.id)?.how;
+		if (how === 'running') lines.push('open in a session; click to go to it');
+		if (how === 'orphans') lines.push('its earlier session still has processes; kill them in the sidebar first');
 		return lines.join('\n');
 	}
 
@@ -139,10 +141,11 @@
 			<button class="row" title={tooltip(c)} aria-disabled={act === undefined || undefined} onclick={() => act?.()}>
 				<Icon name={agentIcon(c.agent)} />
 				<span class="title">{c.title}</span>
+				<!-- The marks are icons, with the word as their name; the tooltip explains. -->
 				{#if how === 'running'}
-					<span class="when open">open</span>
+					<span class="when open" role="img" aria-label="open"><Icon name="command-line" /></span>
 				{:else if how === 'orphans'}
-					<span class="when">earlier run</span>
+					<span class="when blocked" role="img" aria-label="earlier run"><Icon name="lock-closed" /></span>
 				{:else}
 					<span class="when">{ago(c.last_active, stamp.now)}</span>
 				{/if}
@@ -240,6 +243,13 @@
 		font-size: 11px;
 		font-variant-numeric: tabular-nums;
 		text-align: right;
+	}
+	.when.open,
+	.when.blocked {
+		display: flex;
+	}
+	.when.open :global(svg) {
+		color: var(--neon);
 	}
 	.more {
 		color: #999;
