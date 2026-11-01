@@ -19,6 +19,7 @@
 		onselect,
 		onreopen,
 		onleave,
+		limit,
 		report,
 	}: {
 		root: string;
@@ -30,7 +31,9 @@
 		onselect: (sid: number) => void;
 		onreopen: (sid: number) => void;
 		// Gives the focus back when Escape leaves the filter.
-		onleave: () => void;
+		onleave?: () => void;
+		// The welcome tab's short list: the newest few, no filter box, no paging.
+		limit?: number;
 		report: (message: string) => void;
 	} = $props();
 
@@ -96,8 +99,8 @@
 	// A raised limit holds for the query and list it was raised on only, so a
 	// new query or list starts at one page again.
 	let more = $state.raw<{ query: string; list?: ConversationList; limit: number }>({ query: '', limit: PAGE });
-	const limit = $derived(more.query === query && more.list === snap.list ? more.limit : PAGE);
-	const rows = $derived(matched.slice(0, limit));
+	const pageLimit = $derived(more.query === query && more.list === snap.list ? more.limit : PAGE);
+	const rows = $derived(matched.slice(0, limit ?? pageLimit));
 
 	// What a click on the row does, undefined when it can do nothing.
 	function action(c: Conversation): (() => void) | undefined {
@@ -121,14 +124,16 @@
 		if (e.key !== 'Escape' || belongsToIME(e)) return;
 		e.preventDefault();
 		query = '';
-		onleave();
+		onleave?.();
 	}
 </script>
 
-<div class="filter">
-	<input type="search" placeholder="Filter by title" aria-label="Filter past conversations by title" bind:value={query} onkeydown={filterKey} />
-</div>
-<div class="past">
+{#if limit === undefined}
+	<div class="filter">
+		<input type="search" placeholder="Filter by title" aria-label="Filter past conversations by title" bind:value={query} onkeydown={filterKey} />
+	</div>
+{/if}
+<div class="past" class:brief={limit !== undefined}>
 	{#if snap.error !== undefined}
 		<!-- Above the rows kept, so a failed refresh does not pass for a current list. -->
 		<p class="error">{snap.error}</p>
@@ -157,9 +162,9 @@
 				<p class="empty">No past conversations</p>
 			{/if}
 		{/each}
-		{#if matched.length > rows.length}
+		{#if limit === undefined && matched.length > rows.length}
 			<!-- Rows past a page stay reachable even when they share a title. -->
-			<button class="row more" onclick={() => (more = { query, list: snap.list, limit: limit + PAGE })}>
+			<button class="row more" onclick={() => (more = { query, list: snap.list, limit: pageLimit + PAGE })}>
 				<span class="title">Show {Math.min(PAGE, matched.length - rows.length)} more</span>
 			</button>
 		{/if}
@@ -250,6 +255,21 @@
 	}
 	.when.open :global(svg) {
 		color: var(--neon);
+	}
+	.past.brief {
+		padding: 0;
+	}
+	.past.brief .row {
+		height: 30px;
+		border-bottom: 1px solid #2a2a2b;
+		font-size: 13px;
+	}
+	.past.brief .title {
+		color: #ddd;
+	}
+	.past.brief .when {
+		color: #8b8b8b;
+		font-size: 11px;
 	}
 	.more {
 		color: #999;

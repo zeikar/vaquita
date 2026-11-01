@@ -36,7 +36,7 @@ let shown: ReturnType<typeof mount> | undefined;
 let loads: Held<ConversationList>[];
 const load = vi.mocked(pastConversations);
 
-function show(opts: { sessions?: SessionInfo[]; disabled?: boolean } = {}) {
+function show(opts: { sessions?: SessionInfo[]; disabled?: boolean; limit?: number } = {}) {
 	const props = $state({
 		root: '/tmp/repo',
 		sessions: opts.sessions ?? [],
@@ -46,6 +46,7 @@ function show(opts: { sessions?: SessionInfo[]; disabled?: boolean } = {}) {
 		onselect: vi.fn(),
 		onreopen: vi.fn(),
 		onleave: vi.fn(),
+		limit: opts.limit,
 		report: vi.fn(),
 	});
 	target = document.createElement('div');
@@ -97,6 +98,27 @@ afterEach(() => {
 });
 
 describe('PastList', () => {
+	it('with a limit shows that many rows, with no filter and no Show more', async () => {
+		const many = Array.from({ length: 7 }, (_, i) => ({ ...claude, id: `id-${i}`, title: `Conversation ${i}` }));
+		await showList(listOf(...many), { limit: 5 });
+		expect(rows().map((r) => r.querySelector('.title')?.textContent)).toEqual(many.slice(0, 5).map((c) => c.title));
+		expect(filter()).toBeNull();
+		expect(target.querySelector('.past.brief')).not.toBeNull();
+		expect(rows().some((r) => r.textContent?.includes('more'))).toBe(false);
+	});
+
+	it('with a limit keeps the held marks and the click actions', async () => {
+		const props = await showList(listOf(claude, codex), {
+			limit: 5,
+			sessions: [session(3, { state: 'running', conversation: CLAUDE_ID })],
+		});
+		expect(row('Fix the Login form').querySelector('.when.open')).not.toBeNull();
+		row('Fix the Login form').click();
+		expect(props.onselect).toHaveBeenCalledWith(3);
+		row('Add a parser').click();
+		expect(props.onresume).toHaveBeenCalledOnce();
+	});
+
 	it('loads once on mount and shows the rows with their titles and times', async () => {
 		show();
 		expect(load.mock.calls).toEqual([['/tmp/repo', ['/tmp/repo', '/tmp/repo/sub']]]);

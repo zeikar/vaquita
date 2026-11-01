@@ -12,7 +12,8 @@
 		onresume: (cwd: string, cmd: string) => void;
 		onselect: (sid: number) => void;
 		onreopen: (sid: number) => void;
-		onleave: () => void;
+		onleave?: () => void;
+		limit?: number;
 		report: (message: string) => void;
 	};
 
