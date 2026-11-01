@@ -66,8 +66,9 @@ const tabState = () =>
 // only for the app run, so a reload shows Files again.
 async function showChanges() {
 	await repoSession.waitFor({ timeout: 10000 });
-	if ((await panel.count()) === 0) await page.locator('footer .files-toggle').click();
+	// A session first: with nothing selected there is no panel to find.
 	await repoSession.click();
+	if ((await panel.count()) === 0) await page.locator('footer .files-toggle').click();
 	await changesBtn.click();
 	await panel.locator('div.changes').waitFor();
 }

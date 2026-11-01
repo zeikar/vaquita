@@ -457,6 +457,9 @@
 
 	let panelWidth = $state(loadPanelWidth());
 	let panelHidden = $state(load(PANEL_HIDDEN) === 'true');
+	// With nothing selected the panel would have no repo to show, and the app
+	// welcome is drawn without it; the stored choice is kept for later.
+	const panelShown = $derived(!panelHidden && group !== undefined);
 
 	// As toggleSidebar: the focus may be in the tree, which goes.
 	function togglePanel() {
@@ -556,7 +559,7 @@
 
 <svelte:window onkeydowncapture={shortcut} />
 
-<main class:sidebar-hidden={sidebarHidden} class:files-hidden={panelHidden} style:--sidebar-width="{sidebarWidth}px" style:--panel-width="{panelWidth}px">
+<main class:sidebar-hidden={sidebarHidden} class:files-hidden={!panelShown} style:--sidebar-width="{sidebarWidth}px" style:--panel-width="{panelWidth}px">
 	<aside bind:this={aside}>
 		<header>
 			<span class="title">Repos</span>
@@ -649,7 +652,7 @@
 	</section>
 	<!-- Unmounted, not hidden, while it is off, so nothing of the tree or the
 	     changes runs and no folder is watched. -->
-	{#if !panelHidden}
+	{#if panelShown}
 		<aside class="files">
 			<FilesPanel
 				{root}

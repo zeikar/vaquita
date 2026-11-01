@@ -71,8 +71,9 @@ const terminalText = () =>
 // app run, so a reload shows Files again.
 async function showPast() {
 	await repoSession.waitFor({ timeout: 10000 });
-	if ((await panel.count()) === 0) await page.locator('footer .files-toggle').click();
+	// A session first: with nothing selected there is no panel to find.
 	await repoSession.click();
+	if ((await panel.count()) === 0) await page.locator('footer .files-toggle').click();
 	await pastBtn.click();
 	await panel.locator('.past').waitFor();
 }
@@ -167,8 +168,9 @@ await step('narrow panel', async () => {
 	await page.evaluate(() => localStorage.setItem('vaquita.file-panel-width', '100'));
 	await page.reload();
 	await repoSession.waitFor({ timeout: 10000 });
-	if ((await panel.count()) === 0) await page.locator('footer .files-toggle').click();
+	// A session first: with nothing selected there is no panel to find.
 	await repoSession.click();
+	if ((await panel.count()) === 0) await page.locator('footer .files-toggle').click();
 	// The badge is a count Changes has taken.
 	await changesBtn.click();
 	await until(() => changesBtn.locator('.badge').count(), (n) => n === 1);
