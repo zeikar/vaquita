@@ -32,7 +32,7 @@
 		onreopen: (sid: number) => void;
 		// Gives the focus back when Escape leaves the filter.
 		onleave?: () => void;
-		// The welcome tab's short list: the newest few, no filter box, no paging.
+		// The repo welcome's short list: the newest few, no filter box, no paging.
 		limit?: number;
 		report: (message: string) => void;
 	} = $props();

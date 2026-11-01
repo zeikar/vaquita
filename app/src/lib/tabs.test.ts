@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { OTHER, WELCOME, closeInGroup, closeTabs, fallback, fileName, groupKey, moveTab, neighbour, openFileTab, openPreview, openTab, openWelcomeTab, parseStored, prune, setOrder, touch, unpreview } from './tabs';
+import { OTHER, WELCOME, closeInGroup, closeTabs, fallback, fileName, groupKey, moveTab, neighbour, openFileTab, openPreview, openTab, parseStored, prune, setOrder, touch, unpreview } from './tabs';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -40,26 +40,6 @@ describe('openTab / closeTabs', () => {
 	it('closes the known paths when an unknown one is among them', () => {
 		const g = { '/tmp/repo': ['/a', '/b', '/c'] };
 		expect(closeTabs(g, '/tmp/repo', ['/b', '/zzz'])).toEqual({ '/tmp/repo': ['/a', '/c'] });
-	});
-});
-
-describe('openWelcomeTab', () => {
-	it('puts the welcome first, once, and returns a new object', () => {
-		const a = { '/tmp/repo': ['/tmp/repo/a.md'] };
-		const b = openWelcomeTab(a, '/tmp/repo');
-		expect(b).toEqual({ '/tmp/repo': [WELCOME, '/tmp/repo/a.md'] });
-		expect(a).toEqual({ '/tmp/repo': ['/tmp/repo/a.md'] });
-		const c = openWelcomeTab(b, '/tmp/repo');
-		expect(c).toEqual(b);
-		expect(c).not.toBe(b);
-	});
-
-	it('creates a group on first open', () => {
-		expect(openWelcomeTab({}, '/tmp/repo')).toEqual({ '/tmp/repo': [WELCOME] });
-	});
-
-	it('leaves a welcome moved away from the front where it is', () => {
-		expect(openWelcomeTab({ '/tmp/repo': ['/a', WELCOME] }, '/tmp/repo')).toEqual({ '/tmp/repo': ['/a', WELCOME] });
 	});
 });
 
@@ -189,6 +169,14 @@ describe('neighbour', () => {
 	});
 	it('has nowhere to go without a terminal or tabs', () => {
 		expect(neighbour([], undefined, 1, false)).toBeUndefined();
+		expect(neighbour([], WELCOME, 1, false)).toBeUndefined();
+	});
+	it('steps from the welcome, which is no tab, to the first of the strip or back to its last', () => {
+		expect(neighbour(tabs, WELCOME, 1)).toBeUndefined();
+		expect(neighbour(tabs, WELCOME, -1)).toBe('/b');
+		expect(neighbour([], WELCOME, 1)).toBeUndefined();
+		expect(neighbour(tabs, WELCOME, 1, false)).toBe('/a');
+		expect(neighbour(tabs, WELCOME, -1, false)).toBe('/b');
 	});
 });
 
@@ -266,16 +254,6 @@ describe('prune', () => {
 		expect(prune(g, ['/tmp/repo'])).toEqual({ '/tmp/repo': ['/y', '/x'] });
 	});
 
-	it("drops a gone repo's welcome and moves its files", () => {
-		const g = { '/tmp/gone': [WELCOME, '/x'], '/tmp/repo': [WELCOME, '/y'] };
-		expect(prune(g, ['/tmp/repo'])).toEqual({ '/tmp/repo': [WELCOME, '/y'], [OTHER]: ['/x'] });
-		expect(prune({ '/tmp/repo/nested': [WELCOME, '/x'], '/tmp/repo': ['/y'] }, ['/tmp/repo'])).toEqual({ '/tmp/repo': ['/y', '/x'] });
-	});
-
-	it('leaves no group behind for a gone repo that had only its welcome', () => {
-		expect(prune({ '/tmp/gone': [WELCOME] }, [])).toEqual({});
-	});
-
 	it('returns the same object when no repo went', () => {
 		const g = { '/tmp/repo': ['/y'] };
 		expect(prune(g, ['/tmp/repo'])).toBe(g);
@@ -301,6 +279,9 @@ describe('parseStored', () => {
 	});
 	it('drops non-array groups and non-string entries', () => {
 		expect(parseStored('{"a":["/x",1,null,"/x"],"b":"/y","c":[2],"d":[]}')).toEqual({ a: ['/x'] });
+	});
+	it('drops a stored welcome, and a group that held only it', () => {
+		expect(parseStored(JSON.stringify({ '/tmp/repo': [WELCOME, '/tmp/repo/a.md'], '/tmp/empty': [WELCOME] }))).toEqual({ '/tmp/repo': ['/tmp/repo/a.md'] });
 	});
 });
 

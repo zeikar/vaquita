@@ -54,7 +54,7 @@
 		addDisabled: boolean;
 		onaddrepo: () => void;
 		onnewsession: () => void;
-		// The repo whose header shows selected, as its welcome tab is the one shown.
+		// The repo selected by its name with no session, whose header shows selected.
 		selectedRepo?: string;
 		// File tabs sit in the Other group, which then shows even without a
 		// session and can be selected, as nothing else leads to those tabs.

@@ -1,5 +1,5 @@
 import { repoOf } from './groups';
-import { groupKey, WELCOME, type TabGroups } from './tabs';
+import { groupKey, type TabGroups } from './tabs';
 import { STATE_RUNNING, type SessionInfo } from './protocol';
 
 // Undefined until a git status has counted them: showing the welcome runs none of its own.
@@ -30,6 +30,6 @@ export function newRepos(prev: string[], next: string[]): string[] {
 // the app welcome shows instead. A repo still listed stays selected.
 export function selectionAfterRemoval(before: TabGroups, selected: string, repos: string[]): string | undefined {
 	if (repos.includes(selected)) return selected;
-	if (!(before[selected] ?? []).some((p) => p !== WELCOME)) return undefined;
+	if ((before[selected] ?? []).length === 0) return undefined;
 	return groupKey(selected, repos);
 }

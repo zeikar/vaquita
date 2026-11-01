@@ -1,6 +1,6 @@
 // The two welcome screens end to end: the app's with nothing selected, and a
-// repo's, opened by its name in the sidebar, with its starts, its past
-// conversations and its tab beside a session's terminal.
+// repo's, opened by its name in the sidebar, with its starts and its past
+// conversations, alone or over a session's terminal, and never a tab.
 // node checks/welcome.mjs <dir>, after run.sh up <dir>; see check.sh.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -70,6 +70,15 @@ const tabs = () =>
 			active: t.classList.contains('active'),
 		})),
 	);
+// The welcome is no tab: nothing in the bar is it, whatever shows.
+const welcomeTabs = () => page.locator('.tabs .tab[data-path="welcome"]').count();
+// How far the welcome sits below the top of the main area: 0 with no bar above it.
+const welcomeOffset = () =>
+	page.evaluate(() => {
+		const w = document.querySelector('.repo-hello')?.getBoundingClientRect().top;
+		const c = document.querySelector('section.content')?.getBoundingClientRect().top;
+		return w === undefined || c === undefined ? null : w - c;
+	});
 const meta = async () => (await repoHello.locator('.meta > span').allInnerTexts()).map((t) => t.trim()).join(' | ');
 // The selected session's terminal, shown or covered: its rows hold its text.
 const terminalText = () =>
@@ -110,13 +119,13 @@ await step('repo welcome', async () => {
 	const off = log.offset();
 	await nameBtn(repo).click();
 	await repoHello.waitFor({ timeout: 5000 });
-	const t = await until(tabs, (t) => t.length === 1);
-	const sel = { header: await header(repo).evaluate((l) => l.classList.contains('selected')), rows: await selectedRows.count() };
-	say(
-		'one active repo tab with a folder icon, no terminal tab, the header selected',
-		t.length === 1 && t[0].label === 'repo' && t[0].icon === 'folder' && t[0].file && t[0].active && sel.header && sel.rows === 0,
-		{ tabs: t, ...sel },
-	);
+	const sel = {
+		tabBar: await tabBar.count(),
+		top: await welcomeOffset(),
+		header: await header(repo).evaluate((l) => l.classList.contains('selected')),
+		rows: await selectedRows.count(),
+	};
+	say('no tab bar, the welcome at the top, the header selected, no session', sel.tabBar === 0 && sel.top === 0 && sel.header && sel.rows === 0, sel);
 	const h1 = await repoHello.locator('h1').innerText();
 	const m = await until(meta, (m) => m.includes('changes'));
 	say('h1 repo; on main or master, no changes, 1 session', h1 === 'repo' && /^on (main|master) \| no changes \| 1 session$/.test(m), { h1, meta: m });
@@ -132,7 +141,6 @@ await step('repo welcome', async () => {
 	await sleep(1000);
 	const l = log.since(off);
 	say('one git_changes and one past_conversations', count(l, GIT_CHANGES) === 1 && count(l, PAST) === 1, { git: count(l, GIT_CHANGES), past: count(l, PAST) });
-	say('header rows end level', level(await headerBottoms(page)), await headerBottoms(page));
 	const f = await until(focus, (f) => f.inRepoHello, 3000);
 	say('the focus inside the welcome', f.inRepoHello, f);
 	await shot(page, '02-repo-welcome');
@@ -171,21 +179,25 @@ await step('start shell', async () => {
 	say('a new session, selected', after === before + 1 && sel.length === 1 && !/repo shell|tmp shell/.test(sel[0]), { before, after, selected: sel });
 	const f = await until(focus, (f) => f.terminal, 3000);
 	say('the terminal focused', f.terminal, f);
-	const t = await until(tabs, (t) => t.length === 2);
-	say(
-		'the terminal tab, active, and the repo tab',
-		t.length === 2 && !t[0].file && t[0].active && t[1].file && t[1].label === 'repo' && !t[1].active,
-		t,
-	);
+	const t = await until(tabs, (t) => t.length === 1);
+	say('the terminal tab alone, active, the welcome gone', t.length === 1 && !t[0].file && t[0].active && (await repoHello.count()) === 0, t);
+	say('header rows end level', level(await headerBottoms(page)), await headerBottoms(page));
 	// The shell's prompt is there and settled before the text is compared.
 	await until(terminalText, (s) => !!s?.trim(), 5000);
 	await sleep(500);
 	const text = await terminalText();
 
-	await page.keyboard.press('Control+Tab');
-	const w = await until(tabs, (t) => t[1]?.active, 3000);
+	await nameBtn(repo).click();
+	await repoHello.waitFor({ timeout: 3000 });
+	const w = await until(tabs, (t) => t.length === 1 && !t[0].active, 3000);
 	const f1 = await until(focus, (f) => f.inRepoHello, 3000);
-	say('Control+Tab: the welcome, the focus off the terminal', !!w[1]?.active && (await repoHello.count()) === 1 && !f1.terminal && f1.tag !== 'TEXTAREA', { tabs: w, focus: f1 });
+	const s1 = { tabs: w, welcomeTabs: await welcomeTabs(), selected: await selectedRows.count(), focus: f1 };
+	say(
+		'the name over its session: the welcome, the terminal tab not active, no welcome tab, the session still selected, the focus off the terminal',
+		w.length === 1 && !w[0].file && !w[0].active && s1.welcomeTabs === 0 && s1.selected === 1 && !f1.terminal && f1.tag !== 'TEXTAREA',
+		s1,
+	);
+	await shot(page, '03-welcome-over-terminal');
 	await page.keyboard.type('x');
 	await sleep(500);
 	await page.keyboard.press('Control+Tab');
@@ -194,32 +206,39 @@ await step('start shell', async () => {
 	await sleep(300);
 	const after2 = await terminalText();
 	say('typing under the welcome reaches no terminal', after2 === text, { before: text?.trim().slice(-80), after: after2?.trim().slice(-80) });
-	say('Control+Tab: the terminal, its textarea focused', !!back[0]?.active && f2.terminal, { tabs: back, focus: f2 });
-	await shot(page, '03-shell');
+	say('Control+Tab from the welcome: the terminal, its textarea focused, the welcome gone', !!back[0]?.active && f2.terminal && (await repoHello.count()) === 0, { tabs: back, focus: f2 });
+	await shot(page, '04-shell');
 
+	// Shown again before the reload, which must not bring it back.
+	await nameBtn(repo).click();
+	await repoHello.waitFor({ timeout: 3000 });
 	await page.reload();
 	await repoSession.waitFor({ timeout: 10000 });
-	const r = await until(tabs, (t) => t.length === 2 && t[0].active);
-	const welcome = await repoHello.count();
-	say('reload: the terminal first, the repo tab in the bar', r.length === 2 && !r[0].file && r[0].active && r[1].label === 'repo' && !r[1].active && welcome === 0, {
-		tabs: r,
-		welcome,
-	});
+	const r = await until(tabs, (t) => t.length === 1 && t[0].active);
+	const s2 = { tabs: r, welcome: await repoHello.count(), stored: await page.evaluate(() => localStorage.getItem('vaquita.file-tabs')) };
+	say('reload: the terminal first, no welcome, none stored', r.length === 1 && !r[0].file && r[0].active && s2.welcome === 0 && !(s2.stored ?? '').includes('welcome'), s2);
 });
 
-await step('close and back', async () => {
+await step('files and back', async () => {
 	await tmpSession.click();
 	const t = await until(tabs, (t) => t.length === 1 && !t[0].file);
-	say('the other group: no repo tab', t.length === 1 && !t[0].file, t);
+	say('the other group: the terminal tab alone', t.length === 1 && !t[0].file, t);
 	await nameBtn(repo).click();
 	await repoHello.waitFor({ timeout: 5000 });
 	const rows = await until(() => selectedRows.count(), (n) => n === 0, 3000);
-	const t2 = await tabs();
-	say('the repo name: no session selected, its welcome', rows === 0 && t2.length === 1 && t2[0].label === 'repo' && t2[0].active, { selected: rows, tabs: t2 });
+	say('the repo name: no session selected, its welcome, no tab bar', rows === 0 && (await tabBar.count()) === 0, { selected: rows, tabBar: await tabBar.count() });
+	await panel.locator('.tree button.row', { hasText: 'README.md' }).click();
+	const t2 = await until(tabs, (t) => t.length === 1 && t[0].active);
+	say('a file from the tree: its tab alone in the bar, the welcome gone', t2.length === 1 && t2[0].file && t2[0].label === 'README.md' && (await repoHello.count()) === 0, t2);
+	await page.keyboard.press('Control+Tab');
+	await sleep(300);
+	say('Control+Tab with one file and no session: stays on it', (await tabs())[0]?.active && (await repoHello.count()) === 0, await tabs());
 	await page.locator('.tabs .tab[data-path] button.close').click();
-	await hello.waitFor({ timeout: 3000 });
-	const s = { hello: await hello.count(), tabBar: await tabBar.count(), header: await header(repo).evaluate((l) => l.classList.contains('selected')) };
-	say('its × closed: the app welcome, nothing selected', s.hello === 1 && s.tabBar === 0 && !s.header, s);
+	await repoHello.waitFor({ timeout: 3000 });
+	const s = { hello: await hello.count(), tabBar: await tabBar.count(), header: await header(repo).evaluate((l) => l.classList.contains('selected')), top: await welcomeOffset() };
+	say('its last file closed: the repo welcome again, no bar, still selected', s.hello === 0 && s.tabBar === 0 && s.header && s.top === 0, s);
+	const f = await until(focus, (f) => f.inRepoHello, 3000);
+	say('the focus inside the welcome', f.inRepoHello, f);
 });
 
 await step('add a repo', async () => {
@@ -236,9 +255,18 @@ await step('add a repo', async () => {
 	await sidebar.locator('header button[aria-label="Add repo"]').click();
 	const h1 = await until(async () => ((await repoHello.count()) ? await repoHello.locator('h1').innerText() : null), (h) => h === 'repo2');
 	await page.unroute('http://127.0.0.1:14999/invoke', pick);
-	const t = await tabs();
-	say('the repo2 welcome', h1 === 'repo2' && t.length === 1 && t[0].label === 'repo2' && t[0].active, { h1, tabs: t });
-	await shot(page, '04-repo2');
+	const t = { tabBar: await tabBar.count(), header: await header(repo2).evaluate((l) => l.classList.contains('selected')) };
+	say('the repo2 welcome, selected, no tab bar', h1 === 'repo2' && t.tabBar === 0 && t.header, { h1, ...t });
+	await shot(page, '05-repo2');
+
+	// Removed with nothing of it open, the selection goes and the app welcome shows.
+	const vaquitad = (...args) => execFileSync(path.join(dir, 'bin', 'vaquitad'), args, { env: { ...process.env, VAQUITA_HOME: path.join(dir, 'vaquita-home') } });
+	vaquitad('repos', 'rm', repo2);
+	await hello.waitFor({ timeout: 5000 });
+	say('repo2 removed: the app welcome', (await repoHello.count()) === 0 && (await tabBar.count()) === 0, { repoHello: await repoHello.count() });
+	vaquitad('repos', 'add', repo2);
+	const h2 = await until(async () => ((await repoHello.count()) ? await repoHello.locator('h1').innerText() : null), (h) => h === 'repo2');
+	say('added again from the command line: its welcome', h2 === 'repo2' && (await hello.count()) === 0, { h1: h2 });
 });
 
 await step('Other from a session', async () => {
@@ -258,7 +286,10 @@ await step('Other from a session', async () => {
 	const t = await until(tabs, (t) => t.length === 1 && t[0].file && t[0].active);
 	const s = { tabs: t, hello: await hello.count(), repoHello: await repoHello.count(), selected: await selectedRows.count(), pane: await page.locator('.file .bar .name', { hasText: 'README.md' }).count() };
 	say('Other from a selected session: its file open in the pane, no welcome, no session selected', t[0]?.label === 'README.md' && s.hello === 0 && s.repoHello === 0 && s.selected === 0 && s.pane === 1, s);
-	await shot(page, '05-other');
+	await shot(page, '06-other');
+	await page.locator('.tabs .tab[data-path] button.close').click();
+	await hello.waitFor({ timeout: 3000 });
+	say("Other's last tab closed: the app welcome", (await repoHello.count()) === 0 && (await tabBar.count()) === 0, { hello: await hello.count() });
 });
 
 await browser.close();

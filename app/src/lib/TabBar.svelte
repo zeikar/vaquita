@@ -2,15 +2,13 @@
 	import { diffPath, tabFile } from './changes';
 	import { writeClipboard } from './clipboard';
 	import ContextMenu from './ContextMenu.svelte';
-	import { repoName } from './groups';
 	import Icon from './Icon.svelte';
 	import type { MenuAt, MenuItem } from './menu';
 	import { canReveal, revealInFinder } from './reveal';
-	import { fileName, moveTab, WELCOME } from './tabs';
+	import { fileName, moveTab } from './tabs';
 
 	let {
 		title,
-		repo,
 		tabs,
 		active,
 		preview,
@@ -24,10 +22,9 @@
 		// The terminal tab's text: the selected session's title. No terminal tab
 		// without it, as no session is selected then.
 		title?: string;
-		// The group's repo, which the welcome tab names and its menu points at.
-		repo?: string;
 		tabs: string[];
-		// The file tab shown; undefined is the terminal.
+		// The file tab shown; undefined is the terminal, and a repo's welcome,
+		// which is no tab, leaves none marked.
 		active?: string;
 		// The tab the next opened file takes the place of, in italics.
 		preview?: string;
@@ -136,10 +133,6 @@
 		else onselect(path);
 	}
 
-	// What a tab is about on disk: a diff tab's file, the welcome tab's repo.
-	const file = (path: string) => (path === WELCOME ? repo : tabFile(path));
-	const name = (path: string) => (path === WELCOME ? repoName(repo ?? '') : fileName(tabFile(path)));
-
 	const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 	const failed = (what: string) => (e: unknown) => report(`${what} failed: ${message(e)}`);
 
@@ -148,7 +141,6 @@
 	// read tabs when clicked, not when the menu opened.
 	function context(e: MouseEvent, path: string) {
 		e.preventDefault();
-		const at = file(path);
 		const items: MenuItem[] = [
 			{ label: 'Close', run: () => onclose([path]) },
 			{
@@ -162,12 +154,9 @@
 			},
 			{ label: 'Close to the Right', disabled: path === tabs.at(-1), run: () => onclose(tabs.slice(tabs.indexOf(path) + 1)) },
 			{ label: 'Close All', run: () => onclose([...tabs]) },
-			...(at === undefined
-				? []
-				: [
-						{ label: 'Copy path', run: () => void writeClipboard(at).catch(failed('copy path')) },
-						...(canReveal() ? [{ label: 'Reveal in Finder', run: () => void revealInFinder(at).catch(failed('reveal in Finder')) }] : []),
-					]),
+			// A diff tab's are its file's.
+			{ label: 'Copy path', run: () => void writeClipboard(tabFile(path)).catch(failed('copy path')) },
+			...(canReveal() ? [{ label: 'Reveal in Finder', run: () => void revealInFinder(tabFile(path)).catch(failed('reveal in Finder')) }] : []),
 		];
 		menu = { at: { x: e.clientX, y: e.clientY }, items, path, shown: active, key: ++opens };
 	}
@@ -207,23 +196,18 @@
 				class="name"
 				role="tab"
 				aria-selected={active === path}
-				title={file(path)}
+				title={tabFile(path)}
 				onpointerdown={(e) => down(e, path)}
 				onpointermove={move}
 				onlostpointercapture={lost}
 				onclick={() => click(path)}
 				ondblclick={() => onpin(path)}
 			>
-				{#if path === WELCOME}
-					<Icon name="folder" />
-					<span class="label">{name(path)}</span>
-				{:else}
-					<span class="label">{name(path)}</span>
-					{#if diffPath(path) !== undefined}<span class="mark">diff</span>{/if}
-					{#if dirty.has(path)}<span class="dirty" role="img" aria-label="Unsaved" title="Unsaved"></span>{/if}
-				{/if}
+				<span class="label">{fileName(tabFile(path))}</span>
+				{#if diffPath(path) !== undefined}<span class="mark">diff</span>{/if}
+				{#if dirty.has(path)}<span class="dirty" role="img" aria-label="Unsaved" title="Unsaved"></span>{/if}
 			</button>
-			<button class="icon-btn close" aria-label="Close {name(path)}{diffPath(path) !== undefined ? ' diff' : ''}" title="Close" onclick={() => onclose([path])}>
+			<button class="icon-btn close" aria-label="Close {fileName(tabFile(path))}{diffPath(path) !== undefined ? ' diff' : ''}" title="Close" onclick={() => onclose([path])}>
 				<Icon name="x-mark" />
 			</button>
 		</div>

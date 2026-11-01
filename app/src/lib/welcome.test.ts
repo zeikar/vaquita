@@ -49,7 +49,7 @@ describe('newRepos', () => {
 });
 
 describe('selectionAfterRemoval', () => {
-	const before = { '/tmp/repo': ['welcome', '/tmp/repo/a.ts'], '/tmp/empty': ['welcome'] };
+	const before = { '/tmp/repo': ['/tmp/repo/a.ts'] };
 	it('keeps a repo that is still listed', () => {
 		expect(selectionAfterRemoval(before, '/tmp/repo', ['/tmp/repo'])).toBe('/tmp/repo');
 	});
@@ -59,7 +59,7 @@ describe('selectionAfterRemoval', () => {
 	it('follows them to the parent repo', () => {
 		expect(selectionAfterRemoval({ '/tmp/repo/sub': ['/tmp/repo/sub/a.ts'] }, '/tmp/repo/sub', ['/tmp/repo'])).toBe('/tmp/repo');
 	});
-	it('selects nothing when only the welcome tab was there', () => {
+	it('selects nothing when it had no tabs', () => {
 		expect(selectionAfterRemoval(before, '/tmp/empty', [])).toBeUndefined();
 	});
 });

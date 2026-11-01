@@ -35,7 +35,7 @@
 	import SidebarEdge from './lib/SidebarEdge.svelte';
 	import { load, save } from './lib/storage';
 	import TabBar from './lib/TabBar.svelte';
-	import { closeInGroup, fallback, fileName, groupKey, loadTabs, neighbour, openFileTab, openWelcomeTab, OTHER, prune, saveTabs, setOrder, touch, unpreview, WELCOME, type Previews, type Recent } from './lib/tabs';
+	import { closeInGroup, fallback, fileName, groupKey, loadTabs, neighbour, openFileTab, OTHER, prune, saveTabs, setOrder, touch, unpreview, WELCOME, type Previews, type Recent } from './lib/tabs';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
 	import { isTauri } from './lib/tauri';
@@ -61,7 +61,8 @@
 	});
 	// The file tabs of every group, and the one shown; undefined is the
 	// terminal, as after a relaunch and whenever another session is selected,
-	// and nothing at all while no session is.
+	// and nothing at all while no session is. WELCOME is a repo's welcome,
+	// shown over its session's terminal or alone; it is no tab of any group.
 	let groups = $state(loadTabs());
 	let active = $state<string>();
 	// The preview tab of each group, for the app run only.
@@ -133,9 +134,11 @@
 		else void showTab(sid === undefined && selectedRepo !== undefined ? WELCOME : undefined);
 	});
 	// A repo added or removed can move the session to another group, whose
-	// tabs do not include the one shown.
+	// tabs do not include the one shown, or leave the welcome with no repo.
+	// A repo selected without a session has its welcome to go back to.
 	$effect(() => {
-		if (active !== undefined && !groupTabs.includes(active)) void showTab(undefined);
+		if (active === undefined || (active === WELCOME ? root !== undefined : groupTabs.includes(active))) return;
+		void showTab(!hasTerminal && root !== undefined ? WELCOME : undefined);
 	});
 	// A removed repo is no selection; the app welcome shows instead. Not before
 	// the daemon's list, as the one the app starts with is empty.
@@ -162,8 +165,8 @@
 		if (added !== undefined) untrack(() => openWelcome(added));
 	});
 
-	// A repo's name in the sidebar shows its welcome tab. A session of that
-	// repo stays selected, its terminal covered as by a file; any other is
+	// A repo's name in the sidebar shows its welcome. A session of that repo
+	// stays selected, its terminal covered as by a file; any other is
 	// deselected, so the repo is the selection. Not under the new-session
 	// dialog, which keeps what it opened over, as showTab does.
 	function openWelcome(repo: string): void {
@@ -172,8 +175,6 @@
 			manager.deselect();
 			selectedRepo = repo;
 		}
-		groups = openWelcomeTab(groups, repo);
-		saveTabs(groups);
 		void showTab(WELCOME);
 	}
 
@@ -251,8 +252,9 @@
 	async function showTab(path: string | undefined): Promise<void> {
 		if (dialogOpen && path !== undefined) return;
 		active = path;
-		// Every change of the shown tab ends here, so this one line keeps the list.
-		if (group !== undefined) recent.set(group, touch(recent.get(group) ?? [], path));
+		// Every change of the shown tab ends here, so this one line keeps the
+		// list. The welcome is no tab that closing one could go back to.
+		if (group !== undefined && path !== WELCOME) recent.set(group, touch(recent.get(group) ?? [], path));
 		// The file pane is there to take the focus only once it has rendered.
 		await tick();
 		if (!dialogOpen) focusContent();
@@ -298,14 +300,22 @@
 		saveTabs(groups);
 		if (active === undefined || !paths.includes(active)) return;
 		const next = fallback(recent.get(key) ?? [], groups[key] ?? [], hasTerminal);
-		// A repo selected by its name with no tab left is no selection any more.
-		if (next === undefined && !hasTerminal) selectedRepo = undefined;
-		void showTab(next);
+		if (next !== undefined || hasTerminal) void showTab(next);
+		// A repo selected by its name with no tab left shows its welcome again;
+		// Other, which has none, is no selection any more.
+		else if (root !== undefined) void showTab(WELCOME);
+		else {
+			selectedRepo = undefined;
+			void showTab(undefined);
+		}
 	}
 
 	// ⌘W: the file tab shown, else the window, as the menu's Close Window did.
+	// The welcome is no tab, so the window it is in closes, as over a terminal.
 	function closeActive(): void {
-		if (active !== undefined) void closeFileTabs([active]);
+		if (active !== undefined && active !== WELCOME) void closeFileTabs([active]);
+		// The welcome over a session's terminal is set aside like a tab would be.
+		else if (active === WELCOME && hasTerminal) void showTab(undefined);
 		else getCurrentWindow().close().catch((e) => manager.report(`closing the window failed: ${e instanceof Error ? e.message : String(e)}`));
 	}
 
@@ -337,8 +347,10 @@
 		onDestroy(() => void unlisten.then((f) => f(), () => {}));
 	}
 
+	// A repo's welcome with no session and no tabs has nothing to step to.
 	function stepTab(step: number): void {
-		void showTab(neighbour(groupTabs, active, step, hasTerminal));
+		const next = neighbour(groupTabs, active, step, hasTerminal);
+		if (next !== undefined || hasTerminal) void showTab(next);
 	}
 	let destroyed = false;
 	onDestroy(() => {
@@ -633,10 +645,10 @@
 		fallbackFocus={focusContent}
 	/>
 	<section class="content">
-		{#if group !== undefined}
+		<!-- No bar with nothing in it: a repo's welcome alone starts at the top, as the app welcome does. -->
+		{#if group !== undefined && (hasTerminal || groupTabs.length > 0)}
 			<TabBar
 				title={selectedRow ? sessionTitle(selectedRow.info) : undefined}
-				repo={root}
 				tabs={groupTabs}
 				{active}
 				preview={group !== undefined ? previews[group] : undefined}

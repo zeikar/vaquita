@@ -3,7 +3,7 @@
 	// or selecting a session of another repo keeps the view chosen.
 	let view = $state<'files' | 'changes' | 'past'>('files');
 
-	// The welcome tab's "All past conversations" opens the Past view.
+	// The repo welcome's "All past conversations" opens the Past view.
 	export function showView(v: 'files' | 'changes' | 'past') {
 		view = v;
 	}

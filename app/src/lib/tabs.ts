@@ -9,8 +9,10 @@ export const OTHER = 'other';
 
 export type TabGroups = Record<string, string[]>;
 
-// The tab a repo selected without a session shows. File tabs are absolute
-// paths and diff tabs start with "diff:", so it collides with neither.
+// What the shown slot holds while a repo's welcome shows. It is a view, not a
+// tab: no group holds it, so it is never stored, stepped into or recorded as
+// shown. File tabs are absolute paths and diff tabs start with "diff:", so it
+// collides with neither.
 export const WELCOME = 'welcome';
 
 export function groupKey(cwd: string, repos: string[]): string {
@@ -24,11 +26,6 @@ export function fileName(path: string): string {
 export function openTab(groups: TabGroups, key: string, path: string): TabGroups {
 	const tabs = groups[key] ?? [];
 	return tabs.includes(path) ? { ...groups } : { ...groups, [key]: [...tabs, path] };
-}
-
-export function openWelcomeTab(groups: TabGroups, key: string): TabGroups {
-	const tabs = groups[key] ?? [];
-	return tabs.includes(WELCOME) ? { ...groups } : { ...groups, [key]: [WELCOME, ...tabs] };
 }
 
 // The preview tab of each group, by key: the one the next opened file takes the
@@ -106,10 +103,11 @@ export function neighbour(tabs: string[], active: string | undefined, step: numb
 	const strip: (string | undefined)[] = terminal ? [undefined, ...tabs] : tabs;
 	const n = strip.length;
 	if (n === 0) return undefined;
-	// An active path that is not in the strip counts as the terminal; without
-	// one, a step forward lands on the first tab and one back on the last.
+	// What is shown outside the strip, as the welcome is, sits before it: a
+	// step forward lands on the first, the terminal if there is one, and one
+	// back on the last.
 	let at = strip.indexOf(active);
-	if (at < 0) at = terminal || step < 0 ? 0 : -1;
+	if (at < 0) at = step < 0 ? 0 : -1;
 	return strip[(((at + step) % n) + n) % n];
 }
 
@@ -133,26 +131,24 @@ export function fallback(recent: Recent, tabs: string[], terminal = true): strin
 
 // Tabs of a repo that is no longer registered would never be shown again, so
 // they move to the group its sessions fall into now (a registered parent repo,
-// else OTHER), where an unsaved edit in one is still reachable. The welcome
-// tab is the repo's own, not one of its files, so it goes with the repo. The
-// same object comes back when no repo went.
+// else OTHER), where an unsaved edit in one is still reachable. The same object
+// comes back when no repo went.
 export function prune(groups: TabGroups, repos: string[]): TabGroups {
 	const gone = Object.keys(groups).filter((key) => key !== OTHER && !repos.includes(key));
 	if (gone.length === 0) return groups;
 	const kept: TabGroups = Object.fromEntries(Object.entries(groups).filter(([key]) => !gone.includes(key)));
 	for (const key of gone) {
-		const moved = groups[key].filter((p) => p !== WELCOME);
-		if (moved.length === 0) continue;
 		const to = groupKey(key, repos);
 		let tabs = kept[to] ?? [];
-		for (const p of moved) if (!tabs.includes(p)) tabs = [...tabs, p];
+		for (const p of groups[key]) if (!tabs.includes(p)) tabs = [...tabs, p];
 		kept[to] = tabs;
 	}
 	return kept;
 }
 
 // Anything that is not an object of string arrays leaves no tabs open; stray
-// non-string entries inside an array are dropped.
+// non-string entries inside an array are dropped, and so is the welcome, which
+// a build that kept it as a tab stored.
 export function parseStored(json: string | null): TabGroups {
 	if (json === null) return {};
 	let v: unknown;
@@ -169,7 +165,7 @@ export function parseStored(json: string | null): TabGroups {
 	const groups: TabGroups = {};
 	for (const [key, tabs] of Object.entries(v)) {
 		if (!Array.isArray(tabs)) continue;
-		const paths = tabs.filter((p): p is string => typeof p === 'string');
+		const paths = tabs.filter((p): p is string => typeof p === 'string' && p !== WELCOME);
 		if (paths.length > 0) groups[key] = [...new Set(paths)];
 	}
 	return groups;
