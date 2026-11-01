@@ -33,11 +33,13 @@ main() {
 		mkdir -p "$dest"
 	fi
 
-	local tmp
+	# The app is copied beside its final place and renamed when complete, so a
+	# copy cut short never looks like an installed app.
+	local tmp staging="$dest/.vaquita.app.installing-$$"
 	tmp="$(mktemp -d)"
-	# Expanded now: tmp is local and gone by the time EXIT fires.
+	# Expanded now: these are local and gone by the time EXIT fires.
 	# shellcheck disable=SC2064
-	trap "rm -rf '$tmp'" EXIT
+	trap "rm -rf '$tmp' '$staging'" EXIT
 
 	# latest.json is the feed the app polls, so it names the latest release.
 	local version
@@ -52,7 +54,8 @@ main() {
 
 	ditto -xk "$tmp/$zip" "$tmp/out"
 	[[ -d "$tmp/out/vaquita.app" ]] || fail "$zip has no vaquita.app."
-	ditto "$tmp/out/vaquita.app" "$dest/vaquita.app"
+	ditto "$tmp/out/vaquita.app" "$staging"
+	mv "$staging" "$dest/vaquita.app"
 
 	echo "Installed vaquita $version in $dest."
 	open "$dest/vaquita.app" || echo "Open $dest/vaquita.app to start it."
