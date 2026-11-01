@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { barPath, shortPath } from './paths';
+import { barPath, shortPath, tildePath } from './paths';
 
 describe('shortPath', () => {
 	const home = '/Users/me';
@@ -45,5 +45,21 @@ describe('barPath', () => {
 	it('stays absolute without a home', () => {
 		expect(barPath('/Users/me/notes/todo.md')).toEqual({ dir: '/Users/me/notes/', name: 'todo.md' });
 		expect(barPath('/etc/hosts', '/tmp/repo')).toEqual({ dir: '/etc/', name: 'hosts' });
+	});
+});
+
+describe('tildePath', () => {
+	const home = '/Users/me';
+	it('starts with ~ under the home folder, in full', () => {
+		expect(tildePath('/Users/me/src/example/deep/repo', home)).toBe('~/src/example/deep/repo');
+		expect(tildePath('/Users/me', home)).toBe('~');
+		expect(tildePath('/Users/me/', home)).toBe('~');
+	});
+	it('compares whole components', () => {
+		expect(tildePath('/Users/meow/src', home)).toBe('/Users/meow/src');
+	});
+	it('stays as it is outside home or without one', () => {
+		expect(tildePath('/tmp/repo', home)).toBe('/tmp/repo');
+		expect(tildePath('/Users/me/src/example')).toBe('/Users/me/src/example');
 	});
 });

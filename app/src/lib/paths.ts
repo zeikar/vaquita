@@ -43,3 +43,11 @@ export function barPath(path: string, repo?: string, home?: string): { dir: stri
 	const underHome = below(parts, home);
 	return { dir: underHome !== undefined ? '~/' + slashed(underHome) : '/' + slashed(parts), name };
 }
+
+// A folder in full, from ~ under the home folder: the repo welcome's crumb,
+// where the whole path is the point and shortPath's cut form would hide it.
+export function tildePath(path: string, home?: string): string {
+	const underHome = below(components(path), home);
+	if (underHome === undefined) return path;
+	return underHome.length === 0 ? '~' : '~/' + underHome.join('/');
+}
