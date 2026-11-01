@@ -4,6 +4,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TabBar from './TabBar.svelte';
+import { WELCOME } from './tabs';
 
 const opener = vi.hoisted(() => ({ revealItemInDir: vi.fn(async (_path: string) => {}) }));
 vi.mock('@tauri-apps/plugin-opener', () => opener);
@@ -11,9 +12,10 @@ vi.mock('@tauri-apps/plugin-opener', () => opener);
 let target: HTMLElement;
 let bar: ReturnType<typeof mount> | undefined;
 
-function show(tabs: string[], active?: string, preview?: string) {
+// opts sets the title and the repo; a title left undefined is no session.
+function show(tabs: string[], active?: string, preview?: string, opts: { title?: string; repo?: string } = { title: 'claude' }) {
 	const props = $state({
-		title: 'claude',
+		...opts,
 		tabs,
 		active,
 		preview,
@@ -99,6 +101,29 @@ describe('TabBar', () => {
 		expect(tabs()[2].title).toBe('/tmp/repo/src/main.ts');
 		expect(target.querySelector('button[aria-label="Close main.ts"]')).not.toBeNull();
 		expect(target.querySelector('button[aria-label="Close main.ts diff"]')).not.toBeNull();
+	});
+
+	it('has no terminal tab without a title', () => {
+		show(['/tmp/repo/a.md'], '/tmp/repo/a.md', undefined, { repo: '/tmp/repo' });
+		expect(names()).toEqual(['a.md']);
+		expect(target.querySelector('svg[data-icon="command-line"]')).toBeNull();
+	});
+
+	it('shows the welcome tab by its repo’s name with a folder icon, and selects it on click', () => {
+		const props = show([WELCOME, '/tmp/repo/a.md'], '/tmp/repo/a.md', undefined, { repo: '/tmp/repo' });
+		expect(names()).toEqual(['repo', 'a.md']);
+		expect(tabs()[0].querySelector('svg[data-icon="folder"]')).not.toBeNull();
+		expect(tabs()[0].title).toBe('/tmp/repo');
+		expect(tabs()[0].querySelector('.mark')).toBeNull();
+		expect(tabs()[0].parentElement!.dataset.path).toBe(WELCOME);
+		tabs()[0].click();
+		expect(props.onselect).toHaveBeenCalledWith(WELCOME);
+	});
+
+	it('closes the welcome tab from its button', () => {
+		const props = show([WELCOME], WELCOME, undefined, { repo: '/tmp/repo' });
+		target.querySelector<HTMLButtonElement>('button[aria-label="Close repo"]')!.click();
+		expect(props.onclose).toHaveBeenCalledWith([WELCOME]);
 	});
 
 	it('marks a tab with unsaved edits', () => {
@@ -213,6 +238,28 @@ describe('TabBar', () => {
 			choose('Copy path');
 			expect(write).toHaveBeenCalledWith(c);
 			write.mockRestore();
+		});
+
+		it('copies the welcome tab’s repo path', () => {
+			const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+			show([WELCOME, a], WELCOME, undefined, { title: 'claude', repo: '/tmp/repo' });
+			rightClick('repo');
+			choose('Copy path');
+			expect(write).toHaveBeenCalledWith('/tmp/repo');
+			write.mockRestore();
+		});
+
+		it('closes the welcome tab', () => {
+			const props = show([WELCOME, a], WELCOME, undefined, { repo: '/tmp/repo' });
+			rightClick('repo');
+			choose('Close');
+			expect(props.onclose).toHaveBeenCalledWith([WELCOME]);
+		});
+
+		it('leaves out Copy path for a welcome tab with no repo', () => {
+			show([WELCOME, a]);
+			rightClick('');
+			expect(labels()).toEqual(['Close', 'Close Others', 'Close to the Right', 'Close All']);
 		});
 
 		it('copies the path, and reports a failure', async () => {
