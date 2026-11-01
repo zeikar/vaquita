@@ -28,6 +28,8 @@
 		addDisabled,
 		onaddrepo,
 		onnewsession,
+		selectedRepo,
+		onselectrepo = () => {},
 	}: {
 		sessions: SessionRow<unknown>[];
 		selected?: number;
@@ -50,6 +52,9 @@
 		addDisabled: boolean;
 		onaddrepo: () => void;
 		onnewsession: () => void;
+		// The repo whose header shows selected, as its welcome tab is the one shown.
+		selectedRepo?: string;
+		onselectrepo?: (repo: string) => void;
 	} = $props();
 
 	const groups = $derived(groupRows(sessions, repos));
@@ -156,11 +161,13 @@
 		<RepoHeader
 			repo={g.repo}
 			collapsed={shut}
+			selected={g.repo !== undefined && g.repo === selectedRepo}
 			needs={shut ? needs(g.rows) : undefined}
 			unread={shut && g.rows.some((r) => r.info.unread)}
 			{disabled}
 			menuOpen={menu?.owner === owner}
 			ontoggle={() => toggle(key)}
+			onselect={() => g.repo !== undefined && onselectrepo(g.repo)}
 			onstart={(cmd) => g.repo !== undefined && onstart(g.repo, cmd)}
 			onmenu={(at) => g.repo !== undefined && openMenu(owner, at, repoMenu(g.repo))}
 		/>

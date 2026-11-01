@@ -37,6 +37,8 @@ function show(sessions: SessionRow<unknown>[], repos: string[] = []) {
 		addDisabled: false,
 		onaddrepo: vi.fn(),
 		onnewsession: vi.fn(),
+		selectedRepo: undefined as string | undefined,
+		onselectrepo: vi.fn(),
 	});
 	target = document.createElement('div');
 	document.body.append(target);
@@ -316,7 +318,8 @@ describe('SessionList rows', () => {
 });
 
 describe('SessionList repo groups', () => {
-	const header = (name: string) => [...target.querySelectorAll<HTMLButtonElement>('button[aria-expanded]:not([aria-haspopup])')].find((b) => b.textContent?.trim() === name)!;
+	const header = (name: string) => [...target.querySelectorAll<HTMLButtonElement>('button.name')].find((b) => b.textContent?.trim() === name)!;
+	const chevron = (name: string) => header(name).closest('li')!.querySelector<HTMLButtonElement>('button.chevron')!;
 	const button = (label: string) => target.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
 	const menu = () => target.querySelector<HTMLElement>('[role="menu"]');
 	const items = () => [...target.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
@@ -337,25 +340,57 @@ describe('SessionList repo groups', () => {
 	it('heads a repo group with the folder name, titled with the full path', () => {
 		show([row(1)], ['/tmp/repo']);
 		expect(header('repo').title).toBe('/tmp/repo');
-		expect(header('repo').getAttribute('aria-expanded')).toBe('true');
+		expect(chevron('repo').getAttribute('aria-expanded')).toBe('true');
+		expect(chevron('repo').getAttribute('aria-label')).toBe('Collapse repo');
 		expect(target.textContent).not.toContain('remove');
 	});
 
-	it('collapses a group on its toggle, and keeps it collapsed through a remount', () => {
+	it('collapses a group on its chevron, without selecting the repo, and keeps it collapsed through a remount', () => {
 		const p = show([row(1), row(2)], ['/tmp/repo']);
 		expect(rowCount()).toBe(2);
-		click(header('repo'));
+		click(chevron('repo'));
 		expect(rowCount()).toBe(0);
-		expect(header('repo').getAttribute('aria-expanded')).toBe('false');
-		expect(header('repo').querySelector('[data-icon="chevron-right"]')).not.toBeNull();
+		expect(chevron('repo').getAttribute('aria-expanded')).toBe('false');
+		expect(chevron('repo').getAttribute('aria-label')).toBe('Expand repo');
+		expect(chevron('repo').querySelector('[data-icon="chevron-right"]')).not.toBeNull();
 		remount(p);
 		expect(rowCount()).toBe(0);
-		expect(header('repo').getAttribute('aria-expanded')).toBe('false');
-		click(header('repo'));
+		expect(chevron('repo').getAttribute('aria-expanded')).toBe('false');
+		click(chevron('repo'));
 		expect(rowCount()).toBe(2);
-		expect(header('repo').querySelector('[data-icon="chevron-down"]')).not.toBeNull();
+		expect(chevron('repo').querySelector('[data-icon="chevron-down"]')).not.toBeNull();
 		remount(p);
 		expect(rowCount()).toBe(2);
+		expect(p.onselectrepo).not.toHaveBeenCalled();
+	});
+
+	it('selects the repo on a click on its name, which leaves the group open', () => {
+		const p = show([row(1)], ['/tmp/repo']);
+		click(header('repo'));
+		expect(p.onselectrepo).toHaveBeenCalledTimes(1);
+		expect(p.onselectrepo).toHaveBeenCalledWith('/tmp/repo');
+		expect(rowCount()).toBe(1);
+		expect(chevron('repo').getAttribute('aria-expanded')).toBe('true');
+	});
+
+	it('collapses a group on a double-click on its name', () => {
+		show([row(1)], ['/tmp/repo']);
+		header('repo').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+		flushSync();
+		expect(rowCount()).toBe(0);
+		expect(chevron('repo').getAttribute('aria-expanded')).toBe('false');
+	});
+
+	it('marks the selected repo header', () => {
+		const p = show([row(1, { cwd: '/tmp/a' }), row(2, { cwd: '/tmp/elsewhere' })], ['/tmp/a', '/tmp/b']);
+		const marked = () => [...target.querySelectorAll('li.selected button.name')].map((b) => b.textContent?.trim());
+		expect(marked()).toEqual([]);
+		p.selectedRepo = '/tmp/b';
+		flushSync();
+		expect(marked()).toEqual(['b']);
+		p.selectedRepo = undefined;
+		flushSync();
+		expect(marked()).toEqual([]);
 	});
 
 	it('shows on a collapsed header that a hidden row needs input, else a login, and that one is unread', () => {
@@ -372,7 +407,7 @@ describe('SessionList repo groups', () => {
 		const dot = () => target.querySelector('.badges .dot.unread');
 		// Open groups leave it to their rows.
 		expect(target.querySelector('.badges')).toBeNull();
-		click(header('repo'));
+		click(chevron('repo'));
 		expect(badge()?.getAttribute('aria-label')).toBe('needs input');
 		expect(badge()?.querySelector('[data-icon="exclamation-triangle"]')).not.toBeNull();
 		expect(dot()).not.toBeNull();
@@ -387,7 +422,7 @@ describe('SessionList repo groups', () => {
 		// The group outside every repo too.
 		p.sessions = [row(4, { cwd: '/tmp/elsewhere', unread: true })];
 		flushSync();
-		click(header('other'));
+		click(chevron('other'));
 		expect(dot()).not.toBeNull();
 		expect(badge()).toBeNull();
 	});
@@ -401,13 +436,19 @@ describe('SessionList repo groups', () => {
 	});
 
 	it('collapses the group of sessions outside every repo too', () => {
-		show([row(1), row(2, { cwd: '/tmp/elsewhere' })], ['/tmp/repo']);
+		const p = show([row(1), row(2, { cwd: '/tmp/elsewhere' })], ['/tmp/repo']);
 		expect(header('other').title).toBe('other');
+		expect(chevron('other').getAttribute('aria-label')).toBe('Collapse other');
 		expect(target.querySelector('button[aria-label="Repo menu"]')).not.toBeNull();
 		expect(target.querySelectorAll('button[aria-label="Repo menu"]')).toHaveLength(1);
+		// It has no repo to select, so its name toggles as its chevron does.
 		click(header('other'));
 		expect(rowCount()).toBe(1);
-		expect(header('repo').getAttribute('aria-expanded')).toBe('true');
+		expect(chevron('other').getAttribute('aria-expanded')).toBe('false');
+		expect(chevron('repo').getAttribute('aria-expanded')).toBe('true');
+		click(chevron('other'));
+		expect(rowCount()).toBe(2);
+		expect(p.onselectrepo).not.toHaveBeenCalled();
 	});
 
 	it('starts claude or codex in the repo from its header', () => {
@@ -446,6 +487,12 @@ describe('SessionList repo groups', () => {
 		document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
 		flushSync();
 		expect(menu()).toBeNull();
+		// Escape gives the focus to the name, which the right-click focused.
+		header('repo').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+		flushSync();
+		menu()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		flushSync();
+		expect(document.activeElement).toBe(header('repo'));
 		// The group without a repo has no menu.
 		const o = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
 		header('other').dispatchEvent(o);

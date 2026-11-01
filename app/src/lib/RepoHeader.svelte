@@ -7,17 +7,20 @@
 	let {
 		repo,
 		collapsed,
+		selected,
 		needs,
 		unread,
 		disabled,
 		menuOpen,
 		ontoggle,
+		onselect,
 		onstart,
 		onmenu,
 	}: {
 		// None for the group of sessions outside every repo, which has no menu.
 		repo?: string;
 		collapsed: boolean;
+		selected: boolean;
 		// What the group's hidden rows would show: one waits on the user, one
 		// is unread. Given only while collapsed.
 		needs?: 'input' | 'auth';
@@ -25,11 +28,14 @@
 		disabled: boolean;
 		menuOpen: boolean;
 		ontoggle: () => void;
+		// Never called for the group without a repo, whose name toggles.
+		onselect: () => void;
 		onstart: (cmd: string) => void;
 		onmenu: (at: MenuAt) => void;
 	} = $props();
 
-	let toggle: HTMLButtonElement;
+	let nameButton: HTMLButtonElement;
+	const label = $derived(repo === undefined ? 'other' : repoName(repo));
 
 	// Whether the menu was open when the current press began. A press on ⋯
 	// closes it, as any press outside the menu does, and the click that ends
@@ -52,17 +58,28 @@
 	function context(e: MouseEvent) {
 		e.preventDefault();
 		if (repo === undefined) return;
-		toggle.focus();
+		nameButton.focus();
 		onmenu({ x: e.clientX, y: e.clientY });
 	}
 </script>
 
 <svelte:window onpointerdowncapture={() => (pressedOpen = menuOpen)} />
 
-<li oncontextmenu={context}>
-	<button class="toggle" bind:this={toggle} aria-expanded={!collapsed} title={repo ?? 'other'} onclick={() => ontoggle()}>
+<li class:selected oncontextmenu={context}>
+	<button class="chevron" aria-expanded={!collapsed} aria-label="{collapsed ? 'Expand' : 'Collapse'} {label}" onclick={() => ontoggle()}>
 		<Icon name={collapsed ? 'chevron-right' : 'chevron-down'} />
-		<span class="name">{repo === undefined ? 'other' : repoName(repo)}</span>
+	</button>
+	<!-- A double-click collapses too, as the chevron is a small target; its
+	     clicks have selected the repo already. The group without a repo has
+	     only the toggle, and two clicks of it are already a double-click's. -->
+	<button
+		class="name"
+		bind:this={nameButton}
+		title={repo ?? 'other'}
+		onclick={() => (repo === undefined ? ontoggle() : onselect())}
+		ondblclick={() => repo !== undefined && ontoggle()}
+	>
+		{label}
 	</button>
 	{#if repo !== undefined}
 		<span class="actions" class:open={menuOpen}>
@@ -94,8 +111,13 @@
 		align-items: center;
 		gap: 2px;
 		margin: 0 6px;
+		border-radius: 6px;
 		font-size: 11px;
 		color: #999;
+	}
+	/* As a selected session row. */
+	li.selected {
+		background: #37373a;
 	}
 	li:not(:first-child) {
 		margin-top: 12px;
@@ -112,24 +134,26 @@
 		outline-offset: -1px;
 	}
 	/* The chevron's stroke lines up with the rows' agent icons, whose marks
-	   fill more of their box, and the name with their titles. */
-	.toggle {
-		flex: 1;
-		min-width: 0;
+	   fill more of their box, and the name with their titles: the two
+	   buttons' inner padding and the gap between them make the 8px that
+	   was once the space between the chevron and the name in one button. */
+	.chevron {
+		flex: none;
 		display: flex;
 		align-items: center;
-		gap: 8px;
 		height: 22px;
-		padding: 0 6px;
+		padding: 0 4px 0 6px;
 		border-radius: 6px;
-		text-align: left;
-	}
-	.toggle > :global(svg) {
-		flex: none;
 	}
 	/* Set apart from the rows' paths, which have the same size; the case is
 	   the folder's own. */
 	.name {
+		flex: 1;
+		min-width: 0;
+		height: 22px;
+		padding: 0 6px 0 2px;
+		border-radius: 6px;
+		text-align: left;
 		color: #bbb;
 		font-weight: 600;
 		overflow: hidden;
@@ -169,7 +193,7 @@
 		cursor: default;
 	}
 	/* In the rows' status and dot columns, under the actions, which take
-	   their place while shown. Clicks go through to the toggle beneath. */
+	   their place while shown. Clicks go through to the name beneath. */
 	.badges {
 		position: absolute;
 		top: 0;
