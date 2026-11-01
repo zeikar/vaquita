@@ -310,11 +310,10 @@
 		}
 	}
 
-	// ⌘W: the file tab shown, else the window, as the menu's Close Window did.
-	// The welcome is no tab, so the window it is in closes, as over a terminal.
+	// ⌘W: the file tab shown; the welcome over a session's terminal is set
+	// aside like a tab; otherwise the window, as the menu's Close Window did.
 	function closeActive(): void {
 		if (active !== undefined && active !== WELCOME) void closeFileTabs([active]);
-		// The welcome over a session's terminal is set aside like a tab would be.
 		else if (active === WELCOME && hasTerminal) void showTab(undefined);
 		else getCurrentWindow().close().catch((e) => manager.report(`closing the window failed: ${e instanceof Error ? e.message : String(e)}`));
 	}
