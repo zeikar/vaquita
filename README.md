@@ -32,7 +32,15 @@ vaquita is a lightweight ADE (agentic development environment) for macOS. It run
 
 ## Install
 
-Download `vaquita-<version>-macos-arm64.zip` from [Releases](https://github.com/zeikar/vaquita/releases) (Apple Silicon only), unzip it and move `vaquita.app` to `/Applications`. The app is signed with a self-signed certificate and not notarized, so clear the quarantine flag once (recursive, so the embedded daemon is covered too):
+vaquita needs a Mac with Apple Silicon. Install it with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/zeikar/vaquita/main/install.sh | bash
+```
+
+The script downloads the latest release, checks its checksum, puts `vaquita.app` in `/Applications` (or `~/Applications` when `/Applications` is not writable) and opens it. It is for a first install and stops if vaquita is already there.
+
+To install by hand instead, download `vaquita-<version>-macos-arm64.zip` from [Releases](https://github.com/zeikar/vaquita/releases), unzip it and move `vaquita.app` to `/Applications`. The app is signed with a self-signed certificate and not notarized, so a browser download needs its quarantine flag cleared once (recursive, so the embedded daemon is covered too):
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/vaquita.app

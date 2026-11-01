@@ -307,7 +307,13 @@ jobs:
             cat <<'NOTES'
           Apple Silicon only. The app is signed with a self-signed certificate and is not notarized.
 
-          Install: unzip, move `vaquita.app` to `/Applications`, then run this once to clear the quarantine flag (recursive, so the embedded daemon is cleared too):
+          Install:
+
+          ```sh
+          curl -fsSL https://raw.githubusercontent.com/zeikar/vaquita/main/install.sh | bash
+          ```
+
+          Or by hand: unzip, move `vaquita.app` to `/Applications`, then run this once to clear the quarantine flag (recursive, so the embedded daemon is cleared too):
 
           ```sh
           xattr -dr com.apple.quarantine /Applications/vaquita.app
