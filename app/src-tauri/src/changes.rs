@@ -73,6 +73,7 @@ pub struct ChangeList {
     root: String,
     entries: Vec<Change>,
     total: usize,
+    branch: Option<String>,
 }
 
 pub(crate) fn git(folder: &Path) -> Result<Command, String> {
@@ -119,6 +120,18 @@ fn has_head(top: &Path) -> Result<bool, String> {
         Some(1) => Ok(false),
         _ => Err(failed("git rev-parse", &out)),
     }
+}
+
+/// The checked-out branch; None when HEAD is detached.
+fn branch(top: &Path) -> Result<Option<String>, String> {
+    let mut cmd = git(top)?;
+    cmd.args(["symbolic-ref", "--short", "-q", "HEAD"]);
+    let out = run(cmd)?;
+    if !out.status.success() {
+        return Ok(None);
+    }
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok((!name.is_empty()).then_some(name))
 }
 
 /// The `-c` pairs that empty every filter driver the repository's own config
@@ -310,7 +323,7 @@ pub fn list(folder: &Path, cap: usize) -> Result<ChangeList, String> {
             Change { path, abs: abs.to_string_lossy().into_owned(), status: c.to_string(), added, removed, from }
         })
         .collect();
-    Ok(ChangeList { root: top.to_string_lossy().into_owned(), entries, total })
+    Ok(ChangeList { root: top.to_string_lossy().into_owned(), entries, total, branch: branch(&top)? })
 }
 
 #[tauri::command]
@@ -528,6 +541,17 @@ mod tests {
         std::fs::write(d.join("s.txt"), "s\n").unwrap();
         sh(&d, &["add", "s.txt"]);
         d
+    }
+
+    #[test]
+    fn the_list_names_the_branch_until_head_is_detached() {
+        let d = repo("changes-branch");
+        std::fs::write(d.join("a.txt"), "a\n").unwrap();
+        commit(&d);
+        sh(&d, &["checkout", "-q", "-b", "topic"]);
+        assert_eq!(list(&d, 10).unwrap().branch.as_deref(), Some("topic"));
+        sh(&d, &["checkout", "-q", "--detach"]);
+        assert_eq!(list(&d, 10).unwrap().branch, None);
     }
 
     #[test]

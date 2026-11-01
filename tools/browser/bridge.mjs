@@ -213,7 +213,9 @@ function gitChanges(root) {
 		}
 		return { path: r.path, abs, status, added, removed, from: r.from };
 	});
-	return { root: top, entries, total };
+	const br = git(top, ['symbolic-ref', '--short', '-q', 'HEAD']);
+	const branch = br.status === 0 && br.stdout.trim() ? br.stdout.trim() : null;
+	return { root: top, entries, total, branch };
 }
 
 function diffSides(root, given) {

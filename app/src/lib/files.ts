@@ -101,7 +101,8 @@ export type Change = {
 };
 
 // `root` is the toplevel, canonical; `entries` holds at most the first 2000 of `total`.
-export type ChangeList = { root: string; entries: Change[]; total: number };
+// branch is null when HEAD is detached.
+export type ChangeList = { root: string; entries: Change[]; total: number; branch: string | null };
 
 // A side that does not exist is null: no HEAD version for a new file, no file on disk for a deleted one.
 export type Sides = { head: string | null; work: string | null };

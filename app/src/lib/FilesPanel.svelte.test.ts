@@ -179,14 +179,14 @@ describe('FilesPanel', () => {
 	it('badges the last count known, 2000+ past the cap, and nothing for none', () => {
 		show({ root: '/tmp/repo', cwd: '/tmp/repo' });
 		expect(badge()).toBeUndefined();
-		changeLists.lists = { '/tmp/repo': { list: { root: '/tmp/repo', entries: entries(3), total: 3 }, busy: false } };
+		changeLists.lists = { '/tmp/repo': { list: { root: '/tmp/repo', entries: entries(3), total: 3, branch: null }, busy: false } };
 		flushSync();
 		expect(badge()).toBe('3');
 		expect(button('Changes')!.getAttribute('aria-label')).toBe('Changes, 3 changed');
-		changeLists.lists = { '/tmp/repo': { list: { root: '/tmp/repo', entries: entries(2000), total: 2400 }, busy: false } };
+		changeLists.lists = { '/tmp/repo': { list: { root: '/tmp/repo', entries: entries(2000), total: 2400, branch: null }, busy: false } };
 		flushSync();
 		expect(badge()).toBe('2000+');
-		changeLists.lists = { '/tmp/repo': { list: { root: '/tmp/repo', entries: [], total: 0 }, busy: false } };
+		changeLists.lists = { '/tmp/repo': { list: { root: '/tmp/repo', entries: [], total: 0, branch: null }, busy: false } };
 		flushSync();
 		expect(badge()).toBeUndefined();
 		expect(button('Changes')!.hasAttribute('aria-label')).toBe(false);
@@ -241,7 +241,7 @@ describe('FilesPanel', () => {
 
 	it('runs status once for one turn end, through the real lists, and is not rerun by them', async () => {
 		spy.mockRestore();
-		vi.mocked(gitChanges).mockResolvedValue({ root: '/tmp/repo', entries: entries(2), total: 2 });
+		vi.mocked(gitChanges).mockResolvedValue({ root: '/tmp/repo', entries: entries(2), total: 2, branch: null });
 		const props = show({ root: '/tmp/repo', cwd: '/tmp/repo', sessions: [session(1, '/tmp/repo', 'working')] });
 		vi.mocked(endedTurns).mockClear();
 		props.sessions = [session(1, '/tmp/repo', 'done')];

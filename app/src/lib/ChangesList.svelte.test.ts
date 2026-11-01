@@ -35,7 +35,7 @@ const change = (path: string, status: Change['status'], added: number | null, re
 	removed,
 	from,
 });
-const list = (...entries: Change[]): ChangeList => ({ root, entries, total: entries.length });
+const list = (...entries: Change[]): ChangeList => ({ root, entries, total: entries.length, branch: null });
 
 // Each test gets a root of its own, as the lists are kept by root for the module's life.
 let roots = 0;
@@ -73,7 +73,7 @@ beforeEach(() => {
 	root = `/tmp/repo${++roots}`;
 	fake.run = undefined;
 	fake.unlisten = vi.fn();
-	vi.mocked(gitChanges).mockReset().mockResolvedValue({ root: '', entries: [], total: 0 });
+	vi.mocked(gitChanges).mockReset().mockResolvedValue({ root: '', entries: [], total: 0, branch: null });
 	vi.mocked(watchRepo).mockReset().mockResolvedValue();
 	vi.mocked(onRepoChanged)
 		.mockReset()
@@ -107,7 +107,7 @@ describe('ChangesList', () => {
 		await settle();
 		expect(target.textContent).toContain('No changes');
 		hide();
-		vi.mocked(gitChanges).mockResolvedValue({ root, entries: [change('a', 'M', 1, 0)], total: 2001 });
+		vi.mocked(gitChanges).mockResolvedValue({ root, entries: [change('a', 'M', 1, 0)], total: 2001, branch: null });
 		show();
 		await settle();
 		expect(target.querySelector('.more')?.textContent).toContain('2000 more not shown');

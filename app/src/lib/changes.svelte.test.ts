@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChangeLists } from './changes.svelte';
 import type { ChangeList } from './files';
 
-const list = (root: string, n: number): ChangeList => ({ root, entries: [], total: n });
+const list = (root: string, n: number): ChangeList => ({ root, entries: [], total: n, branch: null });
 
 function deferred<T>() {
 	let resolve!: (v: T) => void;
