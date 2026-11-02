@@ -59,6 +59,9 @@ describe('selectionAfterRemoval', () => {
 	it('follows them to the parent repo', () => {
 		expect(selectionAfterRemoval({ '/tmp/repo/sub': ['/tmp/repo/sub/a.ts'] }, '/tmp/repo/sub', ['/tmp/repo'])).toBe('/tmp/repo');
 	});
+	it('selects nothing when it had only a session tab', () => {
+		expect(selectionAfterRemoval({ '/tmp/repo': ['session:3'] }, '/tmp/repo', [])).toBeUndefined();
+	});
 	it('selects nothing when it had no tabs', () => {
 		expect(selectionAfterRemoval(before, '/tmp/empty', [])).toBeUndefined();
 	});

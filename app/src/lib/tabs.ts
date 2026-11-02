@@ -1,9 +1,9 @@
 import { repoOf } from './groups';
 import { load, save } from './storage';
 
-// Open file tabs per group: the repo path, or OTHER for sessions under no repo
-// (the same key the session list uses for that group). Repo keys are absolute
-// paths, so none can collide with OTHER.
+// Open tabs (files, diffs, sessions) per group: the repo path, or OTHER for
+// sessions under no repo (the same key the session list uses for that group).
+// Repo keys are absolute paths, so none can collide with OTHER.
 export const TABS_KEY = 'vaquita.file-tabs';
 export const OTHER = 'other';
 
@@ -97,36 +97,31 @@ export function setOrder(groups: TabGroups, key: string, order: string[]): TabGr
 	return { ...groups, [key]: [...order.filter((p) => tabs.includes(p)), ...tabs.filter((p) => !order.includes(p))] };
 }
 
-// The strip is the terminal (undefined) followed by the tabs, or the tabs
-// alone while no session is selected, and wraps around.
-export function neighbour(tabs: string[], active: string | undefined, step: number, terminal = true): string | undefined {
-	const strip: (string | undefined)[] = terminal ? [undefined, ...tabs] : tabs;
-	const n = strip.length;
+// The strip is the tabs, and wraps around.
+export function neighbour(tabs: string[], active: string | undefined, step: number): string | undefined {
+	const n = tabs.length;
 	if (n === 0) return undefined;
 	// What is shown outside the strip, as the welcome is, sits before it: a
-	// step forward lands on the first, the terminal if there is one, and one
-	// back on the last.
-	let at = strip.indexOf(active);
+	// step forward lands on the first tab, one back on the last.
+	let at = active === undefined ? -1 : tabs.indexOf(active);
 	if (at < 0) at = step < 0 ? 0 : -1;
-	return strip[(((at + step) % n) + n) % n];
+	return tabs[(((at + step) % n) + n) % n];
 }
 
-// The tabs of one group in the order they were last shown, most recent first;
-// undefined is the terminal. Kept per group for the app run only. A closed
-// path may stay in the list: fallback skips what is not open, and a reopened
-// file is shown, which moves it to the front anyway.
-export type Recent = (string | undefined)[];
+// The tabs of one group in the order they were last shown, most recent first.
+// Kept per group for the app run only. A closed key may stay in the list:
+// fallback skips what is not open, and a reopened tab is shown, which moves it
+// to the front anyway.
+export type Recent = string[];
 
-export function touch(recent: Recent, shown: string | undefined): Recent {
+export function touch(recent: Recent, shown: string): Recent {
 	return [shown, ...recent.filter((p) => p !== shown)];
 }
 
 // Where closing the shown tab goes: the most recently shown tab still open,
-// else the terminal. Without a terminal, the first open tab is the last
-// resort, and undefined means no tab is left.
-export function fallback(recent: Recent, tabs: string[], terminal = true): string | undefined {
-	if (terminal) return recent.find((p) => p === undefined || tabs.includes(p));
-	return recent.find((p) => p !== undefined && tabs.includes(p)) ?? tabs[0];
+// else the first one, and undefined means no tab is left.
+export function fallback(recent: Recent, tabs: string[]): string | undefined {
+	return recent.find((p) => tabs.includes(p)) ?? tabs[0];
 }
 
 // Tabs of a repo that is no longer registered would never be shown again, so

@@ -143,71 +143,45 @@ describe('closeInGroup', () => {
 
 describe('neighbour', () => {
 	const tabs = ['/a', '/b'];
-	it('walks terminal, tabs, and wraps forward', () => {
-		expect(neighbour(tabs, undefined, 1)).toBe('/a');
+	it('walks the tabs and wraps around', () => {
 		expect(neighbour(tabs, '/a', 1)).toBe('/b');
-		expect(neighbour(tabs, '/b', 1)).toBeUndefined();
+		expect(neighbour(tabs, '/b', 1)).toBe('/a');
+		expect(neighbour(tabs, '/a', -1)).toBe('/b');
+		expect(neighbour(['/a'], '/a', 1)).toBe('/a');
 	});
-	it('wraps backward through the terminal', () => {
-		expect(neighbour(tabs, '/a', -1)).toBeUndefined();
+	it('starts at the first tab, or the last going back, when none is shown', () => {
+		expect(neighbour(tabs, undefined, 1)).toBe('/a');
 		expect(neighbour(tabs, undefined, -1)).toBe('/b');
-		expect(neighbour(tabs, '/b', -1)).toBe('/a');
 	});
-	it('stays on the terminal with no tabs', () => {
+	it('has nowhere to go without tabs', () => {
 		expect(neighbour([], undefined, 1)).toBeUndefined();
-		expect(neighbour([], undefined, -1)).toBeUndefined();
-	});
-	it('wraps among the tabs alone without a terminal', () => {
-		expect(neighbour(tabs, '/a', 1, false)).toBe('/b');
-		expect(neighbour(tabs, '/b', 1, false)).toBe('/a');
-		expect(neighbour(tabs, '/a', -1, false)).toBe('/b');
-		expect(neighbour(['/a'], '/a', 1, false)).toBe('/a');
-	});
-	it('starts at the first tab without a terminal when none is shown', () => {
-		expect(neighbour(tabs, undefined, 1, false)).toBe('/a');
-		expect(neighbour(tabs, undefined, -1, false)).toBe('/b');
-	});
-	it('has nowhere to go without a terminal or tabs', () => {
-		expect(neighbour([], undefined, 1, false)).toBeUndefined();
-		expect(neighbour([], WELCOME, 1, false)).toBeUndefined();
+		expect(neighbour([], WELCOME, 1)).toBeUndefined();
 	});
 	it('steps from the welcome, which is no tab, to the first of the strip or back to its last', () => {
-		expect(neighbour(tabs, WELCOME, 1)).toBeUndefined();
+		expect(neighbour(tabs, WELCOME, 1)).toBe('/a');
 		expect(neighbour(tabs, WELCOME, -1)).toBe('/b');
-		expect(neighbour([], WELCOME, 1)).toBeUndefined();
-		expect(neighbour(tabs, WELCOME, 1, false)).toBe('/a');
-		expect(neighbour(tabs, WELCOME, -1, false)).toBe('/b');
 	});
 });
 
 describe('touch / fallback', () => {
 	it('puts a new path first and returns a new array', () => {
-		const r = ['/a', undefined];
-		expect(touch(r, '/b')).toEqual(['/b', '/a', undefined]);
-		expect(r).toEqual(['/a', undefined]);
+		const r = ['/a'];
+		expect(touch(r, '/b')).toEqual(['/b', '/a']);
+		expect(r).toEqual(['/a']);
 	});
-	it('moves a known path or the terminal to the front without duplicating it', () => {
-		expect(touch(['/a', '/b', undefined], '/b')).toEqual(['/b', '/a', undefined]);
-		expect(touch(['/a', undefined, '/b'], undefined)).toEqual([undefined, '/a', '/b']);
-		expect(touch([], undefined)).toEqual([undefined]);
+	it('moves a known path to the front without duplicating it', () => {
+		expect(touch(['/a', '/b', '/c'], '/b')).toEqual(['/b', '/a', '/c']);
 	});
-	it('skips a closed path and finds the terminal', () => {
-		expect(fallback(['/gone', undefined, '/a'], ['/a'])).toBeUndefined();
+	it('skips a closed path', () => {
+		expect(fallback(['/gone', '/a'], ['/a', '/b'])).toBe('/a');
 	});
 	it('finds the most recent open tab over an older one', () => {
-		expect(fallback(['/gone', '/b', '/a', undefined], ['/a', '/b'])).toBe('/b');
+		expect(fallback(['/gone', '/b', '/a'], ['/a', '/b'])).toBe('/b');
 	});
-	it('gives the terminal for an empty list or one with only closed paths', () => {
-		expect(fallback([], ['/a'])).toBeUndefined();
-		expect(fallback(['/gone', '/also'], ['/a'])).toBeUndefined();
-	});
-	it('skips the terminal without one', () => {
-		expect(fallback(['/gone', undefined, '/b'], ['/a', '/b'], false)).toBe('/b');
-	});
-	it('falls to the first open tab without a terminal, and to nothing with no tab left', () => {
-		expect(fallback(['/gone', undefined], ['/a', '/b'], false)).toBe('/a');
-		expect(fallback([], ['/a'], false)).toBe('/a');
-		expect(fallback(['/gone', undefined], [], false)).toBeUndefined();
+	it('falls to the first open tab, and to nothing with no tab left', () => {
+		expect(fallback(['/gone'], ['/a', '/b'])).toBe('/a');
+		expect(fallback([], ['/a'])).toBe('/a');
+		expect(fallback(['/gone'], [])).toBeUndefined();
 	});
 });
 
