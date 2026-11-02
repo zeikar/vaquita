@@ -2,6 +2,15 @@
 
 Each release's notes open with its section here.
 
+## 0.1.22
+
+- Sessions are tabs. Every session of a repo has a tab in the repo's tab bar, with its agent's mark, its title and its state, beside the files you opened. Drag any tab to reorder them; the order is kept across restarts. ⌘1 to ⌘9 go to the tab at that position.
+- Closing a session's tab ends the session. If its agent is working or waiting for your answer, you are asked first.
+- The `+` at the end of the tab bar, like ⌘T, opens the new-session dialog for the repo you are in, and the new session's tab opens at the end.
+- Clicking a session in the sidebar shows its tab. The sidebar still lists every repo's sessions and their state.
+- ⌘W no longer closes the window from a session; it closes the session's tab. With the new-session dialog open, ⌘W closes the dialog.
+- Show Terminal (⌘1) is gone from the View menu; ⌘1 now goes to the first tab.
+
 ## 0.1.21
 
 - Shell scripts and other text files that are executable, or that a click would otherwise only reveal in Finder (such as `.command` files or a `.py` file Python Launcher owns), open in a tab of the app as text. Nothing is run; files that are not text are still only revealed in Finder.
