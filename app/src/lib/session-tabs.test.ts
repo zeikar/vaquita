@@ -80,14 +80,15 @@ describe('needsAsk', () => {
 describe('closesOnExit', () => {
 	const ended = (patch: Partial<SessionInfo> = {}) =>
 		({ sid: 1, inc: 'i', cwd: '/tmp/repo', cmd: '', name: '', cols: 80, rows: 24, state: 'exited', pid: 2, code: 0, ...patch }) as SessionInfo;
-	it('closes any session whose shell exited with 0', () => {
+	it('closes a shell or an agent that exited with 0', () => {
 		expect(closesOnExit(ended())).toBe(true);
 		expect(closesOnExit(ended({ cmd: 'claude' }))).toBe(true);
-		expect(closesOnExit(ended({ cmd: 'make test' }))).toBe(true);
+		expect(closesOnExit(ended({ cmd: 'codex resume 1', agent: 'codex' }))).toBe(true);
 	});
-	it('keeps a failure, orphans, a running session and a record', () => {
+	it('keeps a failure, orphans, another command, a running session and a record', () => {
 		expect(closesOnExit(ended({ code: 1 }))).toBe(false);
 		expect(closesOnExit(ended({ orphans: [7] }))).toBe(false);
+		expect(closesOnExit(ended({ cmd: 'exec make test' }))).toBe(false);
 		expect(closesOnExit(ended({ state: 'running' }))).toBe(false);
 		expect(closesOnExit(ended({ restorable: true }))).toBe(false);
 		expect(closesOnExit(ended({ cols: 0, rows: 0 }))).toBe(false);

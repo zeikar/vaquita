@@ -8,8 +8,7 @@ fakeTimersAndStorage();
 
 describe('SessionManager sessions', () => {
 	it('subscribes the selected session first, then the running ones by sid, one at a time', async () => {
-		// 4 failed, so it stays listed without being closed for you.
-		const t = await connected([info(1), info(2), info(3), { ...info(4, 'i', 'exited'), code: 1 }], 3);
+		const t = await connected([info(1), info(2), info(3), info(4, 'i', 'exited')], 3);
 		expect(t.state().selected).toBe(3);
 		expect(t.c.subscribes).toEqual([3]);
 		t.c.emit.replay(replay(3));
@@ -293,7 +292,7 @@ describe('SessionManager sessions', () => {
 	});
 
 	it('kills a session that exited cleanly once per connection, also one that ended while no GUI was connected', async () => {
-		const ended = (sid: number, code = 0) => ({ ...info(sid, 'i', 'exited'), code });
+		const ended = (sid: number, code = 0) => ({ ...info(sid, 'i', 'exited'), cmd: '', code });
 		const kills = (c: { requests: (string | number)[][] }) => c.requests.filter((r) => r[0] === 'kill').map((r) => r[1]);
 		const t = await connected([info(1), ended(2), ended(3, 1)]);
 		expect(kills(t.c)).toEqual([2]);
