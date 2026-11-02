@@ -21,15 +21,15 @@
 	import FilesPanel, { showView } from './lib/FilesPanel.svelte';
 	import { onTabAsked } from './lib/files';
 	import { watchFocus } from './lib/focus';
-	import { repoOf } from './lib/groups';
 	import Icon from './lib/Icon.svelte';
-	import { isNewSessionShortcut, isNextTabShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut } from './lib/keys';
+	import { isNewSessionShortcut, isNextTabShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut, tabNumber } from './lib/keys';
 	import { holdLayout } from './lib/layout-hold';
 	import { openExternal } from './lib/links';
 	import { SessionManager } from './lib/manager';
 	import NewSessionDialog, { LAST_CWD } from './lib/NewSessionDialog.svelte';
 	import { sessionTitle, type Notifier, type Target } from './lib/notify';
 	import RepoWelcome from './lib/RepoWelcome.svelte';
+	import { arrangeGroup, isSessionTab, needsAsk, placement, reconcile, sessionTab, tabSid } from './lib/session-tabs';
 	import SessionList from './lib/SessionList.svelte';
 	import { loadWidth, SIDEBAR_HIDDEN, SIDEBAR_WIDTH } from './lib/sidebar';
 	import SidebarEdge from './lib/SidebarEdge.svelte';
@@ -56,13 +56,14 @@
 		connect: (endpoint, handlers) => new DaemonConnection(endpoint, handlers),
 		createTerminal: (cols, rows) => createTerminal(cols, rows),
 		createView: (term, core, cwd) =>
-			new TermView(term, core, (m, tone) => manager.report(m, tone), cwd, (path) => openFile(cwd, path), () => active === undefined),
+			new TermView(term, core, (m, tone) => manager.report(m, tone), cwd, (path) => openFile(cwd, path), () => active !== undefined && isSessionTab(active)),
 		notifier: { show: (n) => notifier.show(n) },
 	});
-	// The file tabs of every group, and the one shown; undefined is the
-	// terminal, as after a relaunch and whenever another session is selected,
-	// and nothing at all while no session is. WELCOME is a repo's welcome,
-	// shown over its session's terminal or alone; it is no tab of any group.
+	// The tabs of every group, files and sessions in one order, and the one
+	// shown. A session's tab shows its terminal, the selected session's: showing
+	// one selects it. WELCOME is a repo's welcome, shown over its session's
+	// terminal or alone; it is no tab of any group. Undefined shows nothing, as
+	// under the app welcome.
 	let groups = $state(loadTabs());
 	let active = $state<string>();
 	// The preview tab of each group, for the app run only.
@@ -85,16 +86,25 @@
 	let repoWelcome = $state<ReturnType<typeof RepoWelcome>>();
 	let appWelcome = $state<ReturnType<typeof AppWelcome>>();
 
-	// The repo chosen by its name while no session is selected, for the app
-	// run only: a relaunch selects the stored session, or nothing.
-	let selectedRepo = $state<string>();
+	// The group whose bar shows: the selected session's, or the repo chosen
+	// by its name, for the app run only (a relaunch selects the stored
+	// session, or nothing); undefined shows the app welcome.
+	let group = $state<string>();
 	const selectedRow = $derived($manager.sessions.find((r) => r.info.sid === $manager.selected));
-	// A repo selected without a session has tabs, as a session's group does.
-	const group = $derived(selectedRow ? groupKey(selectedRow.info.cwd, $manager.repos) : selectedRepo);
-	const hasTerminal = $derived(selectedRow !== undefined);
-	const groupTabs = $derived((group !== undefined && groups[group]) || []);
-	// The repo whose tree the file panel shows: the selected session's group,
-	// unless that is no repo, or the repo selected by its name.
+	// Where each session's tab belongs. The repo list the app starts with is
+	// empty, so until the daemon's the stored keys alone show; a session list
+	// kept through a reconnect still shows its tabs.
+	const placed = $derived(placement($manager.sessions.map((r) => r.info), $manager.repos));
+	// Whether the lists are the daemon's current ones, for what drops or
+	// leaves a tab on their word.
+	const listed = $derived($manager.status === 'connected' && $manager.reposListed);
+	const groupTabs = $derived.by(() => {
+		if (group === undefined) return [];
+		const sids = $manager.reposListed ? [...placed].flatMap(([sid, key]) => (key === group ? [sid] : [])) : [];
+		return arrangeGroup(groups[group] ?? [], sids);
+	});
+	// The repo whose tree the file panel shows: the shown group, unless that
+	// is no repo.
 	const root = $derived(group !== OTHER ? group : undefined);
 
 	// Not before the daemon has sent its list: the empty one the app starts
@@ -107,44 +117,96 @@
 		if (kept === before) return;
 		groups = kept;
 		saveTabs(kept);
-		// With no session the moved tabs are reached only by selecting their
-		// group, which may be Other: tabs and no terminal, no welcome, no tree.
-		if (selectedRepo === undefined || $manager.repos.includes(selectedRepo)) return;
-		const to = selectionAfterRemoval(before, selectedRepo, $manager.repos);
+		// With no session the moved file tabs are reached only by selecting
+		// their group, which may be Other: tabs and no welcome, no tree. A
+		// selected session with a tab takes the group along itself, below.
+		if (selectedPlaced() || group === undefined || $manager.repos.includes(group)) return;
+		const to = selectionAfterRemoval(before, group, $manager.repos);
 		if (to === undefined) return;
-		selectedRepo = to;
-		const moved = kept[to] ?? [];
+		group = to;
+		const moved = (kept[to] ?? []).filter((k) => !isSessionTab(k));
 		void showTab(active !== undefined && moved.includes(active) ? active : moved[0]);
 	});
+	// The stored order follows the session list: a gone session's tab leaves
+	// it, a new one, or one a repo added or removed moved, joins its group.
+	$effect(() => {
+		if (!listed) return;
+		const next = reconcile(groups, placed);
+		if (next === groups) return;
+		groups = next;
+		saveTabs(next);
+	});
 
-	// A file covers the terminal, whose session is then not being looked at.
-	$effect(() => manager.setCovered(active !== undefined));
+	// A file or a welcome covers the terminal, whose session is then not being looked at.
+	$effect(() => manager.setCovered(active !== undefined && !isSessionTab(active)));
 
-	// Null at first, which no selection is, so the first run shows what there
-	// is (the app welcome before the daemon's list) and it takes the focus.
+	// A session selected shows its tab, in its group: a click on its row, a
+	// notification, a created session's replay and the relaunch's stored
+	// selection all come here. A deselect does nothing, as whoever deselected
+	// has shown a welcome or an Other tab. Null at first, which no selection
+	// is, so the first run shows what there is (the app welcome before the
+	// daemon's list) and it takes the focus.
 	let shownSid: number | undefined | null = null;
 	$effect(() => {
 		const sid = $manager.selected;
 		if (sid === shownSid) return;
+		if (sid === undefined) {
+			if (shownSid === null) void showTab(undefined);
+			shownSid = undefined;
+			return;
+		}
+		const row = $manager.sessions.find((r) => r.info.sid === sid);
+		if (!row) return;
 		shownSid = sid;
-		if (sid !== undefined) selectedRepo = undefined;
-		// A session deselected for a repo leaves that repo's welcome, not a terminal.
-		// Other has no welcome: openOther() has shown one of its tabs already.
-		if (sid === undefined && selectedRepo === OTHER) void showTab(active !== undefined && groupTabs.includes(active) ? active : groupTabs[0]);
-		else void showTab(sid === undefined && selectedRepo !== undefined ? WELCOME : undefined);
+		untrack(() => {
+			group = groupKey(row.info.cwd, $manager.repos);
+			// Shown already when its tab was what selected it.
+			if (active !== sessionTab(sid)) void showTab(sessionTab(sid));
+		});
 	});
-	// A repo added or removed can move the session to another group, whose
-	// tabs do not include the one shown, or leave the welcome with no repo.
-	// A repo selected without a session has its welcome to go back to.
+	// A repo added or removed can move the selected session to another group,
+	// which then shows, as does the repo list that comes after the session
+	// list on a relaunch. Before the effects below, so that they see the group
+	// it went to. A record of an earlier run has no tab to follow, and the
+	// fallback below may leave its group. Its tab shown goes into the new
+	// group's recent list, for closing a tab opened after it to come back to.
 	$effect(() => {
-		if (active === undefined || (active === WELCOME ? root !== undefined : groupTabs.includes(active))) return;
-		void showTab(!hasTerminal && root !== undefined ? WELCOME : undefined);
+		if (!$manager.reposListed || selectedRow === undefined) return;
+		const sid = selectedRow.info.sid;
+		const to = placed.get(sid);
+		if (to === undefined || to === group) return;
+		group = to;
+		if (untrack(() => active) === sessionTab(sid)) recent.set(to, touch(recent.get(to) ?? [], sessionTab(sid)));
 	});
 	// A removed repo is no selection; the app welcome shows instead. Not before
 	// the daemon's list, as the one the app starts with is empty.
 	$effect(() => {
-		if ($manager.reposListed && selectedRepo !== undefined && selectedRepo !== OTHER && !$manager.repos.includes(selectedRepo)) selectedRepo = undefined;
+		if ($manager.reposListed && !selectedPlaced() && group !== undefined && group !== OTHER && !$manager.repos.includes(group)) group = undefined;
 	});
+	// What shows that is not of the shown group goes: a closed or killed
+	// session's tab, a tab a repo added or removed moved away, the welcome of
+	// a repo that went. Not before the lists, which would make every stored
+	// session tab look gone.
+	$effect(() => {
+		if (!listed) return;
+		const shows = active === undefined ? group === undefined : active === WELCOME ? root !== undefined : groupTabs.includes(active);
+		if (!shows) showFallback();
+	});
+
+	// A session of this run with a tab is selected: a record of an earlier
+	// run, selected through a daemon restart, holds no group.
+	function selectedPlaced(): boolean {
+		return $manager.selected !== undefined && placed.has($manager.selected);
+	}
+
+	// Where the shown group goes when what it showed is gone: the tab shown
+	// most recently, else its first, else the repo's welcome; Other, which
+	// has no welcome, is then no selection any more.
+	function showFallback(): void {
+		const next = fallback((group !== undefined && recent.get(group)) || [], groupTabs) ?? (root !== undefined ? WELCOME : undefined);
+		if (next === undefined && group === OTHER) group = undefined;
+		void showTab(next);
+	}
 
 	// The daemon sends the whole repo list on every change and does not say
 	// which request it answers, so a repo new to the list is the sign that it
@@ -171,29 +233,23 @@
 	// dialog, which keeps what it opened over, as showTab does.
 	function openWelcome(repo: string): void {
 		if (dialogOpen) return;
-		if (selectedRow === undefined || group !== repo) {
-			manager.deselect();
-			selectedRepo = repo;
-		}
+		if (selectedRow === undefined || groupKey(selectedRow.info.cwd, $manager.repos) !== repo) manager.deselect();
+		group = repo;
 		void showTab(WELCOME);
 	}
 
-	// A ⌘-clicked file in a session's terminal; cwd is its starting folder.
-	// The Other group's name, shown while it holds tabs, selects them: the way
-	// back to edits that moved there when their repo was removed. Its most
-	// recent tab shows, as closing one would go; no welcome, it is no repo.
+	// The Other group's name, shown while it holds file tabs, selects them:
+	// the way back to edits that moved there when their repo was removed. Its
+	// most recent tab shows, as closing one would go; no welcome, it is no repo.
 	function openOther(): void {
 		if (dialogOpen) return;
-		const inGroup = selectedRow !== undefined && group === OTHER;
-		if (!inGroup) {
-			manager.deselect();
-			selectedRepo = OTHER;
-		}
-		const tabs = groups[OTHER] ?? [];
-		if (tabs.length === 0) return;
-		void showTab(fallback(recent.get(OTHER) ?? [], tabs, false) ?? tabs[0]);
+		if (selectedRow === undefined || groupKey(selectedRow.info.cwd, $manager.repos) !== OTHER) manager.deselect();
+		group = OTHER;
+		const next = fallback(recent.get(OTHER) ?? [], groupTabs);
+		if (next !== undefined) void showTab(next);
 	}
 
+	// A ⌘-clicked file in a session's terminal; cwd is its starting folder.
 	// Unpinned, it opens as the group's preview. A dirty document opens pinned:
 	// documents are shared by path across groups, so it may hold another
 	// group's edits, and a preview, which the next file replaces, holds none.
@@ -206,8 +262,8 @@
 		void showTab(path);
 	}
 
-	// A file's diff against HEAD, as a tab of the selected session's group: the
-	// repo the changes were listed for, which Other is not.
+	// A file's diff against HEAD, as a tab of the shown group: the repo the
+	// changes were listed for, which Other is not.
 	function openDiff(path: string, pin = false): void {
 		if (group === undefined || group === OTHER) return;
 		const r = openFileTab(groups, previews, group, diffTab(path), pin);
@@ -228,8 +284,7 @@
 
 	// A file clicked in the tree goes through the gate a ⌘-click does, so what
 	// the app does not show in a tab is opened or revealed the same way. Its tab
-	// lands in the selected session's group, the tree's repo, or in the repo
-	// selected by its name.
+	// lands in the shown group, the tree's repo.
 	function openFromTree(path: string, pin = false): void {
 		const cwd = selectedRow?.info.cwd ?? root;
 		if (cwd === undefined) return;
@@ -240,35 +295,59 @@
 	// covered by a file or a welcome.
 	function focusContent(): void {
 		if (active === WELCOME) repoWelcome?.focus();
-		else if (active !== undefined) filePane?.focus();
-		else if (hasTerminal) selectedView()?.focus();
-		else appWelcome?.focus();
+		else if (active === undefined) appWelcome?.focus();
+		else if (isSessionTab(active)) selectedView()?.focus();
+		else filePane?.focus();
 	}
 
-	// No file under the new-session dialog: it gives the focus back to what had
-	// it when it opened, which may be the terminal the file would cover. The
-	// terminal can show, as when the session it creates is selected; the
-	// dialog keeps the focus then.
+	// No file and no welcome under the new-session dialog: it gives the focus
+	// back to what had it when it opened, which may be the terminal they would
+	// cover. A session's tab can show, as when the session it creates is
+	// selected; the dialog keeps the focus then.
 	async function showTab(path: string | undefined): Promise<void> {
-		if (dialogOpen && path !== undefined) return;
+		if (dialogOpen && path !== undefined && !isSessionTab(path)) return;
 		active = path;
+		const sid = path === undefined ? undefined : tabSid(path);
+		if (sid !== undefined && sid !== $manager.selected) manager.select(sid);
 		// Every change of the shown tab ends here, so this one line keeps the
 		// list. The welcome is no tab that closing one could go back to.
-		if (group !== undefined && path !== WELCOME) recent.set(group, touch(recent.get(group) ?? [], path));
+		if (group !== undefined && path !== undefined && path !== WELCOME) recent.set(group, touch(recent.get(group) ?? [], path));
 		// The file pane is there to take the focus only once it has rendered.
 		await tick();
 		if (!dialogOpen) focusContent();
 	}
 
-	// Asked before unsaved edits are lost; false when the user keeps them or
-	// the question could not be asked.
-	async function mayLose(message: string, okLabel: string): Promise<boolean> {
+	// Asked before unsaved edits or a working session are lost; false when the
+	// user keeps them or the question could not be asked.
+	async function mayLose(message: string, okLabel: string, about = 'unsaved changes'): Promise<boolean> {
 		try {
 			return await ask(message, okLabel);
 		} catch (e) {
-			manager.report(`asking about unsaved changes failed: ${e instanceof Error ? e.message : String(e)}`);
+			manager.report(`asking about ${about} failed: ${e instanceof Error ? e.message : String(e)}`);
 			return false;
 		}
+	}
+
+	// File keys and session keys: the files close, the sessions are killed.
+	// Falling back from a killed session's tab is the fallback effect's, as
+	// the session leaves the list only later.
+	async function closeTabs(keys: string[]): Promise<void> {
+		const files = keys.filter((k) => !isSessionTab(k));
+		if (files.length > 0) await closeFileTabs(files);
+		const sids = keys.flatMap((k) => tabSid(k) ?? []);
+		if (sids.length > 0) await killSessions(sids);
+	}
+
+	// An agent mid-turn or waiting on a permission is asked about once; the
+	// rest are killed at once, an exited one's record going with its kill.
+	// Only the sessions that are still the same ones after the question: a sid
+	// with another inc is another session, from a restarted daemon.
+	async function killSessions(sids: number[]): Promise<void> {
+		const rows = $manager.sessions.filter((r) => sids.includes(r.info.sid));
+		// Session closes come one at a time, so the question names one session.
+		const working = rows.find((r) => needsAsk(r.info));
+		if (working && !(await mayLose(`${sessionTitle(working.info)} is working. Kill it?`, 'Kill', 'killing a working session'))) return;
+		for (const r of rows) if ($manager.sessions.some((n) => n.info.sid === r.info.sid && n.info.inc === r.info.inc)) manager.kill(r.info.sid);
 	}
 
 	// One question for all the unsaved among them; declined, nothing closes,
@@ -298,23 +377,17 @@
 		groups = r.groups;
 		previews = r.previews;
 		saveTabs(groups);
-		if (active === undefined || !paths.includes(active)) return;
-		const next = fallback(recent.get(key) ?? [], groups[key] ?? [], hasTerminal);
-		if (next !== undefined || hasTerminal) void showTab(next);
-		// A repo selected by its name with no tab left shows its welcome again;
-		// Other, which has none, is no selection any more.
-		else if (root !== undefined) void showTab(WELCOME);
-		else {
-			selectedRepo = undefined;
-			void showTab(undefined);
-		}
+		if (active !== undefined && paths.includes(active) && group === key) showFallback();
 	}
 
-	// ⌘W: the file tab shown; the welcome over a session's terminal is set
-	// aside like a tab; otherwise the window, as the menu's Close Window did.
+	// ⌘W: the tab shown; the welcome is set aside like a tab while the group
+	// has tabs; otherwise the window, as the menu's Close Window did. A menu
+	// key reaches the page under the new-session dialog too, where it closes
+	// the dialog, as Escape does, and nothing behind it.
 	function closeActive(): void {
-		if (active !== undefined && active !== WELCOME) void closeFileTabs([active]);
-		else if (active === WELCOME && hasTerminal) void showTab(undefined);
+		if (dialogOpen) dialogOpen = false;
+		else if (active !== undefined && active !== WELCOME) void closeTabs([active]);
+		else if (active === WELCOME && groupTabs.length > 0) void showTab(fallback((group !== undefined && recent.get(group)) || [], groupTabs));
 		else getCurrentWindow().close().catch((e) => manager.report(`closing the window failed: ${e instanceof Error ? e.message : String(e)}`));
 	}
 
@@ -346,10 +419,12 @@
 		onDestroy(() => void unlisten.then((f) => f(), () => {}));
 	}
 
-	// A repo's welcome with no session and no tabs has nothing to step to.
+	// A repo's welcome with no tabs has nothing to step to. Nothing switches
+	// under the new-session dialog, which keeps what it opened over.
 	function stepTab(step: number): void {
-		const next = neighbour(groupTabs, active, step, hasTerminal);
-		if (next !== undefined || hasTerminal) void showTab(next);
+		if (dialogOpen) return;
+		const next = neighbour(groupTabs, active, step);
+		if (next !== undefined) void showTab(next);
 	}
 	let destroyed = false;
 	onDestroy(() => {
@@ -381,9 +456,6 @@
 		switch (a) {
 			case 'close':
 				return closeActive();
-			case 'terminal':
-				if (hasTerminal) void showTab(undefined);
-				return;
 			case 'prev':
 				return stepTab(-1);
 			case 'next':
@@ -398,9 +470,10 @@
 	// A click brings the window up whatever the notification was about; the
 	// manager selects its session only if that very session is still there.
 	function openNotified(target?: Target): void {
+		// The same session stays selected, so nothing else shows its tab.
+		const same = target !== undefined && selectedRow?.info.sid === target.sid && selectedRow.info.inc === target.inc;
 		manager.openNotified(target);
-		// The same session stays selected, so nothing else uncovers its terminal.
-		if (target && selectedRow?.info.sid === target.sid && selectedRow.info.inc === target.inc) void showTab(undefined);
+		if (same) void showTab(sessionTab(target.sid));
 		const win = getCurrentWindow();
 		win.show()
 			.then(() => win.unminimize())
@@ -409,12 +482,12 @@
 	}
 
 	// A session's row in the sidebar, or a past conversation's open row, asks
-	// for its terminal: as openNotified, the same session staying selected,
-	// the file or its repo's welcome covering it goes.
+	// for its tab: as openNotified, the same session staying selected, the
+	// file or its repo's welcome covering it goes.
 	function selectSession(sid: number): void {
 		const same = sid === $manager.selected;
 		manager.select(sid);
-		if (same) void showTab(undefined);
+		if (same) void showTab(sessionTab(sid));
 	}
 
 	// The manager starts once the notifier is set up, so the notifications it
@@ -443,14 +516,11 @@
 	let dialogOpen = $state(false);
 	let dialogCwd = $state('');
 
-	// The dialog starts in the selected session's repo or the repo selected by
-	// its name, else in the folder it last created a session in, else in the
-	// home folder.
+	// The dialog starts in the shown repo, else in the folder it last created
+	// a session in, else in the home folder.
 	function newSession() {
 		if (dialogOpen) return;
-		const { sessions, selected, repos } = $manager;
-		const cwd = sessions.find((r) => r.info.sid === selected)?.info.cwd;
-		dialogCwd = (cwd !== undefined ? repoOf(cwd, repos) : selectedRepo !== OTHER ? selectedRepo : undefined) ?? load(LAST_CWD) ?? '';
+		dialogCwd = (group !== OTHER ? group : undefined) ?? load(LAST_CWD) ?? '';
 		dialogOpen = true;
 	}
 
@@ -459,11 +529,14 @@
 	// here and not in the menu, as AppKit would run its key-view loop on them.
 	// The menu has ⌘⇧[ and ⌘⇧].
 	function shortcut(e: KeyboardEvent) {
+		const n = tabNumber(e);
 		if (isNewSessionShortcut(e)) newSession();
 		else if (isSidebarShortcut(e)) toggleSidebar();
 		else if (isPrevTabShortcut(e)) stepTab(-1);
 		else if (isNextTabShortcut(e)) stepTab(1);
-		else if (isSaveShortcut(e)) {
+		else if (n !== undefined) {
+			if (!dialogOpen && n <= groupTabs.length) void showTab(groupTabs[n - 1]);
+		} else if (isSaveShortcut(e)) {
 			// By path, not through an editor, so a tab that shows no editor saves too.
 			if (active !== undefined) void documents.saveDocument(active, (m) => manager.report(m));
 		} else return;
@@ -532,10 +605,11 @@
 				for (const p of e.payload.paths) manager.addRepo(p);
 				return;
 			}
+			const sid = $manager.selected;
 			const view = selectedView();
-			if (!view) return;
-			// The paths go to the terminal, so it shows.
-			if (active !== undefined) void showTab(undefined);
+			if (sid === undefined || !view) return;
+			// The paths go to the terminal, so its tab shows.
+			if (active !== sessionTab(sid)) void showTab(sessionTab(sid));
 			try {
 				view.sendInput(shellQuoteAll(e.payload.paths));
 			} catch (err) {
@@ -607,8 +681,8 @@
 		<SessionList
 			sessions={$manager.sessions}
 			selected={$manager.selected}
-			selectedRepo={selectedRow ? undefined : selectedRepo}
-			otherTabs={(groups[OTHER]?.length ?? 0) > 0}
+			selectedRepo={selectedRow ? undefined : group}
+			otherTabs={(groups[OTHER] ?? []).some((k) => !isSessionTab(k))}
 			onselect={selectSession}
 			onselectrepo={(r) => (r === OTHER ? openOther() : openWelcome(r))}
 			onkill={(sid) => manager.kill(sid)}
@@ -645,17 +719,18 @@
 	/>
 	<section class="content">
 		<!-- No bar with nothing in it: a repo's welcome alone starts at the top, as the app welcome does. -->
-		{#if group !== undefined && (hasTerminal || groupTabs.length > 0)}
+		{#if group !== undefined && groupTabs.length > 0}
 			<TabBar
-				title={selectedRow ? sessionTitle(selectedRow.info) : undefined}
+				sessions={$manager.sessions}
 				tabs={groupTabs}
 				{active}
-				preview={group !== undefined ? previews[group] : undefined}
+				preview={previews[group]}
 				{dirty}
 				onselect={(p) => void showTab(p)}
-				onclose={(ps) => void closeFileTabs(ps)}
+				onclose={(ps) => void closeTabs(ps)}
 				onpin={(p) => (previews = unpreview(previews, p))}
 				onreorder={reorderTabs}
+				onnew={newSession}
 				report={(m) => manager.report(m)}
 			/>
 		{/if}
@@ -681,9 +756,9 @@
 						report={(m) => manager.report(m)}
 					/>
 				{/key}
-			{:else if active !== undefined}
+			{:else if active !== undefined && !isSessionTab(active)}
 				{@const path = active}
-				<FilePane bind:this={filePane} {path} repo={root} {home} readOnly={updating} onclose={() => void closeFileTabs([path])} onopenfile={(p) => openFromTree(p)} report={(m) => manager.report(m)} />
+				<FilePane bind:this={filePane} {path} repo={root} {home} readOnly={updating} onclose={() => void closeTabs([path])} onopenfile={(p) => openFromTree(p)} report={(m) => manager.report(m)} />
 			{/if}
 			{#if group === undefined}
 				<AppWelcome bind:this={appWelcome} {version} addDisabled={$manager.status !== 'connected'} onaddrepo={() => void addRepo?.open()} onnewsession={newSession} />
@@ -702,7 +777,7 @@
 				creating={$manager.creating}
 				sessions={$manager.sessions.map((r) => r.info)}
 				repos={$manager.repos}
-				highlight={active === undefined || active === WELCOME ? undefined : tabFile(active)}
+				highlight={active === undefined || active === WELCOME || isSessionTab(active) ? undefined : tabFile(active)}
 				onopen={openFromTree}
 				onopendiff={openDiff}
 				onaddrepo={(f) => manager.addRepo(f)}
