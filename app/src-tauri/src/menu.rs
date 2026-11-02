@@ -6,12 +6,15 @@
 //! through, so they work wherever the app's key handlers pass them on (the
 //! terminal's included). The default menu has Close Window with ⌘W under both File and
 //! Window; both go and our Close takes File's place, so ⌘W is only ever ours,
-//! and the webview closes the window itself when ⌘W lands on the terminal tab.
+//! and the page closes the window itself only when no tab shows.
 //!
 //! The tab keys are ⌘⇧[ and ⌘⇧], not ⌃Tab: AppKit binds ⌃Tab to the window's
 //! key-view loop, which WKWebView runs and counts as handled whenever the page
 //! does not cancel the key, so a menu item on ⌃Tab never fires. The page takes
 //! ⌃Tab itself (App.svelte).
+//!
+//! ⌘1–9 pick a tab by position and are not menu items: the page takes them
+//! itself, as it does ⌘T.
 //!
 //! The file panel's key comes the same way, on the same event. It is ⌥⌘B because
 //! AppKit binds nothing to it (it does bind ⌃B and ⌥⌃B) and it mirrors ⌘B, which
@@ -23,7 +26,6 @@ use tauri::{AppHandle, Emitter, Wry};
 use crate::update;
 
 const CLOSE_ID: &str = "tab-close";
-const TERMINAL_ID: &str = "tab-terminal";
 const PREV_ID: &str = "tab-prev";
 const NEXT_ID: &str = "tab-next";
 const FILES_ID: &str = "view-files";
@@ -31,8 +33,7 @@ const FILES_ID: &str = "view-files";
 const CLOSE_KEY: &str = "CmdOrCtrl+W";
 
 /// Above Toggle Full Screen, the default View's only item: id, title, key.
-const VIEW_ITEMS: [(&str, &str, &str); 4] = [
-    (TERMINAL_ID, "Show Terminal", "CmdOrCtrl+1"),
+const VIEW_ITEMS: [(&str, &str, &str); 3] = [
     (PREV_ID, "Previous Tab", "CmdOrCtrl+Shift+["),
     (NEXT_ID, "Next Tab", "CmdOrCtrl+Shift+]"),
     (FILES_ID, "Toggle Files", "CmdOrCtrl+Alt+B"),
@@ -45,7 +46,6 @@ const CLOSE_WINDOW: &str = "Close Window";
 fn tab_action(id: &str) -> Option<&'static str> {
     match id {
         CLOSE_ID => Some("close"),
-        TERMINAL_ID => Some("terminal"),
         PREV_ID => Some("prev"),
         NEXT_ID => Some("next"),
         FILES_ID => Some("files"),
@@ -175,7 +175,6 @@ mod tests {
         use muda::accelerator::{Accelerator, Code, Modifiers};
         let keys: Vec<&str> = VIEW_ITEMS.iter().map(|(_, _, key)| *key).chain([CLOSE_KEY]).collect();
         let want = [
-            (Modifiers::META, Code::Digit1),
             (Modifiers::META | Modifiers::SHIFT, Code::BracketLeft),
             (Modifiers::META | Modifiers::SHIFT, Code::BracketRight),
             (Modifiers::META | Modifiers::ALT, Code::KeyB),

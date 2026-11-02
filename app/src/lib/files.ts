@@ -42,10 +42,10 @@ export async function fileUrl(path: string): Promise<string> {
 	return convertFileSrc(path);
 }
 
-export type TabAction = 'close' | 'terminal' | 'prev' | 'next' | 'files';
+export type TabAction = 'close' | 'prev' | 'next' | 'files';
 
 function isTabAction(v: unknown): v is TabAction {
-	return v === 'close' || v === 'terminal' || v === 'prev' || v === 'next' || v === 'files';
+	return v === 'close' || v === 'prev' || v === 'next' || v === 'files';
 }
 
 // Runs run on each action the View menu sends (the tabs' and the file panel's); resolves to a function that

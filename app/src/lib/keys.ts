@@ -69,3 +69,10 @@ export function isPrevTabShortcut(ev: KeyboardEvent): boolean {
 export function isNextTabShortcut(ev: KeyboardEvent): boolean {
 	return isCtrlTab(ev, false);
 }
+
+// Cmd+1 to Cmd+9, the tab at that position. A page shortcut like Cmd+T: AppKit
+// binds nothing to Cmd+digit and the page sees the key before any menu would.
+export function tabNumber(ev: KeyboardEvent): number | undefined {
+	if (!ev.metaKey || ev.ctrlKey || ev.altKey || ev.shiftKey || belongsToIME(ev)) return undefined;
+	return /^[1-9]$/.test(ev.key) ? Number(ev.key) : undefined;
+}

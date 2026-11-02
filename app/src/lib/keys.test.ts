@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isNewSessionShortcut, isNextTabShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut, keyHandler, swallowsKeypress, translateKey } from './keys';
+import { isNewSessionShortcut, isNextTabShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut, keyHandler, swallowsKeypress, tabNumber, translateKey } from './keys';
 
 function key(type: string, init: Partial<KeyboardEvent>): KeyboardEvent {
 	return { type, key: 'Enter', keyCode: 13, isComposing: false, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, ...init } as KeyboardEvent;
@@ -122,5 +122,26 @@ describe('isPrevTabShortcut and isNextTabShortcut', () => {
 		expect(isNextTabShortcut(tab({ metaKey: true }))).toBe(false);
 		expect(isNextTabShortcut(tab({ altKey: true }))).toBe(false);
 		expect(isNextTabShortcut(tab({ keyCode: 229 }))).toBe(false);
+	});
+});
+
+describe('tabNumber', () => {
+	const d = (init: Partial<KeyboardEvent>) => key('keydown', { key: '3', keyCode: 51, metaKey: true, ...init });
+
+	it('is the digit with Cmd alone', () => {
+		expect(tabNumber(d({}))).toBe(3);
+	});
+	it('ignores 0, other keys and a missing Cmd', () => {
+		expect(tabNumber(d({ key: '0' }))).toBeUndefined();
+		expect(tabNumber(d({ key: 't' }))).toBeUndefined();
+		expect(tabNumber(d({ metaKey: false }))).toBeUndefined();
+	});
+	it('ignores Shift, Ctrl and Option', () => {
+		expect(tabNumber(d({ key: '1', shiftKey: true }))).toBeUndefined();
+		expect(tabNumber(d({ ctrlKey: true }))).toBeUndefined();
+		expect(tabNumber(d({ altKey: true }))).toBeUndefined();
+	});
+	it('ignores a key that belongs to an IME', () => {
+		expect(tabNumber(d({ keyCode: 229 }))).toBeUndefined();
 	});
 });
