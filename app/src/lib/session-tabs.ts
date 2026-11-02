@@ -20,11 +20,13 @@ export function isSessionTab(key: string): boolean {
 	return tabSid(key) !== undefined;
 }
 
-// Where each session's tab belongs. Restorable records have no terminal, so
-// they are history in the sidebar and never tabs.
+// Where each session's tab belongs. A record from an earlier run has no
+// terminal, so it is history in the sidebar and never a tab: that is a
+// restorable one, and also one whose orphaned processes are still alive, which
+// the daemon reports with no size.
 export function placement(sessions: SessionInfo[], repos: string[]): Map<number, string> {
 	const placed = new Map<number, string>();
-	for (const s of sessions) if (!s.restorable) placed.set(s.sid, groupKey(s.cwd, repos));
+	for (const s of sessions) if (!s.restorable && s.cols > 0 && s.rows > 0) placed.set(s.sid, groupKey(s.cwd, repos));
 	return placed;
 }
 

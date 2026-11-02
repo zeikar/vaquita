@@ -18,13 +18,17 @@ describe('session tab keys', () => {
 });
 
 describe('placement', () => {
-	const s = (sid: number, cwd: string, restorable?: boolean) => ({ sid, cwd, restorable }) as SessionInfo;
+	const s = (sid: number, cwd: string, restorable?: boolean) => ({ sid, cwd, restorable, cols: 80, rows: 24 }) as SessionInfo;
 	it('maps live sessions to their group and skips restorable records', () => {
 		const placed = placement([s(1, '/tmp/repo/src'), s(2, '/tmp/else'), s(3, '/tmp/repo', true)], ['/tmp/repo']);
 		expect([...placed]).toEqual([
 			[1, '/tmp/repo'],
 			[2, 'other'],
 		]);
+	});
+	it('skips a record whose orphaned processes keep it from being restorable', () => {
+		const orphan = { sid: 5, cwd: '/tmp/repo', cols: 0, rows: 0, orphans: [99] } as SessionInfo;
+		expect(placement([orphan], ['/tmp/repo']).size).toBe(0);
 	});
 });
 
