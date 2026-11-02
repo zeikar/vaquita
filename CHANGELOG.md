@@ -2,6 +2,10 @@
 
 Each release's notes open with its section here.
 
+## 0.1.21
+
+- Shell scripts and other text files that are executable, or that a click would otherwise only reveal in Finder (such as `.command` files or a `.py` file Python Launcher owns), open in a tab of the app as text. Nothing is run; files that are not text are still only revealed in Finder.
+
 ## 0.1.20
 
 - With nothing selected, the app shows a welcome: Add a repo, New session, and a hint that you can drop a folder on the sidebar.

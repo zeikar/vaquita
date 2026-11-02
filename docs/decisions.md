@@ -166,7 +166,7 @@ Worktrees were dropped from the plan on 2026-10-23 because they were rarely used
 
 ## Opening paths from the terminal
 
-- Terminal output is untrusted: whatever could run something is only revealed in Finder ([app rules](app.md#rules-the-app-keeps)).
+- Terminal output is untrusted: whatever could run something is only revealed in Finder, but for text, which a tab shows without running it ([app rules](app.md#rules-the-app-keeps)).
 - The daemon sets `FORCE_HYPERLINK=1`, so Claude Code emits file links whose target has the full path even when the visible text is shortened.
 - A path in plain text is bounded by colour, since agents colour the paths they print. Language-specific trimming (such as Korean particles stuck to a path in the default colour) was tried and dropped as too fiddly.
 - Paths are not checked against the disk before they are underlined (Orca checks each candidate on hover, with a cache); a path that does not exist is reported when it is clicked.

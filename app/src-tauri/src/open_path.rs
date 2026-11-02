@@ -1,15 +1,17 @@
 //! Opens a path that a click on terminal output named. That output is
-//! untrusted, so a click must not run or install anything: the path is made
-//! canonical first, so a symlink is judged by its target, and then revealed in
-//! Finder instead of opened when, checked in this order, it is a regular file
-//! with an execute bit; it is a Finder alias, or its Finder info cannot be
-//! read; its name has an extension on BUNDLES or FILES, or a folder above it
-//! one on BUNDLES; or the app macOS would open it with is on HANDLERS, or is
-//! Finder for something that is not a folder. A path no app opens is revealed
-//! too, unless the webview shows it itself: that is a convenience verdict, not
-//! a danger. Everything else opens with its default app, but for the text,
-//! markdown and media files that the webview shows itself, by the rule in
-//! files.rs. The lists are all the guard knows.
+//! untrusted, so a click must not run or install anything. The path is made
+//! canonical first, so a symlink is judged by its target. Text and Markdown,
+//! by the rule in files.rs, then show in a tab of the app: a tab only shows
+//! them, so a script or an executable file reads there like any other text.
+//! Anything else is revealed in Finder instead of opened when, checked in this
+//! order, it is a regular file with an execute bit; it is a Finder alias, or
+//! its Finder info cannot be read; its name has an extension on BUNDLES or
+//! FILES, or a folder above it one on BUNDLES; or the app macOS would open it
+//! with is on HANDLERS, or is Finder for something that is not a folder. A path
+//! no app opens is revealed too, unless it is media the webview shows itself:
+//! that is a convenience verdict, not a danger. Everything else opens with its
+//! default app, but for the images, audio and video that the webview shows
+//! itself. The lists are all the guard knows.
 
 use std::ffi::{CStr, CString};
 use std::fs::Metadata;
@@ -213,11 +215,17 @@ pub(crate) fn resolve(path: &str, host: &str, home: &Path, handler: &dyn Fn(&Pat
     }
     let canonical = std::fs::canonicalize(&path).map_err(io_error)?;
     let meta = std::fs::metadata(&canonical).map_err(io_error)?;
+    let kind = files::kind_of(&canonical, &meta);
+    // A tab only shows text, so the gate has nothing to guard there. Media keep
+    // to the gate, as view_path lets the asset protocol load them.
+    if let Ok(Some(kind @ (Kind::Text | Kind::Markdown))) = kind {
+        return Ok((canonical.clone(), Action::View { path: canonical, kind }));
+    }
     // What the webview shows itself it shows, whether or not an app would open
     // it; otherwise the verdict stands.
-    let shown = |otherwise: Action| match files::kind_of(&canonical, &meta) {
+    let shown = |otherwise: Action| match &kind {
         Ok(None) => otherwise,
-        Ok(Some(kind)) => Action::View { path: canonical.clone(), kind },
+        Ok(Some(kind)) => Action::View { path: canonical.clone(), kind: *kind },
         // Its default app could not read it either, so Finder shows it.
         Err(e) => {
             eprintln!("vaquita: read {}: {e}", canonical.display());
@@ -279,6 +287,13 @@ pub(crate) mod tests {
         p
     }
 
+    /// A file that is not text, so the gate judges it rather than a tab showing it.
+    fn blob(d: &Path, name: &str, mode: u32) -> PathBuf {
+        let p = file(d, name, mode);
+        std::fs::write(&p, b"\0").unwrap();
+        p
+    }
+
     fn editor(_: &Path) -> Option<String> {
         Some(EDITOR.to_string())
     }
@@ -323,12 +338,27 @@ pub(crate) mod tests {
 
     #[test]
     fn an_executable_file_is_revealed() {
-        assert_eq!(act(&file(&dir("exec"), "run", 0o755), &editor), revealed("it is executable"));
+        assert_eq!(act(&blob(&dir("exec"), "run", 0o755), &editor), revealed("it is executable"));
+    }
+
+    #[test]
+    fn a_script_is_shown_in_the_app_however_it_would_open() {
+        let d = dir("textscript");
+        for (name, mode) in [("run", 0o755), ("build.sh", 0o755), ("Thing.SH", 0o644), ("go.command", 0o644), ("tool.py", 0o644)] {
+            let p = file(&d, name, mode);
+            std::fs::write(&p, "#!/bin/sh\necho hi\n").unwrap();
+            assert_eq!(act(&p, &|_: &Path| Some("com.apple.Terminal".to_string())), viewed(&p, Kind::Text), "{name}");
+            assert_eq!(act(&p, &|_: &Path| None), viewed(&p, Kind::Text), "{name}");
+        }
+        let inside = d.join("Foo.app/Contents");
+        std::fs::create_dir_all(&inside).unwrap();
+        let plist = file(&inside, "Info.plist", 0o644);
+        assert_eq!(act(&plist, &editor), viewed(&plist, Kind::Text));
     }
 
     #[test]
     fn a_finder_alias_is_revealed() {
-        let p = file(&dir("alias"), "notes.txt", 0o644);
+        let p = blob(&dir("alias"), "notes.txt", 0o644);
         set_finder_flags(&p, [0x80, 0x00]);
         assert_eq!(act(&p, &editor), revealed("it is a Finder alias"));
     }
@@ -351,9 +381,9 @@ pub(crate) mod tests {
     #[test]
     fn a_listed_extension_is_revealed_whatever_its_case() {
         let d = dir("ext");
-        assert_eq!(act(&file(&d, "run.command", 0o644), &editor), revealed(format!("it is a .command, {KIND}")));
-        assert_eq!(act(&file(&d, "notes.term", 0o644), &editor), revealed(format!("it is a .term, {KIND}")));
-        assert_eq!(act(&file(&d, "Thing.SH", 0o644), &editor), revealed(format!("it is a .sh, {KIND}")));
+        assert_eq!(act(&blob(&d, "run.command", 0o644), &editor), revealed(format!("it is a .command, {KIND}")));
+        assert_eq!(act(&blob(&d, "notes.term", 0o644), &editor), revealed(format!("it is a .term, {KIND}")));
+        assert_eq!(act(&blob(&d, "Thing.SH", 0o644), &editor), revealed(format!("it is a .sh, {KIND}")));
     }
 
     #[test]
@@ -367,7 +397,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_script_whose_default_app_runs_it_is_revealed() {
-        let p = file(&dir("launcher"), "tool.py", 0o644);
+        let p = blob(&dir("launcher"), "tool.py", 0o644);
         let why = revealed("its default app org.python.PythonLauncher runs or installs what it opens");
         assert_eq!(act(&p, &|_: &Path| Some("org.python.PythonLauncher".to_string())), why);
         let lower = revealed("its default app org.python.pythonlauncher runs or installs what it opens");
@@ -376,7 +406,7 @@ pub(crate) mod tests {
 
     fn handled_by(name: &str, id: &str) -> Action {
         let id = id.to_string();
-        act(&file(&dir(name), "notes.txt", 0o644), &move |_: &Path| Some(id.clone()))
+        act(&blob(&dir(name), "notes.txt", 0o644), &move |_: &Path| Some(id.clone()))
     }
 
     #[test]
@@ -416,13 +446,6 @@ pub(crate) mod tests {
         let p = file(&dir("noapp-text"), "settings.env", 0o644);
         std::fs::write(&p, "TIMEOUT=30\nDEBUG=false\n").unwrap();
         assert_eq!(act(&p, &|_: &Path| None), viewed(&p, Kind::Text));
-    }
-
-    #[test]
-    fn a_script_no_app_opens_is_still_revealed_as_a_script() {
-        let p = file(&dir("noapp-sh"), "build.sh", 0o644);
-        std::fs::write(&p, "echo hi\n").unwrap();
-        assert_eq!(act(&p, &|_: &Path| None), revealed(format!("it is a .sh, {KIND}")));
     }
 
     // Asks LaunchServices only; nothing is opened. Which app owns .command
@@ -479,7 +502,7 @@ pub(crate) mod tests {
         let contents = d.join("Foo.app/Contents");
         std::fs::create_dir_all(&contents).unwrap();
         assert_eq!(act(&d.join("Foo.app"), &editor), revealed(format!("it is a .app, {KIND}")));
-        assert_eq!(act(&file(&contents, "Info.plist", 0o644), &editor), revealed("it is inside a .app"));
+        assert_eq!(act(&blob(&contents, "Info.plist", 0o644), &editor), revealed("it is inside a .app"));
     }
 
     #[test]
@@ -498,7 +521,7 @@ pub(crate) mod tests {
     #[test]
     fn a_symlink_is_judged_by_its_target() {
         let d = dir("symlink");
-        let run = file(&d, "run", 0o755);
+        let run = blob(&d, "run", 0o755);
         symlink(&run, d.join("safe")).unwrap();
         let plain = d.join("plain");
         std::fs::create_dir_all(&plain).unwrap();
@@ -510,11 +533,14 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn only_what_would_open_is_shown_in_the_app() {
+    fn only_text_and_what_would_open_is_shown_in_the_app() {
         let d = dir("inapp");
-        let sh = file(&d, "build.sh", 0o644);
-        std::fs::write(&sh, "echo hi\n").unwrap();
-        assert_eq!(act(&sh, &editor), revealed(format!("it is a .sh, {KIND}")));
+        let png = blob(&d, "shot.png", 0o755);
+        assert_eq!(act(&png, &editor), revealed("it is executable"));
+        let inside = d.join("Foo.app/Contents/Resources");
+        std::fs::create_dir_all(&inside).unwrap();
+        let icon = blob(&inside, "icon.png", 0o644);
+        assert_eq!(act(&icon, &editor), revealed("it is inside a .app"));
         assert_eq!(act(&d, &editor), Action::Opened);
         let binary = file(&d, "data.bin", 0o644);
         std::fs::write(&binary, b"a\0b").unwrap();
