@@ -115,7 +115,7 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 	private lastSize = DEFAULT_SIZE;
 	// Whether a session list has been applied yet, and the click that came before.
 	private listed = false;
-	// sid:inc of the sessions closeEnded has killed.
+	// sid:inc of the sessions closeEnded has killed on this connection.
 	private readonly closed = new Set<string>();
 	private pendingClick?: Target;
 	private reportTimer?: ReturnType<typeof setTimeout>;
@@ -314,16 +314,21 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		const click = this.pendingClick;
 		this.pendingClick = undefined;
 		this.openNotified(click);
-		// Sessions that ended cleanly while no GUI was connected.
+		// Sessions that ended cleanly while no GUI was connected, and kills the
+		// last connection may have lost.
+		this.closed.clear();
 		this.closeEnded(list);
 	}
 
 	// Kills (which, for an exited session, removes its record) what closesOnExit
-	// picks, once per session: the daemon answers with a new list, and a kill
-	// it refuses, as one with orphans found late, is not asked again.
+	// picks, once per session and connection: the daemon answers with a new
+	// list, and a kill it refuses, as one with orphans found late, is not asked
+	// again until the next connection. Not while a create is in flight: the new
+	// session may be among the exited ones, and removing it before its replay
+	// would bring it back as an unlisted row; the replay asks again.
 	private closeEnded(list: SessionInfo[]): void {
 		const conn = this.link.ready;
-		if (!conn) return;
+		if (!conn || this.requests.creating) return;
 		for (const info of list) {
 			const key = `${info.sid}:${info.inc}`;
 			if (!closesOnExit(info) || this.closed.has(key)) continue;
@@ -374,6 +379,11 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		this.ensureCore(entry, conn).replay(m);
 		this.pump();
 		this.select(m.sid);
+		this.closeEnded(this.infos());
+	}
+
+	private infos(): SessionInfo[] {
+		return [...this.entries.values()].map((e) => e.info);
 	}
 
 	private addUnlisted(m: Replay, req: CreateRequest): Entry<T, V> {
@@ -425,6 +435,8 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		this.pump();
 		this.publish();
 		if (message !== undefined) this.report(message);
+		// A create that failed held back closeEnded.
+		this.closeEnded(this.infos());
 	}
 
 	private onStatus(m: StatusMessage): void {

@@ -4,7 +4,7 @@ Each release's notes open with its section here.
 
 ## 0.1.23
 
-- A shell, Claude Code or Codex session that exits cleanly (`exit`, `/exit`) closes its tab and leaves the sidebar by itself. One that fails, leaves processes behind, or runs another command keeps its tab, dimmed, so you can read how it ended.
+- A session closes its tab and leaves the sidebar by itself when you exit its shell (`exit` or ⌃D) and nothing is left running. One that fails or leaves processes behind keeps its tab, dimmed, so you can read how it ended.
 
 ## 0.1.22
 

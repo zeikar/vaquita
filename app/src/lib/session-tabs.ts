@@ -1,4 +1,3 @@
-import { agentKind } from './agent';
 import { STATE_EXITED, STATE_RUNNING, type SessionInfo } from './protocol';
 import { groupKey, type TabGroups } from './tabs';
 
@@ -35,14 +34,12 @@ export function placement(sessions: SessionInfo[], repos: string[]): Map<number,
 	return placed;
 }
 
-// A shell or an agent that ended cleanly is closed for you, as a terminal's
-// tab is after exit: nothing is left to read and nothing to clean up. A failure
-// keeps its last screen and code, orphans keep the record that names them, and
-// any other command keeps its output.
+// A session that ended cleanly is closed for you, as a terminal's tab is after
+// exit. Every session ends in an interactive shell (the daemon runs one after
+// its command), so this is that shell exiting, which only you do. A failure
+// keeps its last screen and code, and orphans keep the record that names them.
 export function closesOnExit(s: SessionInfo): boolean {
-	return (
-		s.state === STATE_EXITED && s.code === 0 && !s.orphans?.length && hasTerminal(s) && agentKind(s) !== 'other'
-	);
+	return s.state === STATE_EXITED && s.code === 0 && !s.orphans?.length && hasTerminal(s);
 }
 
 // The stored order, minus session tabs whose session is not in this group any

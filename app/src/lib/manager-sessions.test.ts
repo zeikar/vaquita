@@ -8,7 +8,8 @@ fakeTimersAndStorage();
 
 describe('SessionManager sessions', () => {
 	it('subscribes the selected session first, then the running ones by sid, one at a time', async () => {
-		const t = await connected([info(1), info(2), info(3), info(4, 'i', 'exited')], 3);
+		// 4 failed, so it stays listed without being closed for you.
+		const t = await connected([info(1), info(2), info(3), { ...info(4, 'i', 'exited'), code: 1 }], 3);
 		expect(t.state().selected).toBe(3);
 		expect(t.c.subscribes).toEqual([3]);
 		t.c.emit.replay(replay(3));
@@ -291,16 +292,30 @@ describe('SessionManager sessions', () => {
 		t.m.stop();
 	});
 
-	it('kills a shell that exited cleanly once, also one that ended while no GUI was connected', async () => {
-		const shell = (sid: number, state = 'running', code = 0) => ({ ...info(sid, 'i', state), cmd: '', code });
-		const t = await connected([shell(1), shell(2, 'exited'), info(3, 'i', 'exited')]);
-		const kills = (c = t.c) => c.requests.filter((r) => r[0] === 'kill').map((r) => r[1]);
-		expect(kills()).toEqual([2]);
-		t.c.emit.sessions([shell(1, 'exited', 1), shell(2, 'exited'), info(3, 'i', 'exited')]);
-		expect(kills()).toEqual([2]);
-		t.c.emit.sessions([shell(1, 'exited', 0), shell(2, 'exited')]);
-		t.c.emit.sessions([shell(1, 'exited', 0), shell(2, 'exited')]);
-		expect(kills()).toEqual([2, 1]);
+	it('kills a session that exited cleanly once per connection, also one that ended while no GUI was connected', async () => {
+		const ended = (sid: number, code = 0) => ({ ...info(sid, 'i', 'exited'), code });
+		const kills = (c: { requests: (string | number)[][] }) => c.requests.filter((r) => r[0] === 'kill').map((r) => r[1]);
+		const t = await connected([info(1), ended(2), ended(3, 1)]);
+		expect(kills(t.c)).toEqual([2]);
+		t.c.emit.sessions([ended(1), ended(2), ended(3, 1)]);
+		t.c.emit.sessions([ended(1), ended(2), ended(3, 1)]);
+		expect(kills(t.c)).toEqual([2, 1]);
+		// The kills may have been lost with the connection: the next one asks again.
+		const c = await reconnect(t, [ended(1), ended(2), ended(3, 1)]);
+		expect(kills(c)).toEqual([1, 2]);
+		t.m.stop();
+	});
+
+	it('leaves a session that ended before its create\'s replay until the replay, so it comes back as no unlisted row', async () => {
+		const t = await connected([]);
+		const kills = () => t.c.requests.filter((r) => r[0] === 'kill').map((r) => r[1]);
+		void t.m.create('/tmp/repo', '', '');
+		t.c.emit.sessions([{ ...info(1, 'i', 'exited'), cmd: '' }]);
+		expect(kills()).toEqual([]);
+		t.c.emit.replay(replay(1));
+		expect(kills()).toEqual([1]);
+		t.c.emit.sessions([]);
+		expect(t.state().sessions).toEqual([]);
 		t.m.stop();
 	});
 });
