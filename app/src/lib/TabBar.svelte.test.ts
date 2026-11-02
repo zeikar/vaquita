@@ -3,6 +3,8 @@
 import { flushSync, mount, unmount } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SessionRow } from './manager';
+import type { SessionInfo } from './protocol';
 import TabBar from './TabBar.svelte';
 import { WELCOME } from './tabs';
 
@@ -12,11 +14,22 @@ vi.mock('@tauri-apps/plugin-opener', () => opener);
 let target: HTMLElement;
 let bar: ReturnType<typeof mount> | undefined;
 
-// A title left undefined is no session.
-function show(tabs: string[], active?: string, preview?: string, opts: { title?: string } = { title: 'claude' }) {
+function row(sid: number, info: Partial<SessionInfo> = {}): SessionRow<unknown> {
+	return {
+		info: { sid, inc: 'i', cwd: '/tmp/repo', cmd: '', name: '', cols: 80, rows: 24, state: 'running', pid: 100 + sid, code: 0, ...info },
+		ro: false,
+		reports: 0,
+		resets: 0,
+	};
+}
+
+// Session 1 a shell, session 2 a working claude.
+const rows = () => [row(1), row(2, { cmd: 'claude', status: { state: 'working' } })];
+
+function show(tabs: string[], active?: string, preview?: string, sessions = rows()) {
 	const props = $state({
-		...opts,
 		tabs,
+		sessions,
 		active,
 		preview,
 		dirty: new SvelteSet<string>(),
@@ -24,6 +37,7 @@ function show(tabs: string[], active?: string, preview?: string, opts: { title?:
 		onclose: vi.fn((_paths: string[]) => {}),
 		onpin: vi.fn((_path: string) => {}),
 		onreorder: vi.fn((_order: string[]) => {}),
+		onnew: vi.fn(),
 		report: vi.fn(),
 	});
 	target = document.createElement('div');
@@ -44,26 +58,28 @@ const names = () => tabs().map((t) => t.textContent?.trim());
 const selected = () => tabs().filter((t) => t.getAttribute('aria-selected') === 'true');
 
 describe('TabBar', () => {
-	it('shows the terminal tab, then the files by name with the path as their title', () => {
+	it('shows the files by name with the path as their title', () => {
 		show(['/tmp/repo/src/main.ts', '/tmp/repo/shot.png']);
 		expect(target.querySelector('[role="tablist"]')).not.toBeNull();
-		expect(names()).toEqual(['claude', 'main.ts', 'shot.png']);
-		expect(tabs()[0].querySelector('svg[data-icon="command-line"]')).not.toBeNull();
-		expect(tabs()[1].title).toBe('/tmp/repo/src/main.ts');
+		expect(names()).toEqual(['main.ts', 'shot.png']);
+		expect(tabs()[0].title).toBe('/tmp/repo/src/main.ts');
 	});
 
-	it('marks the shown tab selected, the terminal when no file is', () => {
+	it('marks the shown tab selected, and none when nothing shows', () => {
 		const props = show(['/tmp/repo/a.md', '/tmp/repo/b.md']);
-		expect(selected()).toEqual([tabs()[0]]);
+		expect(selected()).toEqual([]);
 		props.active = '/tmp/repo/b.md';
 		flushSync();
-		expect(selected()).toEqual([tabs()[2]]);
+		expect(selected()).toEqual([tabs()[1]]);
+		props.active = '/tmp/repo/a.md';
+		flushSync();
+		expect(selected()).toEqual([tabs()[0]]);
 	});
 
-	it('selects a clicked tab, and the terminal', () => {
-		const props = show(['/tmp/repo/a.md'], '/tmp/repo/a.md');
+	it('selects a clicked file tab, and a clicked session tab', () => {
+		const props = show(['session:1', '/tmp/repo/a.md'], '/tmp/repo/a.md');
 		tabs()[0].click();
-		expect(props.onselect).toHaveBeenLastCalledWith(undefined);
+		expect(props.onselect).toHaveBeenLastCalledWith('session:1');
 		tabs()[1].click();
 		expect(props.onselect).toHaveBeenLastCalledWith('/tmp/repo/a.md');
 	});
@@ -86,32 +102,26 @@ describe('TabBar', () => {
 
 	it('pins a double-clicked tab, which its clicks still select', () => {
 		const props = show(['/tmp/repo/a.md'], undefined, '/tmp/repo/a.md');
-		tabs()[1].click();
-		tabs()[1].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+		tabs()[0].click();
+		tabs()[0].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
 		expect(props.onpin).toHaveBeenCalledExactlyOnceWith('/tmp/repo/a.md');
 		expect(props.onselect).toHaveBeenCalledExactlyOnceWith('/tmp/repo/a.md');
 	});
 
 	it('shows a diff tab by its file’s name with a diff mark, the file’s path as its title', () => {
 		show(['/tmp/repo/src/main.ts', 'diff:/tmp/repo/src/main.ts']);
-		expect(names()).toEqual(['claude', 'main.ts', 'main.ts diff']);
-		expect(tabs()[1].querySelector('.mark')).toBeNull();
-		expect(tabs()[2].querySelector('.label')?.textContent).toBe('main.ts');
-		expect(tabs()[2].querySelector('.mark')?.textContent).toBe('diff');
-		expect(tabs()[2].title).toBe('/tmp/repo/src/main.ts');
+		expect(names()).toEqual(['main.ts', 'main.ts diff']);
+		expect(tabs()[0].querySelector('.mark')).toBeNull();
+		expect(tabs()[1].querySelector('.label')?.textContent).toBe('main.ts');
+		expect(tabs()[1].querySelector('.mark')?.textContent).toBe('diff');
+		expect(tabs()[1].title).toBe('/tmp/repo/src/main.ts');
 		expect(target.querySelector('button[aria-label="Close main.ts"]')).not.toBeNull();
 		expect(target.querySelector('button[aria-label="Close main.ts diff"]')).not.toBeNull();
 	});
 
-	it('has no terminal tab without a title', () => {
-		show(['/tmp/repo/a.md'], '/tmp/repo/a.md', undefined, {});
-		expect(names()).toEqual(['a.md']);
-		expect(target.querySelector('svg[data-icon="command-line"]')).toBeNull();
-	});
-
-	it('marks no tab selected while the welcome shows over the terminal', () => {
-		show(['/tmp/repo/a.md'], WELCOME);
-		expect(names()).toEqual(['claude', 'a.md']);
+	it('marks no tab selected while the welcome shows', () => {
+		show(['session:1', '/tmp/repo/a.md'], WELCOME);
+		expect(names()).toEqual(['shell', 'a.md']);
 		expect(selected()).toEqual([]);
 	});
 
@@ -122,7 +132,64 @@ describe('TabBar', () => {
 		flushSync();
 		const marks = target.querySelectorAll('[aria-label="Unsaved"]');
 		expect(marks).toHaveLength(1);
-		expect(tabs()[2].contains(marks[0])).toBe(true);
+		expect(tabs()[1].contains(marks[0])).toBe(true);
+	});
+
+	describe('sessions', () => {
+		const a = '/tmp/repo/a.md';
+
+		it('shows a session tab with its agent’s icon, its title, its state and a close button', () => {
+			show(['session:1', 'session:2', a]);
+			expect(names()).toEqual(['shell', 'claude', 'a.md']);
+			expect(tabs()[0].querySelector('svg[data-icon="command-line"]')).not.toBeNull();
+			expect(tabs()[1].querySelector('svg[data-icon="claude"]')).not.toBeNull();
+			expect(tabs()[1].querySelector('.spinner')).not.toBeNull();
+			expect(tabs()[0].querySelector('.spinner')).toBeNull();
+			expect(tabs()[0].title).toBe('/tmp/repo');
+			expect(target.querySelector('button[aria-label="Close claude"]')).not.toBeNull();
+		});
+
+		it('closes a session tab from its button', () => {
+			const props = show(['session:1', a]);
+			target.querySelector<HTMLButtonElement>('button[aria-label="Close shell"]')!.click();
+			expect(props.onclose).toHaveBeenCalledExactlyOnceWith(['session:1']);
+			expect(props.onselect).not.toHaveBeenCalled();
+		});
+
+		it('marks an unread session', () => {
+			show(['session:1', 'session:2'], undefined, undefined, [row(1), row(2, { unread: true })]);
+			expect(tabs()[0].querySelector('.dot.unread')).toBeNull();
+			expect(tabs()[1].querySelector('.dot.unread')).not.toBeNull();
+		});
+
+		it('dims an exited session’s tab and says how it ended', () => {
+			show(['session:1', 'session:2'], undefined, undefined, [row(1, { state: 'exited', code: 1 }), row(2)]);
+			const [exited, running] = tabs().map((t) => t.parentElement!);
+			expect(exited.classList.contains('exited')).toBe(true);
+			expect(running.classList.contains('exited')).toBe(false);
+			expect(tabs()[0].title).toBe('/tmp/repo\nexited (1)');
+		});
+
+		it('shows no tab for a key with no session', () => {
+			show(['session:9', a, 'session:1']);
+			expect(names()).toEqual(['a.md', 'shell']);
+		});
+
+		it('pins nothing on a double-click', () => {
+			const props = show(['session:1']);
+			tabs()[0].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+			expect(props.onpin).not.toHaveBeenCalled();
+		});
+
+		it('opens the new-session dialog from the + at the end', () => {
+			const props = show(['session:1', a]);
+			const plus = target.querySelector<HTMLButtonElement>('button[aria-label="New session"]')!;
+			expect(plus.parentElement).toBe(target.querySelector('.tabs'));
+			expect(plus.previousElementSibling).toBe(tabs()[1].parentElement);
+			plus.click();
+			expect(props.onnew).toHaveBeenCalledOnce();
+			expect(props.onselect).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('menu', () => {
@@ -264,13 +331,40 @@ describe('TabBar', () => {
 			expect(focus).not.toHaveBeenCalled();
 		});
 
-		it('opens on no terminal tab', () => {
-			show([a]);
-			const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
-			tabs()[0].dispatchEvent(e);
-			flushSync();
-			expect(e.defaultPrevented).toBe(false);
+		it('kills a session in one click, and copies its folder', () => {
+			const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+			const props = show(['session:1', a]);
+			rightClick('shell');
+			expect(labels()).toEqual(['Kill', 'Copy path']);
+			expect(item('Kill').classList.contains('danger')).toBe(true);
+			expect(item('Copy path').classList.contains('danger')).toBe(false);
+			choose('Copy path');
+			expect(write).toHaveBeenCalledWith('/tmp/repo');
+			rightClick('shell');
+			choose('Kill');
+			expect(props.onclose).toHaveBeenCalledExactlyOnceWith(['session:1']);
 			expect(items()).toHaveLength(0);
+			write.mockRestore();
+		});
+
+		it('closes file tabs only, around and over sessions', () => {
+			const props = show([a, 'session:1', b, 'session:2', c]);
+			rightClick('b.md');
+			choose('Close Others');
+			expect(props.onclose).toHaveBeenLastCalledWith([a, c]);
+			rightClick('a.md');
+			choose('Close to the Right');
+			expect(props.onclose).toHaveBeenLastCalledWith([b, c]);
+			rightClick('c.md');
+			choose('Close All');
+			expect(props.onclose).toHaveBeenLastCalledWith([a, b, c]);
+		});
+
+		it('has no files to close beside one file tab and sessions', () => {
+			show([a, 'session:1']);
+			rightClick('a.md');
+			expect(disabled('Close Others')).toBe(true);
+			expect(disabled('Close to the Right')).toBe(true);
 		});
 
 		describe('inside Tauri', () => {
@@ -281,6 +375,14 @@ describe('TabBar', () => {
 			});
 			afterEach(() => {
 				delete internals.__TAURI_INTERNALS__;
+			});
+
+			it('reveals a session’s folder in Finder', async () => {
+				show(['session:1']);
+				rightClick('shell');
+				expect(labels()).toEqual(['Kill', 'Copy path', 'Reveal in Finder']);
+				choose('Reveal in Finder');
+				await vi.waitFor(() => expect(opener.revealItemInDir).toHaveBeenCalledWith('/tmp/repo'));
 			});
 
 			it('reveals the file in Finder, and reports a failure', async () => {
@@ -301,7 +403,7 @@ describe('TabBar', () => {
 		const a = '/tmp/repo/a.md';
 		const b = '/tmp/repo/b.md';
 		const c = '/tmp/repo/c.md';
-		// Each tab 100 px wide from the left edge, the terminal first. The stub is
+		// Each tab 100 px wide from the left edge. The stub is
 		// on the element, so it moves with its tab when the bar reorders.
 		function lay() {
 			target.querySelectorAll<HTMLElement>('.tab').forEach((t, i) => {
@@ -324,8 +426,8 @@ describe('TabBar', () => {
 		it('does nothing below the threshold', () => {
 			const props = show([a, b, c]);
 			lay();
-			press('b.md', 250, 253);
-			expect(names()).toEqual(['claude', 'a.md', 'b.md', 'c.md']);
+			press('b.md', 150, 153);
+			expect(names()).toEqual(['a.md', 'b.md', 'c.md']);
 			expect(props.onreorder).not.toHaveBeenCalled();
 		});
 
@@ -334,19 +436,19 @@ describe('TabBar', () => {
 		it('leaves nothing pending after a plain click', () => {
 			const props = show([a, b, c]);
 			lay();
-			press('b.md', 250);
+			press('b.md', 150);
 			button('b.md').click();
-			pointer('b.md', 'pointermove', 351);
-			expect(names()).toEqual(['claude', 'a.md', 'b.md', 'c.md']);
+			pointer('b.md', 'pointermove', 251);
+			expect(names()).toEqual(['a.md', 'b.md', 'c.md']);
 			expect(props.onreorder).not.toHaveBeenCalled();
 		});
 
 		it('moves the dragged tab past the centres left of the pointer, reports it once and swallows the click', () => {
 			const props = show([a, b, c], a);
 			lay();
-			pointer('b.md', 'pointerdown', 250);
-			pointer('b.md', 'pointermove', 351);
-			expect(names()).toEqual(['claude', 'a.md', 'c.md', 'b.md']);
+			pointer('b.md', 'pointerdown', 150);
+			pointer('b.md', 'pointermove', 251);
+			expect(names()).toEqual(['a.md', 'c.md', 'b.md']);
 			expect(target.querySelector('.tab.dragging')?.textContent?.trim()).toBe('b.md');
 			pointer('b.md', 'lostpointercapture');
 			expect(props.onreorder).toHaveBeenCalledExactlyOnceWith([a, c, b]);
@@ -354,7 +456,7 @@ describe('TabBar', () => {
 			button('b.md').click();
 			expect(props.onselect).not.toHaveBeenCalled();
 			// The next press is a click again.
-			pointer('b.md', 'pointerdown', 250);
+			pointer('b.md', 'pointerdown', 150);
 			pointer('b.md', 'lostpointercapture');
 			button('b.md').click();
 			expect(props.onselect).toHaveBeenCalledExactlyOnceWith(b);
@@ -365,7 +467,7 @@ describe('TabBar', () => {
 		it('reports the order when the release comes after the bar re-rendered mid-drag', () => {
 			const props = show([a, b, c]);
 			lay();
-			pointer('c.md', 'pointerdown', 350);
+			pointer('c.md', 'pointerdown', 250);
 			pointer('c.md', 'pointermove', 120);
 			lay();
 			pointer('c.md', 'pointermove', 20);
@@ -378,29 +480,42 @@ describe('TabBar', () => {
 		it('drops a press whose release was never seen', () => {
 			const props = show([a, b, c]);
 			lay();
-			pointer('b.md', 'pointerdown', 250);
-			target.querySelector<HTMLElement>('.tabs')!.dispatchEvent(new PointerEvent('pointermove', { buttons: 0, clientX: 351, pointerId: 1, bubbles: true }));
+			pointer('b.md', 'pointerdown', 150);
+			target.querySelector<HTMLElement>('.tabs')!.dispatchEvent(new PointerEvent('pointermove', { buttons: 0, clientX: 251, pointerId: 1, bubbles: true }));
 			flushSync();
-			pointer('b.md', 'pointermove', 351);
+			pointer('b.md', 'pointermove', 251);
 			expect(props.onreorder).not.toHaveBeenCalled();
-			expect(names()).toEqual(['claude', 'a.md', 'b.md', 'c.md']);
+			expect(names()).toEqual(['a.md', 'b.md', 'c.md']);
 		});
 
-		it('never moves a file before the terminal', () => {
-			const props = show([a, b, c]);
+		it('moves a session tab past files, and a file before a session tab', () => {
+			const props = show(['session:1', a, b], undefined, a);
 			lay();
-			pointer('c.md', 'pointerdown', 350);
-			pointer('c.md', 'pointermove', 20);
-			expect(names()).toEqual(['claude', 'c.md', 'a.md', 'b.md']);
-			pointer('c.md', 'lostpointercapture');
-			expect(props.onreorder).toHaveBeenCalledExactlyOnceWith([c, a, b]);
+			pointer('shell', 'pointerdown', 50);
+			pointer('shell', 'pointermove', 251);
+			expect(names()).toEqual(['a.md', 'b.md', 'shell']);
+			pointer('shell', 'lostpointercapture');
+			expect(props.onreorder).toHaveBeenLastCalledWith([a, b, 'session:1']);
+			expect(props.onpin).not.toHaveBeenCalled();
+			lay();
+			press('b.md', 250, 20);
+			expect(props.onreorder).toHaveBeenLastCalledWith([b, 'session:1', a]);
+		});
+
+		// The order a drag works on is what is drawn, so a key on its way out
+		// does not shift where a tab lands.
+		it('places a tab by the drawn tabs when a session key has no row', () => {
+			const props = show(['session:9', a, b]);
+			lay();
+			press('a.md', 50, 151);
+			expect(props.onreorder).toHaveBeenCalledExactlyOnceWith([b, a]);
 		});
 
 		it('selects on a press without movement', () => {
 			const props = show([a, b, c]);
 			lay();
-			pointer('b.md', 'pointerdown', 250);
-			pointer('b.md', 'pointerup', 250);
+			pointer('b.md', 'pointerdown', 150);
+			pointer('b.md', 'pointerup', 150);
 			pointer('b.md', 'lostpointercapture');
 			button('b.md').click();
 			expect(props.onselect).toHaveBeenCalledExactlyOnceWith(b);
@@ -410,9 +525,9 @@ describe('TabBar', () => {
 		it('keeps a dragged preview tab, and pins no other', () => {
 			const props = show([a, b, c], undefined, b);
 			lay();
-			press('a.md', 150, 351);
+			press('a.md', 50, 251);
 			expect(props.onpin).not.toHaveBeenCalled();
-			press('b.md', 250, 20);
+			press('b.md', 150, 20);
 			expect(props.onpin).toHaveBeenCalledExactlyOnceWith(b);
 		});
 	});
@@ -457,12 +572,12 @@ describe('TabBar', () => {
 			props.active = '/tmp/repo/b.md';
 			flushSync();
 			expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' });
-			expect(scrollIntoView.mock.contexts.at(-1)).toBe(tabs()[2].parentElement);
+			expect(scrollIntoView.mock.contexts.at(-1)).toBe(tabs()[1].parentElement);
 			scrollIntoView.mockClear();
 			props.tabs = [...props.tabs, '/tmp/repo/c.md'];
 			props.active = '/tmp/repo/c.md';
 			flushSync();
-			expect(scrollIntoView.mock.contexts.at(-1)).toBe(tabs()[3].parentElement);
+			expect(scrollIntoView.mock.contexts.at(-1)).toBe(tabs()[2].parentElement);
 		});
 	});
 });
