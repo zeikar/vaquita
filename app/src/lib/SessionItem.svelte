@@ -5,9 +5,10 @@
 	import type { MenuAt } from './menu';
 	import NameEditor from './NameEditor.svelte';
 	import type { SessionRow } from './manager';
-	import { sessionTitle, SUFFIX } from './notify';
+	import { sessionTitle } from './notify';
 	import { shortPath } from './paths';
-	import { STATE_EXITED, type StatusInfo } from './protocol';
+	import { STATE_EXITED } from './protocol';
+	import StatusMark from './StatusMark.svelte';
 
 	let {
 		row,
@@ -44,12 +45,8 @@
 		onmenu: (at: MenuAt) => void;
 	} = $props();
 
-	// What the status icon says without a message: the words notifications use.
-	const WORDS: Record<StatusInfo['state'], string> = { working: 'working', ...SUFFIX };
-
 	const info = $derived(row.info);
 	const s = $derived(info.status);
-	const said = $derived(s && (s.msg || WORDS[s.state]));
 	const kind = $derived(agentKind(info));
 	// A record is dismissed, a session killed; both take a second click.
 	const end = $derived(info.restorable ? 'Dismiss' : 'Kill');
@@ -101,13 +98,7 @@
 		{:else}
 			<span class="title" class:unread={info.unread} title={sessionTitle(info)}>{sessionTitle(info)}</span>
 		{/if}
-		<span class="status {s?.state}" role={s && 'img'} aria-label={said} title={said}>
-			{#if s?.state === 'working'}<span class="spinner"></span>
-			{:else if s?.state === 'input'}<Icon name="exclamation-triangle" />
-			{:else if s?.state === 'auth'}<Icon name="key" />
-			{:else if s?.state === 'done'}<Icon name="check" />
-			{:else if s?.state === 'error'}<Icon name="x-circle" />{/if}
-		</span>
+		<StatusMark status={s} />
 		<span class="dot" class:unread={info.unread}></span>
 	</span>
 	<span class="detail {s?.msg && s.state}">{detail}</span>
@@ -209,19 +200,15 @@
 		height: 18px;
 	}
 	.agent,
-	.status,
 	.actions button {
 		flex: none;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 	}
-	.agent,
-	.status {
+	.agent {
 		width: 14px;
 		height: 14px;
-	}
-	.agent {
 		color: #999;
 	}
 	.title,
@@ -236,34 +223,6 @@
 	}
 	.title.unread {
 		font-weight: 600;
-	}
-	.status.input {
-		color: #cca700;
-	}
-	.status.done {
-		color: #89d185;
-	}
-	.status.error {
-		color: #f14c4c;
-	}
-	.spinner {
-		box-sizing: border-box;
-		width: 12px;
-		height: 12px;
-		border: 2px solid #555;
-		border-top-color: var(--neon);
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-	}
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.spinner {
-			animation: none;
-		}
 	}
 	.dot {
 		flex: none;
