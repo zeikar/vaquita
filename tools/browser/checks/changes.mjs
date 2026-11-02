@@ -141,9 +141,9 @@ await step('inline and back', async () => {
 
 await step('terminal and back', async () => {
 	const off = log.offset();
-	await page.evaluate(() => window.__vqFire('tab', 'terminal'));
+	await page.locator('.tabs .tab[data-path^="session:"] button.name').click();
 	const terminal = await until(
-		() => page.locator('.tabs .tab').first().evaluate((t) => t.classList.contains('active')),
+		() => page.locator('.tabs .tab[data-path^="session:"]').evaluate((t) => t.classList.contains('active')),
 		(v) => v,
 		3000,
 	);
