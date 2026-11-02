@@ -2,6 +2,10 @@
 
 Each release's notes open with its section here.
 
+## 0.1.23
+
+- A shell, Claude Code or Codex session that exits cleanly (`exit`, `/exit`) closes its tab and leaves the sidebar by itself. One that fails, leaves processes behind, or runs another command keeps its tab, dimmed, so you can read how it ended.
+
 ## 0.1.22
 
 - Sessions are tabs. Every session of a repo has a tab in the repo's tab bar, with its agent's mark, its title and its state, beside the files you opened. Drag any tab to reorder them; the order is kept across restarts. ⌘1 to ⌘9 go to the tab at that position.

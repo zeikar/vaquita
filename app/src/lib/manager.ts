@@ -17,6 +17,7 @@ import {
 	type Status as StatusMessage,
 } from './protocol';
 import { RequestSlot, type CreateRequest } from './requests';
+import { closesOnExit } from './session-tabs';
 import { SessionCore, type CoreOut, type Size, type TermLike } from './session-core';
 import { load, remove, save } from './storage';
 
@@ -114,6 +115,8 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 	private lastSize = DEFAULT_SIZE;
 	// Whether a session list has been applied yet, and the click that came before.
 	private listed = false;
+	// sid:inc of the sessions closeEnded has killed.
+	private readonly closed = new Set<string>();
 	private pendingClick?: Target;
 	private reportTimer?: ReturnType<typeof setTimeout>;
 
@@ -311,6 +314,22 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		const click = this.pendingClick;
 		this.pendingClick = undefined;
 		this.openNotified(click);
+		// Sessions that ended cleanly while no GUI was connected.
+		this.closeEnded(list);
+	}
+
+	// Kills (which, for an exited session, removes its record) what closesOnExit
+	// picks, once per session: the daemon answers with a new list, and a kill
+	// it refuses, as one with orphans found late, is not asked again.
+	private closeEnded(list: SessionInfo[]): void {
+		const conn = this.link.ready;
+		if (!conn) return;
+		for (const info of list) {
+			const key = `${info.sid}:${info.inc}`;
+			if (!closesOnExit(info) || this.closed.has(key)) continue;
+			this.closed.add(key);
+			conn.kill(info.sid);
+		}
 	}
 
 	private onSessions(list: SessionInfo[]): void {
@@ -333,6 +352,7 @@ export class SessionManager<T extends ManagedTerm = ManagedTerm, V extends ViewL
 		}
 		this.pump();
 		this.publish();
+		this.closeEnded(list);
 	}
 
 	private onReplay(conn: ConnectionLike, m: Replay): void {

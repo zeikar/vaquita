@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionInfo } from './protocol';
 import { WELCOME } from './tabs';
-import { arrangeGroup, isSessionTab, needsAsk, placement, reconcile, sessionTab, tabSid } from './session-tabs';
+import { arrangeGroup, closesOnExit, isSessionTab, needsAsk, placement, reconcile, sessionTab, tabSid } from './session-tabs';
 
 describe('session tab keys', () => {
 	it('round-trips a sid', () => {
@@ -74,5 +74,23 @@ describe('needsAsk', () => {
 		expect(needsAsk(s('running', 'done'))).toBe(false);
 		expect(needsAsk(s('running', 'auth'))).toBe(false);
 		expect(needsAsk(s('exited', 'working'))).toBe(false);
+	});
+});
+
+describe('closesOnExit', () => {
+	const ended = (patch: Partial<SessionInfo> = {}) =>
+		({ sid: 1, inc: 'i', cwd: '/tmp/repo', cmd: '', name: '', cols: 80, rows: 24, state: 'exited', pid: 2, code: 0, ...patch }) as SessionInfo;
+	it('closes a shell or an agent that exited with 0', () => {
+		expect(closesOnExit(ended())).toBe(true);
+		expect(closesOnExit(ended({ cmd: 'claude' }))).toBe(true);
+		expect(closesOnExit(ended({ cmd: 'codex resume 1', agent: 'codex' }))).toBe(true);
+	});
+	it('keeps a failure, orphans, another command, a running session and a record', () => {
+		expect(closesOnExit(ended({ code: 1 }))).toBe(false);
+		expect(closesOnExit(ended({ orphans: [7] }))).toBe(false);
+		expect(closesOnExit(ended({ cmd: 'make test' }))).toBe(false);
+		expect(closesOnExit(ended({ state: 'running' }))).toBe(false);
+		expect(closesOnExit(ended({ restorable: true }))).toBe(false);
+		expect(closesOnExit(ended({ cols: 0, rows: 0 }))).toBe(false);
 	});
 });

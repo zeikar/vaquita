@@ -1,4 +1,5 @@
-import { STATE_RUNNING, type SessionInfo } from './protocol';
+import { agentKind } from './agent';
+import { STATE_EXITED, STATE_RUNNING, type SessionInfo } from './protocol';
 import { groupKey, type TabGroups } from './tabs';
 
 // A session's key among a group's tabs. File tabs are absolute paths (they start
@@ -20,14 +21,28 @@ export function isSessionTab(key: string): boolean {
 	return tabSid(key) !== undefined;
 }
 
-// Where each session's tab belongs. A record from an earlier run has no
-// terminal, so it is history in the sidebar and never a tab: that is a
-// restorable one, and also one whose orphaned processes are still alive, which
-// the daemon reports with no size.
+// A record from an earlier run has no terminal, so it is history in the
+// sidebar and never a tab: that is a restorable one, and also one whose
+// orphaned processes are still alive, which the daemon reports with no size.
+function hasTerminal(s: SessionInfo): boolean {
+	return !s.restorable && s.cols > 0 && s.rows > 0;
+}
+
+// Where each session's tab belongs.
 export function placement(sessions: SessionInfo[], repos: string[]): Map<number, string> {
 	const placed = new Map<number, string>();
-	for (const s of sessions) if (!s.restorable && s.cols > 0 && s.rows > 0) placed.set(s.sid, groupKey(s.cwd, repos));
+	for (const s of sessions) if (hasTerminal(s)) placed.set(s.sid, groupKey(s.cwd, repos));
 	return placed;
+}
+
+// A shell or an agent that ended cleanly is closed for you, as a terminal's
+// tab is after exit: nothing is left to read and nothing to clean up. A failure
+// keeps its last screen and code, orphans keep the record that names them, and
+// any other command keeps its output.
+export function closesOnExit(s: SessionInfo): boolean {
+	return (
+		s.state === STATE_EXITED && s.code === 0 && !s.orphans?.length && hasTerminal(s) && agentKind(s) !== 'other'
+	);
 }
 
 // The stored order, minus session tabs whose session is not in this group any

@@ -290,4 +290,17 @@ describe('SessionManager sessions', () => {
 		expect(t.conns[0].renames).toEqual([[1, 'fix login'], [1, '']]);
 		t.m.stop();
 	});
+
+	it('kills a shell that exited cleanly once, also one that ended while no GUI was connected', async () => {
+		const shell = (sid: number, state = 'running', code = 0) => ({ ...info(sid, 'i', state), cmd: '', code });
+		const t = await connected([shell(1), shell(2, 'exited'), info(3, 'i', 'exited')]);
+		const kills = (c = t.c) => c.requests.filter((r) => r[0] === 'kill').map((r) => r[1]);
+		expect(kills()).toEqual([2]);
+		t.c.emit.sessions([shell(1, 'exited', 1), shell(2, 'exited'), info(3, 'i', 'exited')]);
+		expect(kills()).toEqual([2]);
+		t.c.emit.sessions([shell(1, 'exited', 0), shell(2, 'exited')]);
+		t.c.emit.sessions([shell(1, 'exited', 0), shell(2, 'exited')]);
+		expect(kills()).toEqual([2, 1]);
+		t.m.stop();
+	});
 });
