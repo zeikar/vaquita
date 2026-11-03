@@ -12,3 +12,11 @@ Conventions:
 - UI changes can be checked in a browser with [tools/browser](docs/app.md#browser-check) before the built app.
 - Tests sit next to the code: vitest (happy-dom) in `app/src/lib`, `cargo test` in `app/src-tauri`, `go test` in `daemon`. Run `npm test`, `npm run check` and `cargo test` before calling app work done.
 - A user-visible change to a release adds its lines to the top section of [CHANGELOG.md](CHANGELOG.md) before the tag.
+- A release is a pushed `vX.Y.Z` tag: `.github/workflows/release.yml` builds, signs and publishes it, with that version's CHANGELOG section as the top of its notes, and fails without one. A `vX.Y.Z-rc.N` tag is a prerelease, which may go without and never reaches the in-app updater.
+
+Safety:
+
+- Never touch an installed vaquita, its app or its home (`~/Library/Application Support/vaquita`); work against a dev daemon (`VAQUITA_HOME=~/.vaquita-dev`, see [docs/app.md › Dev loop](docs/app.md#dev-loop)). Ask before installing or bootstrapping a LaunchAgent.
+- Stop only the processes you started, by their PIDs, never by a broad pattern such as `pkill -f vite`.
+- Two agents working in one clone use separate git worktrees: switching branches under another session breaks its work.
+- After a crash, start from [docs/app.md › When the app crashes](docs/app.md#when-the-app-crashes).
