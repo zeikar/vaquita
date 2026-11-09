@@ -40,7 +40,7 @@ function setup() {
 	};
 	const documents = {
 		openDocument: vi.fn((p: string) => read(p).promise),
-		refresh: vi.fn(async (_p: string, _still: () => boolean, _around: (reload: () => void) => void) => {}),
+		refresh: vi.fn(async (_p: string, _still: () => boolean) => {}),
 	};
 	return { editor, monaco, loader, read, documents };
 }
@@ -239,7 +239,7 @@ describe('TextEditor', () => {
 		flushSync();
 		await settle();
 		expect(s.editor.setModel).not.toHaveBeenCalled();
-		expect(s.documents.refresh).toHaveBeenCalledWith('/tmp/repo/a.ts', expect.any(Function), expect.any(Function));
+		expect(s.documents.refresh).toHaveBeenCalledWith('/tmp/repo/a.ts', expect.any(Function));
 	});
 
 	it('does not lay out a hidden host, nor when relaid out, until it has a size again', async () => {
@@ -305,16 +305,21 @@ describe('TextEditor', () => {
 		expect(s.editor.restoreViewState).not.toHaveBeenCalled();
 	});
 
-	it('keeps the place when a refresh replaces the text', async () => {
+	it('keeps the place through a reload of the text while it holds the document', async () => {
 		const s = setup();
-		show(s, '/tmp/repo/a.ts');
+		const props = show(s, '/tmp/repo/a.ts');
 		await settle();
-		const around = s.documents.refresh.mock.calls[0][2];
+		const a = doc('a');
+		s.read('/tmp/repo/a.ts').resolve(a);
+		await settle();
 		s.editor.saveViewState.mockReturnValueOnce('before');
 		const reload = vi.fn(() => expect(s.editor.restoreViewState).not.toHaveBeenCalled());
-		around(reload);
+		a.around!(reload);
 		expect(reload).toHaveBeenCalledTimes(1);
 		expect(s.editor.restoreViewState).toHaveBeenCalledExactlyOnceWith('before');
+		props.path = '/tmp/repo/b.ts';
+		flushSync();
+		expect(a.around).toBeUndefined();
 	});
 
 	it('shows and reports a failed read', async () => {

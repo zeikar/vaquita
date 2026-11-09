@@ -130,5 +130,24 @@ await step('a code block has a copy button', async () => {
 	await shot(page, '03-copied');
 });
 
+await step('the source keeps its place when the preview reads a changed file', async () => {
+	await page.locator('button[aria-label="Source"]').click();
+	await until(firstLine, (l) => l === 1);
+	await wheel('.monaco-editor', 2000);
+	const box = await page.locator('.monaco-editor').first().boundingBox();
+	await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+	// The cursor's line, when it is in view.
+	const cursor = () => page.evaluate(() => document.querySelector('.monaco-editor .active-line-number')?.textContent ?? null);
+	const from = await until(cursor, (c) => c !== null);
+	say('a cursor down in the source', Number(from) > 20, { from });
+	fs.appendFileSync(path.join(repo, 'long.md'), '\nAdded while away.\n');
+	await page.locator('button[aria-label="Preview"]').click();
+	await page.locator('.markdown .body pre').first().waitFor();
+	await sleep(500);
+	await page.locator('button[aria-label="Source"]').click();
+	const back = await until(cursor, (c) => c === from);
+	say('the cursor is where it was', back === from, { from, back });
+});
+
 await browser.close();
 process.exit(finish() ? 1 : 0);

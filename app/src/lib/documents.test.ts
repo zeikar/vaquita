@@ -289,15 +289,16 @@ describe('onSaved', () => {
 describe('refresh', () => {
 	const still = () => true;
 
-	it('replaces the text inside around, and not without a change on disk', async () => {
+	it('replaces the text inside the holding editor’s around, and not without a change on disk', async () => {
 		const { docs, deps } = setup();
 		const doc = await docs.openDocument(path);
 		const around = vi.fn((reload: () => void) => reload());
+		doc.around = around;
 		deps.readText.mockResolvedValueOnce({ text: doc.model.getValue(), stamp: doc.stamp });
-		await docs.refresh(path, still, around);
+		await docs.refresh(path, still);
 		expect(around).not.toHaveBeenCalled();
 		deps.readText.mockResolvedValueOnce({ text: 'disk', stamp: stamp(5) });
-		await docs.refresh(path, still, around);
+		await docs.refresh(path, still);
 		expect(around).toHaveBeenCalledTimes(1);
 		expect(doc.model.getValue()).toBe('disk');
 	});

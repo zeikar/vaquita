@@ -42,8 +42,11 @@
 	}
 
 	// Before the editor lets go of the model, which forgets where it was.
-	function remember(): void {
-		if (current && editor?.getModel() === current.model) current.view = editor.saveViewState() ?? undefined;
+	function letGo(): void {
+		if (!current) return;
+		if (editor?.getModel() === current.model) current.view = editor.saveViewState() ?? undefined;
+		current.around = undefined;
+		current = undefined;
 	}
 
 	function keepingPlace(reload: () => void): void {
@@ -98,7 +101,7 @@
 		return () => {
 			mounted = false;
 			observer?.disconnect();
-			remember();
+			letGo();
 			editor?.dispose();
 		};
 	});
@@ -116,15 +119,14 @@
 		const n = ++request;
 		// Not the last file's text under this one's tab while it is read.
 		if (asked !== loaded) {
-			remember();
+			letGo();
 			ed.setModel(null);
 			loaded = undefined;
-			current = undefined;
 		}
 		error = undefined;
 		// Before the open, so that only a document that was already there is
 		// read again; a new one has just been read.
-		documents.refresh(asked, () => n === request, keepingPlace).catch((e) => {
+		documents.refresh(asked, () => n === request).catch((e) => {
 			if (n === request) report(`${fileName(asked)} could not be read again: ${message(e)}`);
 		});
 		documents.openDocument(asked).then(
@@ -137,6 +139,7 @@
 				}
 				loaded = asked;
 				current = doc;
+				doc.around = keepingPlace;
 				// The pane took the focus while Monaco loaded or the file was read,
 				// so that typing never reached the terminal; it belongs here now.
 				const at = document.activeElement;

@@ -14,6 +14,9 @@ export type Document = {
 	saving?: Promise<void>;
 	// Where the editor last left it (scroll and cursor), to go back to.
 	view?: import('./monaco-setup').editor.ICodeEditorViewState;
+	// From the editor holding the model, shown or not: runs a reload of the
+	// text, which takes that editor's cursor away from where it was.
+	around?: (reload: () => void) => void;
 };
 
 export type DocumentDeps = {
@@ -102,9 +105,8 @@ export class Documents {
 	// A clean document takes the file's text when the file changed since it
 	// was read, so an unedited tab shows what an agent wrote since. Edits are
 	// never replaced: saving them asks before overwriting the file. still says
-	// whether the caller wants the answer when it comes; around runs the
-	// replacement of the text, which puts an editor showing it back at the top.
-	async refresh(path: string, still: () => boolean, around: (reload: () => void) => void = (reload) => reload()): Promise<void> {
+	// whether the caller wants the answer when it comes.
+	async refresh(path: string, still: () => boolean): Promise<void> {
 		const doc = this.docs.get(path);
 		if (!doc || this.isDirty(path)) return;
 		const version = doc.model.getAlternativeVersionId();
@@ -112,7 +114,9 @@ export class Documents {
 		if (!still() || this.docs.get(path) !== doc || doc.model.getAlternativeVersionId() !== version) return;
 		if (stamp.secs === doc.stamp.secs && stamp.nanos === doc.stamp.nanos && stamp.len === doc.stamp.len) return;
 		this.quiet.add(path);
-		around(() => doc.model.setValue(text));
+		const reload = () => doc.model.setValue(text);
+		if (doc.around) doc.around(reload);
+		else reload();
 		this.quiet.delete(path);
 		doc.stamp = stamp;
 		doc.savedVersion = doc.model.getAlternativeVersionId();
