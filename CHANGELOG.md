@@ -2,6 +2,10 @@
 
 Each release's notes open with its section here.
 
+## 0.1.25
+
+- The spinner of a working session no longer stops turning after you go back and forth between a file's tab and the session's.
+
 ## 0.1.24
 
 - Coming back to a file's tab finds the place you left, in the editor and in the Markdown preview, instead of the top of the file.

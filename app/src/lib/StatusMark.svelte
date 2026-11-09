@@ -44,11 +44,21 @@
 		border: 2px solid #555;
 		border-top-color: var(--neon);
 		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
+		transform: rotate(var(--spinner-angle));
+		animation: spin 0.8s steps(24) infinite;
+	}
+	/* The angle, not the transform, is what animates: WKWebView hands an animated
+	   transform to Core Animation, and there it stopped on screen, while still
+	   running for the page, after going back and forth between a file's tab and
+	   a session's. A custom property is animated by the page itself. */
+	@property --spinner-angle {
+		syntax: '<angle>';
+		inherits: false;
+		initial-value: 0deg;
 	}
 	@keyframes spin {
 		to {
-			transform: rotate(360deg);
+			--spinner-angle: 360deg;
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {
