@@ -1,0 +1,134 @@
+// Coming back to a file's tab finds the place you left, in the editor and in
+// the Markdown preview, from another file's tab, from a session's tab and
+// after the file changed on disk; and a code block's copy button.
+// node checks/reading.mjs <dir>, after run.sh up <dir>; see check.sh.
+import fs from 'node:fs';
+import path from 'node:path';
+import { openApp, recorder, sleep, until } from './lib.mjs';
+
+const dir = process.argv[2];
+if (!dir) {
+	console.error('usage: node checks/reading.mjs <dir>');
+	process.exit(2);
+}
+const repo = path.join(fs.realpathSync(dir), 'repo');
+const { say, step, shot, finish } = recorder(path.join(dir, 'shots'));
+
+// Long lines, as word wrap is what a layout at no width upsets.
+const code = (from, n) => Array.from({ length: n }, (_, i) => `const line${from + i} = '${'x'.repeat(200)}';`).join('\n') + '\n';
+fs.writeFileSync(path.join(repo, 'long.ts'), code(1, 800));
+fs.writeFileSync(path.join(repo, 'other.ts'), code(1, 800));
+const paragraphs = Array.from({ length: 300 }, (_, i) => `Paragraph ${i + 1}.`).join('\n\n');
+fs.writeFileSync(path.join(repo, 'long.md'), '# Long\n\n```sh\necho one\necho two\n```\n\n' + paragraphs + '\n');
+
+const { browser, page } = await openApp({ width: 1440, height: 900 });
+const sidebar = page.locator('main > aside:not(.files)');
+const panel = page.locator('aside.files');
+const tab = (label) => page.locator('.tabs .tab', { hasText: label });
+const open = (name) => panel.locator('.tree button.row', { hasText: name }).dblclick();
+
+// The first line number in view, as the editor shows it.
+const firstLine = () =>
+	page.evaluate(() => {
+		const ed = [...document.querySelectorAll('.monaco-editor')].find((e) => e.offsetParent !== null);
+		if (!ed) return null;
+		const top = ed.getBoundingClientRect().top;
+		// A wrapped line's further rows have no number.
+		const rows = [...ed.querySelectorAll('.line-numbers')].filter((n) => n.textContent !== '' && n.getBoundingClientRect().top >= top - 1);
+		return rows.length ? Math.min(...rows.map((n) => Number(n.textContent))) : null;
+	});
+const markdownTop = () => page.evaluate(() => document.querySelector('.markdown')?.scrollTop ?? null);
+const wheel = async (selector, y) => {
+	const box = await page.locator(selector).first().boundingBox();
+	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+	await page.mouse.wheel(0, y);
+	await sleep(300);
+};
+
+await page.locator('main > aside:not(.files) li > button.row', { hasText: 'repo shell' }).waitFor({ timeout: 10000 });
+await sidebar.locator('li > button.row', { hasText: 'repo shell' }).click();
+if ((await panel.count()) === 0) await page.locator('footer .files-toggle').click();
+
+let line;
+await step('the editor keeps its place', async () => {
+	await open('long.ts');
+	await until(firstLine, (l) => l === 1, 15000);
+	await wheel('.monaco-editor', 9000);
+	line = await firstLine();
+	say('scrolled down', line > 20, { line });
+
+	await open('other.ts');
+	await until(firstLine, (l) => l === 1);
+	await tab('long.ts').click();
+	let back = await until(firstLine, (l) => l === line);
+	say('from another file’s tab', back === line, { line, back });
+
+	await tab('repo shell').click();
+	await sleep(300);
+	await tab('long.ts').click();
+	back = await until(firstLine, (l) => l === line);
+	say('from a session’s tab', back === line, { line, back });
+
+	await tab('repo shell').click();
+	await sleep(300);
+	fs.appendFileSync(path.join(repo, 'long.ts'), '// added while away\n');
+	await tab('long.ts').click();
+	await sleep(800);
+	back = await until(firstLine, (l) => l === line);
+	say('after the file changed on disk', back === line, { line, back });
+	await shot(page, '01-editor-back');
+});
+
+let top;
+await step('the Markdown preview keeps its place', async () => {
+	await open('long.md');
+	await page.locator('.markdown .body pre').first().waitFor();
+	await wheel('.markdown', 2500);
+	top = await markdownTop();
+	say('scrolled down', top > 500, { top });
+
+	await tab('other.ts').click();
+	await until(firstLine, (l) => l !== null);
+	await tab('long.md').click();
+	await page.locator('.markdown .body pre').first().waitFor();
+	let back = await until(markdownTop, (t) => t === top);
+	say('from another file’s tab', back === top, { top, back });
+
+	await tab('repo shell').click();
+	await sleep(300);
+	await tab('long.md').click();
+	await page.locator('.markdown .body pre').first().waitFor();
+	back = await until(markdownTop, (t) => t === top);
+	say('from a session’s tab', back === top, { top, back });
+
+	// The editor sat hidden, its model still in it, under the preview.
+	await tab('long.ts').click();
+	const edited = await until(firstLine, (l) => l === line);
+	say('the editor, from the preview’s tab', edited === line, { line, edited });
+	await tab('long.md').click();
+	await page.locator('.markdown .body pre').first().waitFor();
+});
+
+await step('a code block has a copy button', async () => {
+	await page.mouse.move(0, 0);
+	await page.locator('.markdown').evaluate((m) => (m.scrollTop = 0));
+	const block = page.locator('.markdown .body .code').first();
+	const button = block.locator('button.copy');
+	const opacity = () => button.evaluate((b) => getComputedStyle(b).opacity);
+	say('hidden until the block is hovered', (await until(opacity, (o) => o === '0')) === '0', await opacity());
+	await block.hover();
+	say('shown on hover', (await until(opacity, (o) => o === '1')) === '1', await opacity());
+	await shot(page, '02-copy-button');
+	await button.click();
+	const written = await until(
+		() => page.evaluate(() => window.__vqLog.filter((c) => c.cmd.includes('clipboard')).map((c) => c.args)),
+		(w) => w.length === 1,
+	);
+	say('copies the block’s text', JSON.stringify(written).includes('echo one\\necho two"'), written);
+	const icon = () => button.locator('svg').getAttribute('data-icon');
+	say('says it was copied', (await until(icon, (i) => i === 'check')) === 'check', await icon());
+	await shot(page, '03-copied');
+});
+
+await browser.close();
+process.exit(finish() ? 1 : 0);

@@ -1,5 +1,12 @@
+<script module lang="ts">
+	// How far each file's preview was scrolled, for the app run: the view
+	// mounts on every show.
+	const scrolls = new Map<string, number>();
+</script>
+
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { mount, onDestroy, unmount, untrack } from 'svelte';
+	import CopyButton from './CopyButton.svelte';
 	import { documents as shared, type Documents } from './documents';
 	import { readText } from './files';
 	import { openExternal, type Opener } from './links';
@@ -12,12 +19,14 @@
 		documents = shared,
 		read = readText,
 		opener,
+		write,
 	}: {
 		path: string;
 		report: (message: string) => void;
 		documents?: Pick<Documents, 'textOf' | 'refresh'>;
 		read?: typeof readText;
 		opener?: Opener;
+		write?: (text: string) => Promise<void>;
 	} = $props();
 
 	let root: HTMLElement;
@@ -54,6 +63,35 @@
 				},
 			);
 	});
+
+	// Once the text is in the page. The buttons are added after the sanitizer,
+	// which lets no file bring a button of its own, and beside each block, as
+	// one inside it would scroll away with a long line.
+	$effect(() => {
+		if (html === undefined) return;
+		const buttons = [...root.querySelectorAll('pre')].map((pre) => {
+			const block = document.createElement('div');
+			block.className = 'code';
+			pre.replaceWith(block);
+			block.append(pre);
+			return mount(CopyButton, {
+				target: block,
+				props: {
+					// The renderer ends every block with a newline nobody wrote.
+					text: pre.textContent!.replace(/\n$/, ''),
+					failed: (e: unknown) => report(`copying failed: ${message(e)}`),
+					write,
+				},
+			});
+		});
+		root.scrollTop = scrolls.get(untrack(() => path)) ?? 0;
+		return () => buttons.forEach((b) => void unmount(b));
+	});
+
+	// Not while the text is away: the empty view has scrolled to the top by itself.
+	function scrolled(): void {
+		if (html !== undefined) scrolls.set(path, root.scrollTop);
+	}
 
 	// The document's text when the file has one, so edits not saved yet show;
 	// a clean one first takes what an agent wrote on disk since. Without one,
@@ -93,7 +131,7 @@
 <!-- Clicks are delegated for the links of the rendered HTML, which are
      reachable by keyboard themselves and fire click on Enter. -->
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="markdown" tabindex="-1" bind:this={root} onclick={click} onauxclick={block} oncontextmenu={block}>
+<div class="markdown" tabindex="-1" bind:this={root} onclick={click} onauxclick={block} oncontextmenu={block} onscroll={scrolled}>
 	{#if error !== undefined}
 		<p class="error">{error}</p>
 	{:else if html !== undefined}
@@ -181,6 +219,10 @@
 		padding: 0;
 		background: none;
 		font-size: 0.86em;
+	}
+	/* Files have no classes (markdown.ts), so this is only ever the app's. */
+	.body :global(.code) {
+		position: relative;
 	}
 	.body :global(blockquote) {
 		padding: 0 1em;

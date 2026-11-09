@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { documents as shared, type Documents } from './documents';
+	import { documents as shared, type Document, type Documents } from './documents';
 	import { layoutHeld } from './layout-hold';
 	import { EDITOR_OPTIONS, loadMonaco, type Monaco } from './monaco';
 	import { fileName } from './tabs';
@@ -28,10 +28,29 @@
 	let host: HTMLElement;
 	let editor = $state.raw<Editor>();
 	let error = $state<string>();
-	// The path whose model the editor holds.
+	// The path whose model the editor holds, and its document.
 	let loaded: string | undefined;
+	let current: Document | undefined;
+	// A hidden host measures nothing, and laid out at that every wrapped line
+	// breaks anew, which loses the place the reader left.
+	let hidden = false;
 
 	const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+	function layout(): void {
+		if (!hidden) editor?.layout();
+	}
+
+	// Before the editor lets go of the model, which forgets where it was.
+	function remember(): void {
+		if (current && editor?.getModel() === current.model) current.view = editor.saveViewState() ?? undefined;
+	}
+
+	function keepingPlace(reload: () => void): void {
+		const view = editor?.saveViewState();
+		reload();
+		if (view) editor?.restoreViewState(view);
+	}
 
 	// False while there is nothing to type into yet, so the caller can focus
 	// something else.
@@ -43,7 +62,7 @@
 
 	// Lays the editor out to its host's size, as after a panel edge's drag.
 	export function relayout(): void {
-		editor?.layout();
+		layout();
 	}
 
 	$effect(() => editor?.updateOptions({ readOnly }));
@@ -63,8 +82,9 @@
 				// edge's drag and flashes the scrollbars each time: the layout is
 				// held then, as the terminal's fit is, and the host clips the
 				// editor at its old size until the drag ends.
-				observer = new ResizeObserver(() => {
-					if (!layoutHeld()) editor?.layout();
+				observer = new ResizeObserver(([entry]) => {
+					hidden = entry.contentRect.width === 0;
+					if (!layoutHeld()) layout();
 				});
 				observer.observe(host);
 			},
@@ -78,6 +98,7 @@
 		return () => {
 			mounted = false;
 			observer?.disconnect();
+			remember();
 			editor?.dispose();
 		};
 	});
@@ -95,21 +116,27 @@
 		const n = ++request;
 		// Not the last file's text under this one's tab while it is read.
 		if (asked !== loaded) {
+			remember();
 			ed.setModel(null);
 			loaded = undefined;
+			current = undefined;
 		}
 		error = undefined;
 		// Before the open, so that only a document that was already there is
 		// read again; a new one has just been read.
-		documents.refresh(asked, () => n === request).catch((e) => {
+		documents.refresh(asked, () => n === request, keepingPlace).catch((e) => {
 			if (n === request) report(`${fileName(asked)} could not be read again: ${message(e)}`);
 		});
 		documents.openDocument(asked).then(
 			(doc) => {
 				if (n !== request) return;
 				// Setting the model it has would reset the view.
-				if (ed.getModel() !== doc.model) ed.setModel(doc.model);
+				if (ed.getModel() !== doc.model) {
+					ed.setModel(doc.model);
+					if (doc.view) ed.restoreViewState(doc.view);
+				}
 				loaded = asked;
+				current = doc;
 				// The pane took the focus while Monaco loaded or the file was read,
 				// so that typing never reached the terminal; it belongs here now.
 				const at = document.activeElement;

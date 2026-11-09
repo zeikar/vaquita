@@ -2,6 +2,11 @@
 
 Each release's notes open with its section here.
 
+## 0.1.24
+
+- Coming back to a file's tab finds the place you left, in the editor and in the Markdown preview, instead of the top of the file.
+- A code block in the Markdown preview has a copy button, shown when you hover the block.
+
 ## 0.1.23
 
 - A shell, Claude Code or Codex session closes its tab and leaves the sidebar by itself when you exit its shell (`exit` or ⌃D) and nothing is left running. One that fails, leaves processes behind, or was started with another command keeps its tab, dimmed, so you can read how it ended.

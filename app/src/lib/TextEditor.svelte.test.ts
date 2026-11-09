@@ -28,6 +28,8 @@ function setup() {
 		dispose: vi.fn(),
 		updateOptions: vi.fn(),
 		layout: vi.fn(),
+		saveViewState: vi.fn((): unknown => null),
+		restoreViewState: vi.fn(),
 	};
 	const monaco = { editor: { create: vi.fn(() => editor) } } as unknown as Monaco;
 	const loader = vi.fn(async () => monaco);
@@ -38,7 +40,7 @@ function setup() {
 	};
 	const documents = {
 		openDocument: vi.fn((p: string) => read(p).promise),
-		refresh: vi.fn(async (_p: string, _still: () => boolean) => {}),
+		refresh: vi.fn(async (_p: string, _still: () => boolean, _around: (reload: () => void) => void) => {}),
 	};
 	return { editor, monaco, loader, read, documents };
 }
@@ -61,10 +63,11 @@ async function settle() {
 }
 
 // happy-dom observes no layout, so a test resizes the host by hand.
-const observers: { callback: () => void; disconnected: boolean }[] = [];
+type Resized = (entries: { contentRect: { width: number } }[]) => void;
+const observers: { callback: Resized; disconnected: boolean }[] = [];
 class FakeResizeObserver {
 	private readonly entry: (typeof observers)[number];
-	constructor(callback: () => void) {
+	constructor(callback: Resized) {
 		this.entry = { callback, disconnected: false };
 		observers.push(this.entry);
 	}
@@ -73,7 +76,7 @@ class FakeResizeObserver {
 		this.entry.disconnected = true;
 	}
 }
-const resize = () => observers.filter((o) => !o.disconnected).forEach((o) => o.callback());
+const resize = (width = 800) => observers.filter((o) => !o.disconnected).forEach((o) => o.callback([{ contentRect: { width } }]));
 
 beforeEach(() => {
 	vi.stubGlobal('ResizeObserver', FakeResizeObserver);
@@ -236,7 +239,82 @@ describe('TextEditor', () => {
 		flushSync();
 		await settle();
 		expect(s.editor.setModel).not.toHaveBeenCalled();
-		expect(s.documents.refresh).toHaveBeenCalledWith('/tmp/repo/a.ts', expect.any(Function));
+		expect(s.documents.refresh).toHaveBeenCalledWith('/tmp/repo/a.ts', expect.any(Function), expect.any(Function));
+	});
+
+	it('does not lay out a hidden host, nor when relaid out, until it has a size again', async () => {
+		const s = setup();
+		show(s, '/tmp/repo/a.ts');
+		await settle();
+		resize(0);
+		(shown as { relayout: () => void }).relayout();
+		expect(s.editor.layout).not.toHaveBeenCalled();
+		resize(800);
+		expect(s.editor.layout).toHaveBeenCalledTimes(1);
+	});
+
+	it('goes back to where a document was left when another path was shown', async () => {
+		const s = setup();
+		const props = show(s, '/tmp/repo/a.ts');
+		await settle();
+		const a = doc('a');
+		s.read('/tmp/repo/a.ts').resolve(a);
+		await settle();
+		expect(s.editor.restoreViewState).not.toHaveBeenCalled();
+		s.editor.saveViewState.mockReturnValueOnce('a at line 200');
+		props.path = '/tmp/repo/b.ts';
+		flushSync();
+		s.read('/tmp/repo/b.ts').resolve(doc('b'));
+		await settle();
+		expect(s.editor.restoreViewState).not.toHaveBeenCalled();
+		props.path = '/tmp/repo/a.ts';
+		flushSync();
+		await settle();
+		expect(s.editor.getModel()).toBe(a.model);
+		expect(s.editor.restoreViewState).toHaveBeenCalledExactlyOnceWith('a at line 200');
+	});
+
+	it('keeps a document’s place through an unmount, before the editor goes', async () => {
+		const s = setup();
+		show(s, '/tmp/repo/a.ts');
+		await settle();
+		const a = doc('a');
+		s.read('/tmp/repo/a.ts').resolve(a);
+		await settle();
+		s.editor.saveViewState.mockImplementationOnce(() => {
+			expect(s.editor.dispose).not.toHaveBeenCalled();
+			return 'a at line 200';
+		});
+		unmount(shown!);
+		shown = undefined;
+		expect(a.view).toBe('a at line 200');
+	});
+
+	it('leaves the view alone when the path is shown again with the model it has', async () => {
+		const s = setup();
+		const props = show(s, '/tmp/repo/a.ts');
+		await settle();
+		const a = doc('a');
+		a.view = 'older' as unknown as Document['view'];
+		s.read('/tmp/repo/a.ts').resolve(a);
+		await settle();
+		s.editor.restoreViewState.mockClear();
+		props.shown++;
+		flushSync();
+		await settle();
+		expect(s.editor.restoreViewState).not.toHaveBeenCalled();
+	});
+
+	it('keeps the place when a refresh replaces the text', async () => {
+		const s = setup();
+		show(s, '/tmp/repo/a.ts');
+		await settle();
+		const around = s.documents.refresh.mock.calls[0][2];
+		s.editor.saveViewState.mockReturnValueOnce('before');
+		const reload = vi.fn(() => expect(s.editor.restoreViewState).not.toHaveBeenCalled());
+		around(reload);
+		expect(reload).toHaveBeenCalledTimes(1);
+		expect(s.editor.restoreViewState).toHaveBeenCalledExactlyOnceWith('before');
 	});
 
 	it('shows and reports a failed read', async () => {

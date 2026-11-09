@@ -31,13 +31,14 @@ function setup(texts: Record<string, string> = {}) {
 		refresh: vi.fn(async (_p: string, _still: () => boolean) => {}),
 	};
 	const opener = vi.fn();
-	return { read, readText: vi.fn((p: string) => read(p).promise), documents, opener };
+	const write = vi.fn(async (_text: string) => {});
+	return { read, readText: vi.fn((p: string) => read(p).promise), documents, opener, write };
 }
 
 type Setup = ReturnType<typeof setup>;
 
 function show(s: Setup, path: string) {
-	const props = $state({ path, report: vi.fn(), documents: s.documents, read: s.readText, opener: s.opener });
+	const props = $state({ path, report: vi.fn(), documents: s.documents, read: s.readText, opener: s.opener, write: s.write });
 	target = document.createElement('div');
 	document.body.append(target);
 	shown = mount(MarkdownView, { target, props });
@@ -108,5 +109,87 @@ describe('MarkdownView', () => {
 		expect(click(links[0], 'contextmenu')).toBe(true);
 		expect(click(links[0], 'auxclick')).toBe(true);
 		expect(s.opener).toHaveBeenCalledTimes(1);
+	});
+
+	describe('copy buttons', () => {
+		const icon = (b: Element) => b.querySelector('svg')?.getAttribute('data-icon');
+
+		it('gives each code block one, which copies its text without the last newline', async () => {
+			const s = setup({ '/tmp/repo/a.md': '<pre><code>one\ntwo\n</code></pre><p>x</p><pre>three</pre>' });
+			show(s, '/tmp/repo/a.md');
+			await settle();
+			const buttons = [...target.querySelectorAll<HTMLElement>('.body .code > button.copy')];
+			expect(buttons).toHaveLength(2);
+			expect(target.querySelectorAll('.body .code > pre')).toHaveLength(2);
+			expect(icon(buttons[0])).toBe('square-2-stack');
+			buttons[0].click();
+			await settle();
+			expect(s.write).toHaveBeenCalledExactlyOnceWith('one\ntwo');
+			expect(icon(buttons[0])).toBe('check');
+			expect(icon(buttons[1])).toBe('square-2-stack');
+		});
+
+		it('reports a copy that failed and does not say it copied', async () => {
+			const s = setup({ '/tmp/repo/a.md': '<pre>x</pre>' });
+			s.write.mockRejectedValueOnce(new Error('denied'));
+			const props = show(s, '/tmp/repo/a.md');
+			await settle();
+			const button = target.querySelector<HTMLElement>('button.copy')!;
+			button.click();
+			await settle();
+			expect(props.report).toHaveBeenCalledWith('copying failed: denied');
+			expect(icon(button)).toBe('square-2-stack');
+		});
+
+		it('does not follow a link around the block', async () => {
+			const s = setup({ '/tmp/repo/a.md': '<a href="https://example.com/x"><pre>x</pre></a>' });
+			show(s, '/tmp/repo/a.md');
+			await settle();
+			target.querySelector<HTMLElement>('button.copy')!.click();
+			await settle();
+			expect(s.write).toHaveBeenCalledTimes(1);
+			expect(s.opener).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('the place in the file', () => {
+		const view = () => target.querySelector<HTMLElement>('.markdown')!;
+
+		it('goes back to where the file was left when shown again, once its text is in', async () => {
+			const s = setup({ '/tmp/repo/place.md': '<p>text</p>' });
+			show(s, '/tmp/repo/place.md');
+			await settle();
+			view().scrollTop = 700;
+			view().dispatchEvent(new Event('scroll'));
+			unmount(shown!);
+			target.remove();
+			show(s, '/tmp/repo/place.md');
+			expect(view().scrollTop).toBe(0);
+			await settle();
+			expect(view().scrollTop).toBe(700);
+		});
+
+		it('keeps a place per file', async () => {
+			const s = setup({ '/tmp/repo/one.md': '<p>1</p>', '/tmp/repo/two.md': '<p>2</p>' });
+			const props = show(s, '/tmp/repo/one.md');
+			await settle();
+			view().scrollTop = 300;
+			view().dispatchEvent(new Event('scroll'));
+			props.path = '/tmp/repo/two.md';
+			flushSync();
+			await settle();
+			expect(view().scrollTop).toBe(0);
+		});
+
+		it('does not take the scroll of an empty view for the place', async () => {
+			const s = setup();
+			show(s, '/tmp/repo/waiting.md');
+			flushSync();
+			view().scrollTop = 40;
+			view().dispatchEvent(new Event('scroll'));
+			s.read('/tmp/repo/waiting.md').resolve({ text: '<p>x</p>', stamp });
+			await settle();
+			expect(view().scrollTop).toBe(0);
+		});
 	});
 });
