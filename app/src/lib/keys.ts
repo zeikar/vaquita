@@ -22,11 +22,39 @@ export function swallowsKeypress(ev: KeyboardEvent): boolean {
 	return ev.type === 'keypress' && isShiftEnter(ev);
 }
 
+// Cmd and an arrow, with or without Shift or Option. xterm sends nothing for
+// these and leaves the key to WebKit, which moves the caret of xterm's hidden
+// textarea (⌘← is AppKit's moveToLeftEndOfLine:), away from the syllable the
+// Korean input method goes on replacing there (hangul-fix.ts).
+function isCmdArrow(ev: KeyboardEvent): boolean {
+	return ev.type === 'keydown' && ev.metaKey && !ev.ctrlKey && ev.key.startsWith('Arrow') && !belongsToIME(ev);
+}
+
+// Cmd+Left and Cmd+Right alone go to the ends of the line, as in a text field:
+// sent as Ctrl+A and Ctrl+E, which a shell and both agents' prompts read so.
+function lineEnd(ev: KeyboardEvent): string | null {
+	if (!isCmdArrow(ev) || ev.altKey || ev.shiftKey) return null;
+	return ev.key === 'ArrowLeft' ? '\x01' : ev.key === 'ArrowRight' ? '\x05' : null;
+}
+
 // The handler for xterm's attachCustomKeyEventHandler: true lets xterm handle
 // the event, false means it was handled here (or must not be handled at all).
-export function keyHandler(send: (text: string) => void): (ev: KeyboardEvent) => boolean {
+// commit ends the syllable being composed, as a click does.
+export function keyHandler(send: (text: string) => void, commit: () => void): (ev: KeyboardEvent) => boolean {
 	return (ev) => {
 		if (swallowsKeypress(ev)) return false;
+		if (isCmdArrow(ev)) {
+			// Cancelled, so the hidden textarea's caret stays where it is.
+			ev.preventDefault();
+			const end = lineEnd(ev);
+			if (end !== null) {
+				// The input method may not end its syllable for a key it does not
+				// act on, and would go on composing the one sent here.
+				commit();
+				send(end);
+			}
+			return false;
+		}
 		const s = translateKey(ev);
 		if (s === null) return true;
 		send(s);
@@ -62,12 +90,18 @@ function isCtrlTab(ev: KeyboardEvent, shift: boolean): boolean {
 	return ev.key === 'Tab' && ev.ctrlKey && ev.shiftKey === shift && !ev.metaKey && !ev.altKey && !belongsToIME(ev);
 }
 
+// Option+Cmd+Left and Option+Cmd+Right, the same two as in Chrome. AppKit
+// binds nothing to them, and the menu's items already have their keys.
+function isCmdOptionArrow(ev: KeyboardEvent, key: string): boolean {
+	return ev.key === key && ev.metaKey && ev.altKey && !ev.ctrlKey && !ev.shiftKey && !belongsToIME(ev);
+}
+
 export function isPrevTabShortcut(ev: KeyboardEvent): boolean {
-	return isCtrlTab(ev, true);
+	return isCtrlTab(ev, true) || isCmdOptionArrow(ev, 'ArrowLeft');
 }
 
 export function isNextTabShortcut(ev: KeyboardEvent): boolean {
-	return isCtrlTab(ev, false);
+	return isCtrlTab(ev, false) || isCmdOptionArrow(ev, 'ArrowRight');
 }
 
 // Cmd+1 to Cmd+9, the tab at that position. A page shortcut like Cmd+T: AppKit

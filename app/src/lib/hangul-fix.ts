@@ -17,6 +17,9 @@ export interface HangulHost {
 export interface HangulFix {
 	// Emits the pending syllable, if any.
 	flush(): void;
+	// Emits it and makes the IME start a new syllable, for a key the IME may
+	// not have ended this one for.
+	commit(): void;
 	dispose(): void;
 }
 
@@ -96,6 +99,7 @@ export function installHangulFix(host: HangulHost, emit: (text: string) => void)
 
 	return {
 		flush,
+		commit,
 		dispose: () => {
 			element.removeEventListener('beforeinput', onBeforeInput, true);
 			element.removeEventListener('input', onInput, true);

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { isNewSessionShortcut, isNextTabShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut, keyHandler, swallowsKeypress, tabNumber, translateKey } from './keys';
 
 function key(type: string, init: Partial<KeyboardEvent>): KeyboardEvent {
@@ -33,7 +33,7 @@ describe('swallowsKeypress', () => {
 describe('keyHandler', () => {
 	it('sends ESC CR once for Shift+Enter and leaves xterm no event that yields CR', () => {
 		const sent: string[] = [];
-		const handle = keyHandler((t) => void sent.push(t));
+		const handle = keyHandler((t) => void sent.push(t), () => {});
 		const results = [
 			handle(key('keydown', { shiftKey: true })),
 			handle(key('keypress', { shiftKey: true })),
@@ -45,17 +45,74 @@ describe('keyHandler', () => {
 	});
 
 	it('leaves Tab and Shift+Tab to the terminal, and Ctrl+Tab too, which the page takes first', () => {
-		const handle = keyHandler(() => {});
+		const handle = keyHandler(() => {}, () => {});
 		expect(handle(key('keydown', { key: 'Tab', keyCode: 9 }))).toBe(true);
 		expect(handle(key('keydown', { key: 'Tab', keyCode: 9, shiftKey: true }))).toBe(true);
 	});
 
 	it('passes plain Enter through', () => {
 		const sent: string[] = [];
-		const handle = keyHandler((t) => void sent.push(t));
+		const handle = keyHandler((t) => void sent.push(t), () => {});
 		expect(handle(key('keydown', {}))).toBe(true);
 		expect(handle(key('keypress', {}))).toBe(true);
 		expect(sent).toEqual([]);
+	});
+});
+
+describe('keyHandler, Cmd and an arrow', () => {
+	const KEY_CODES: Record<string, number> = { ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 };
+
+	function setup() {
+		const done: string[] = [];
+		const handle = keyHandler(
+			(t) => void done.push(`send ${JSON.stringify(t)}`),
+			() => void done.push('commit'),
+		);
+		// Whether xterm goes on with the key, and whether WebKit does.
+		const press = (name: string, init: Partial<KeyboardEvent> = {}) => {
+			const preventDefault = vi.fn();
+			const xterm = handle(key('keydown', { key: name, keyCode: KEY_CODES[name], metaKey: true, preventDefault, ...init }));
+			return { xterm, webkit: preventDefault.mock.calls.length === 0 };
+		};
+		return { done, press };
+	}
+
+	it('sends Ctrl+A for Cmd+Left and Ctrl+E for Cmd+Right, after ending the syllable being composed', () => {
+		const { done, press } = setup();
+		expect(press('ArrowLeft')).toEqual({ xterm: false, webkit: false });
+		expect(press('ArrowRight')).toEqual({ xterm: false, webkit: false });
+		expect(done).toEqual(['commit', 'send "\\u0001"', 'commit', 'send "\\u0005"']);
+	});
+
+	it('keeps every other Cmd and arrow from the hidden textarea, and sends nothing', () => {
+		const { done, press } = setup();
+		for (const [name, init] of [
+			['ArrowUp', {}],
+			['ArrowDown', {}],
+			['ArrowLeft', { shiftKey: true }],
+			['ArrowRight', { shiftKey: true }],
+			['ArrowUp', { altKey: true }],
+		] as const) {
+			expect(press(name, init), name).toEqual({ xterm: false, webkit: false });
+		}
+		expect(done).toEqual([]);
+	});
+
+	it('leaves an arrow without Cmd, one with Ctrl too, and one that belongs to an IME to xterm', () => {
+		const { done, press } = setup();
+		expect(press('ArrowLeft', { metaKey: false })).toEqual({ xterm: true, webkit: true });
+		expect(press('ArrowLeft', { metaKey: false, altKey: true })).toEqual({ xterm: true, webkit: true });
+		expect(press('ArrowLeft', { ctrlKey: true })).toEqual({ xterm: true, webkit: true });
+		expect(press('ArrowLeft', { keyCode: 229 })).toEqual({ xterm: true, webkit: true });
+		expect(press('ArrowLeft', { isComposing: true })).toEqual({ xterm: true, webkit: true });
+		expect(done).toEqual([]);
+	});
+
+	it('acts on the keydown only', () => {
+		const { done } = setup();
+		const handle = keyHandler((t) => void done.push(t), () => void done.push('commit'));
+		expect(handle(key('keyup', { key: 'ArrowLeft', keyCode: 37, metaKey: true }))).toBe(true);
+		expect(done).toEqual([]);
 	});
 });
 
@@ -115,6 +172,18 @@ describe('isPrevTabShortcut and isNextTabShortcut', () => {
 		expect(isNextTabShortcut(tab({}))).toBe(true);
 		expect(isPrevTabShortcut(tab({}))).toBe(false);
 		expect(isNextTabShortcut(tab({ shiftKey: true }))).toBe(false);
+	});
+
+	it('are Option+Cmd+Left and Option+Cmd+Right too, as in Chrome', () => {
+		const arrow = (name: string, init: Partial<KeyboardEvent> = {}) => key('keydown', { key: name, keyCode: 0, metaKey: true, altKey: true, ...init });
+		expect(isPrevTabShortcut(arrow('ArrowLeft'))).toBe(true);
+		expect(isNextTabShortcut(arrow('ArrowRight'))).toBe(true);
+		expect(isNextTabShortcut(arrow('ArrowLeft'))).toBe(false);
+		expect(isPrevTabShortcut(arrow('ArrowRight'))).toBe(false);
+		for (const init of [{ altKey: false }, { metaKey: false }, { shiftKey: true }, { ctrlKey: true }, { keyCode: 229 }]) {
+			expect(isNextTabShortcut(arrow('ArrowRight', init)), JSON.stringify(init)).toBe(false);
+		}
+		expect(isNextTabShortcut(arrow('ArrowDown'))).toBe(false);
 	});
 
 	it('are not their variants', () => {

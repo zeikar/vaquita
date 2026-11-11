@@ -109,6 +109,19 @@ describe('installHangulFix', () => {
 		expect(document.activeElement).toBe(textarea);
 	});
 
+	it('commits when asked, as for a key the IME may not have ended the syllable for', () => {
+		const { textarea, fix, emitted, type } = setup();
+		textarea.focus();
+		const focus = focusLog(textarea);
+		type('insertText', '가');
+		fix.commit();
+		expect(emitted).toEqual(['가']);
+		expect(focus).toEqual(['blur', 'focus']);
+		// With nothing pending there is nothing to end.
+		fix.commit();
+		expect(focus).toEqual(['blur', 'focus']);
+	});
+
 	it('commits when the window loses focus', () => {
 		const { textarea, emitted, type } = setup();
 		textarea.focus();

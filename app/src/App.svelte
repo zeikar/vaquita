@@ -526,8 +526,8 @@
 
 	// On the window in the capture phase, so it runs before xterm's handler on
 	// its textarea and the terminal never sees the key. ⌃Tab and ⌃⇧Tab are
-	// here and not in the menu, as AppKit would run its key-view loop on them.
-	// The menu has ⌘⇧[ and ⌘⇧].
+	// here and not in the menu, as AppKit would run its key-view loop on them;
+	// ⌥⌘← and ⌥⌘→ are here beside them. The menu has ⌘⇧[ and ⌘⇧].
 	function shortcut(e: KeyboardEvent) {
 		const n = tabNumber(e);
 		if (isNewSessionShortcut(e)) newSession();

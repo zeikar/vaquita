@@ -82,7 +82,12 @@ export class TermView implements ViewLike {
 		this.term.loadAddon(new WebLinksAddon(activate, { hover, leave }));
 		this.term.registerLinkProvider(pathLinkProvider(this.term.buffer, this.cwd, { activate, hover, leave }));
 		this.term.loadAddon(new ClipboardAddon(undefined, clipboardProvider(() => this.core.pendingReplay > 0, this.report)));
-		this.term.attachCustomKeyEventHandler(keyHandler((text) => this.core.sendInput(text)));
+		this.term.attachCustomKeyEventHandler(
+			keyHandler(
+				(text) => this.core.sendInput(text),
+				() => this.hangul?.commit(),
+			),
+		);
 		// The pane can show a view before it has created the view's element.
 		if (this.visible) this.start(container);
 	}
