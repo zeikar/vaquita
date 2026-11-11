@@ -2,29 +2,38 @@
 	// How far each file's preview was scrolled, for the app run: the view
 	// mounts on every show.
 	const scrolls = new Map<string, number>();
+	// The size of each image shown, by its file and src, for the app run: on
+	// the next show the image has its room before it loads, or everything
+	// under it would move down from the place the file was left at.
+	const sizes = new Map<string, { width: number; height: number }>();
 </script>
 
 <script lang="ts">
 	import { mount, onDestroy, unmount, untrack } from 'svelte';
 	import CopyButton from './CopyButton.svelte';
 	import { documents as shared, type Documents } from './documents';
-	import { readText } from './files';
+	import { previewImage, readText } from './files';
 	import { openExternal, type Opener } from './links';
-	import { renderMarkdown } from './markdown';
+	import { imageFile, renderMarkdown } from './markdown';
 	import { fileName } from './tabs';
 
 	let {
 		path,
+		repo,
 		report,
 		documents = shared,
 		read = readText,
+		image = previewImage,
 		opener,
 		write,
 	}: {
 		path: string;
+		// The repo of the tab's group, which bounds the images shown (files.ts).
+		repo?: string;
 		report: (message: string) => void;
 		documents?: Pick<Documents, 'textOf' | 'refresh'>;
 		read?: typeof readText;
+		image?: typeof previewImage;
 		opener?: Opener;
 		write?: (text: string) => Promise<void>;
 	} = $props();
@@ -84,9 +93,63 @@
 				},
 			});
 		});
-		root.scrollTop = scrolls.get(untrack(() => path)) ?? 0;
-		return () => buttons.forEach((b) => void unmount(b));
+		const file = untrack(() => path);
+		const group = untrack(() => repo);
+		let shown = true;
+		for (const img of root.querySelectorAll('img')) showImage(img, file, group, () => shown);
+		root.scrollTop = scrolls.get(file) ?? 0;
+		return () => {
+			shown = false;
+			buttons.forEach((b) => void unmount(b));
+		};
 	});
+
+	// The sanitizer left what an img names in data-src (markdown.ts), so the
+	// page has asked for nothing yet. A file inside the repo is loaded once
+	// the app let it through; anything else, a web image included, shows as
+	// its alt text, with the reason on hover. An image is that text until it
+	// has loaded too, unless its size is known: what does not load then never
+	// moves the text under it, on any show.
+	function showImage(img: HTMLImageElement, file: string, group: string | undefined, still: () => boolean): void {
+		const src = img.dataset.src ?? '';
+		const named = imageFile(src);
+		const key = `${file}\n${named}`;
+		const size = named === undefined ? undefined : sizes.get(key);
+		const text = document.createElement('span');
+		text.textContent = img.alt;
+		const unshown = (why: string) => {
+			sizes.delete(key);
+			text.title = `${src || 'The image'} is not shown: ${why}`;
+			img.replaceWith(text);
+		};
+		if (named === undefined) return unshown('the preview shows only images from files');
+		const sized = size !== undefined && !img.hasAttribute('width');
+		if (size === undefined) {
+			img.hidden = true;
+			img.before(text);
+		} else {
+			if (sized) img.width = size.width;
+			// Not `auto`, with which WebKit gives an image still loading another height.
+			img.style.aspectRatio = `${size.width} / ${size.height}`;
+		}
+		img.addEventListener('load', () => {
+			sizes.set(key, { width: img.naturalWidth, height: img.naturalHeight });
+			// The file may hold another picture by now.
+			if (sized) img.removeAttribute('width');
+			img.style.aspectRatio = '';
+			img.hidden = false;
+			text.remove();
+		});
+		img.addEventListener('error', () => unshown('it could not be loaded'));
+		image(file, named, group).then(
+			(url) => {
+				if (still()) img.src = url;
+			},
+			(e) => {
+				if (still()) unshown(message(e));
+			},
+		);
+	}
 
 	// Not while the text is away: the empty view has scrolled to the top by itself.
 	function scrolled(): void {
@@ -223,6 +286,10 @@
 	/* Files have no classes (markdown.ts), so this is only ever the app's. */
 	.body :global(.code) {
 		position: relative;
+	}
+	.body :global(img) {
+		max-width: 100%;
+		height: auto;
 	}
 	.body :global(blockquote) {
 		padding: 0 1em;

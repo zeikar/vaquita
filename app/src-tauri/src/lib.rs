@@ -161,6 +161,7 @@ pub fn run() {
             notify::take_notification_click,
             open_path::open_path,
             files::view_path,
+            files::view_image,
             files::read_text,
             files::write_text,
             folders::read_folder,

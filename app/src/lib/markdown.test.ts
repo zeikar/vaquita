@@ -2,7 +2,7 @@
 // Not happy-dom: DOMPurify cannot walk its DOM and lets handlers through there,
 // so the sanitizing would go untested.
 import { describe, expect, it } from 'vitest';
-import { renderMarkdown, withFrontMatter } from './markdown';
+import { imageFile, renderMarkdown, withFrontMatter } from './markdown';
 
 async function rendered(text: string): Promise<HTMLElement> {
 	const root = document.createElement('div');
@@ -33,13 +33,27 @@ describe('renderMarkdown', () => {
 		expect(root.innerHTML).not.toMatch(/alert/);
 	});
 
-	it('drops images and media, forms and their fields, and styles', async () => {
+	it('keeps an image as something the page does not load by itself', async () => {
 		const root = await rendered(
-			'![logo](https://example.com/logo.png)\n\n<img src="x.png">\n\n<picture><source srcset="x.webp"></picture>\n\n<video src="x.mp4"><source src="y.mp4"></video>\n\n<audio src="x.mp3"></audio>\n\n<form action="https://example.com"><input name="q"><button>go</button><textarea></textarea><select></select></form>\n\n<style>body { display: none }</style>\n\n<p style="color: red">red</p>',
+			'![logo](docs/logo.png "The logo")\n\n![badge](https://example.com/badge.svg)\n\n<img src="x.png" srcset="y.png 2x" data-src="/tmp/other.png" width="100" onerror="alert(1)">\n\n<img data-src="/tmp/other.png" alt="none">',
 		);
-		for (const tag of ['img', 'picture', 'video', 'audio', 'source', 'form', 'input', 'button', 'textarea', 'select', 'style']) {
+		const imgs = [...root.querySelectorAll('img')];
+		expect(imgs.map((i) => i.getAttribute('data-src'))).toEqual(['docs/logo.png', 'https://example.com/badge.svg', 'x.png', null]);
+		for (const img of imgs) {
+			for (const name of ['src', 'srcset', 'onerror']) expect(img.hasAttribute(name), name).toBe(false);
+		}
+		expect([imgs[0].alt, imgs[0].title, imgs[2].getAttribute('width')]).toEqual(['logo', 'The logo', '100']);
+	});
+
+	it('drops other media, forms and their fields, and styles', async () => {
+		const root = await rendered(
+			'<picture><source srcset="x.webp"><img src="x.png"></picture>\n\n<video src="x.mp4"><source src="y.mp4"></video>\n\n<audio src="x.mp3"></audio>\n\n<form action="https://example.com"><input name="q"><button>go</button><textarea></textarea><select></select></form>\n\n<style>body { display: none }</style>\n\n<p style="color: red">red</p>',
+		);
+		for (const tag of ['picture', 'video', 'audio', 'source', 'form', 'input', 'button', 'textarea', 'select', 'style']) {
 			expect(root.querySelector(tag), tag).toBeNull();
 		}
+		// A picture's own img stays, as any other.
+		expect(root.querySelector('img')?.getAttribute('data-src')).toBe('x.png');
 		expect(root.querySelector('p[style]')).toBeNull();
 		expect(root.textContent).toContain('red');
 	});
@@ -62,6 +76,21 @@ describe('renderMarkdown', () => {
 		const root = await rendered('- [ ] todo\n- [x] done\n');
 		expect(root.querySelector('input')).toBeNull();
 		expect([...root.querySelectorAll('li')].map((li) => li.textContent?.trim())).toEqual(['☐ todo', '☑ done']);
+	});
+});
+
+describe('imageFile', () => {
+	it('is the path a src names, with escapes undone and a query or fragment cut', () => {
+		expect(imageFile('docs/shot.png')).toBe('docs/shot.png');
+		expect(imageFile('../a%20b/%ED%95%9C.png?raw=true#top')).toBe('../a b/한.png');
+		expect(imageFile('/tmp/repo/x.png')).toBe('/tmp/repo/x.png');
+		expect(imageFile('100%.png')).toBe('100%.png');
+	});
+
+	it('is nothing for a URL with a scheme or a host, or for no path', () => {
+		for (const src of ['https://example.com/x.png', 'HTTP://example.com/x.png', '//example.com/x.png', 'data:image/png;base64,AAAA', 'file:///tmp/x.png', 'asset://localhost/x.png', '', '#top']) {
+			expect(imageFile(src), src).toBeUndefined();
+		}
 	});
 });
 

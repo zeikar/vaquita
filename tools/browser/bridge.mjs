@@ -95,6 +95,22 @@ const IMAGES = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'];
 const ext = (p) => path.extname(p).slice(1).toLowerCase();
 const kindOf = (p) => (IMAGES.includes(ext(p)) ? 'image' : ['md', 'markdown'].includes(ext(p)) ? 'markdown' : 'text');
 
+// A rough copy of files.rs's preview_image: an image inside the file's repo,
+// or inside the folder of a file in none.
+function viewImage(file, src, repo) {
+	const inside = (p, root) => p === root || p.startsWith(root + path.sep);
+	const real = fs.realpathSync(file);
+	const folder = path.dirname(real);
+	const repoReal = repo && fs.existsSync(repo) ? fs.realpathSync(repo) : null;
+	const root = repoReal && inside(real, repoReal) ? repoReal : folder;
+	const named = path.resolve(folder, src);
+	if (!inside(named, root)) throw "outside the file's repo or folder";
+	const image = fs.realpathSync(named);
+	if (!inside(image, root)) throw "outside the file's repo or folder";
+	if (kindOf(image) !== 'image') throw 'not an image the app shows';
+	return image;
+}
+
 function stamp(p) {
 	const st = fs.statSync(p);
 	return { secs: Math.floor(st.mtimeMs / 1000), nanos: Math.round((st.mtimeMs % 1000) * 1e6), len: st.size };
@@ -333,6 +349,12 @@ function run(cmd, args) {
 			const real = fs.realpathSync(args.path);
 			return { path: real, kind: kindOf(real) };
 		}
+		case 'view_image':
+			try {
+				return viewImage(args.file, args.src, args.repo);
+			} catch (e) {
+				throw typeof e === 'string' ? e : ioError(e);
+			}
 		case 'open_path':
 			try {
 				return openPath(args.path);

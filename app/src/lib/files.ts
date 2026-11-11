@@ -36,10 +36,18 @@ export function writeText(path: string, text: string, stamp?: Stamp): Promise<St
 	return call('write_text', { path, text, expect: stamp ?? null });
 }
 
-// Only for a path view_path just judged: the asset scope allows no other.
+// Only for a path view_path or view_image just judged: the asset scope allows
+// no other.
 export async function fileUrl(path: string): Promise<string> {
 	const { convertFileSrc } = await import('@tauri-apps/api/core');
 	return convertFileSrc(path);
+}
+
+// The URL of an image the Markdown file names as src, for its preview, which
+// loads it with no click: only one inside the file's repo, or inside the
+// folder of a file in none.
+export async function previewImage(file: string, src: string, repo?: string): Promise<string> {
+	return fileUrl(await call<string>('view_image', { file, src, repo: repo ?? null }));
 }
 
 export type TabAction = 'close' | 'prev' | 'next' | 'files';

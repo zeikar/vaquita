@@ -181,7 +181,7 @@
 		</div>
 	{/if}
 	{#if markdown !== undefined && !source}
-		<MarkdownView bind:this={preview} path={markdown} {report} />
+		<MarkdownView bind:this={preview} path={markdown} {repo} {report} />
 	{/if}
 	{#if diff !== undefined}
 		<div class="diff">

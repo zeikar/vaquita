@@ -1,6 +1,7 @@
 // Coming back to a file's tab finds the place you left, in the editor and in
 // the Markdown preview, from another file's tab, from a session's tab and
-// after the file changed on disk; and a code block's copy button.
+// after the file changed on disk; a code block's copy button; and the
+// preview's images, which keep the place too.
 // node checks/reading.mjs <dir>, after run.sh up <dir>; see check.sh.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,8 +21,17 @@ fs.writeFileSync(path.join(repo, 'long.ts'), code(1, 800));
 fs.writeFileSync(path.join(repo, 'other.ts'), code(1, 800));
 const paragraphs = Array.from({ length: 300 }, (_, i) => `Paragraph ${i + 1}.`).join('\n\n');
 fs.writeFileSync(path.join(repo, 'long.md'), '# Long\n\n```sh\necho one\necho two\n```\n\n' + paragraphs + '\n');
+// logo.png is run.sh's; a copy beside the repo is outside it.
+fs.copyFileSync(path.join(repo, 'logo.png'), path.join(repo, '..', 'outside.png'));
+fs.writeFileSync(
+	path.join(repo, 'docs', 'pictures.md'),
+	'# Pictures\n\n![The logo](../logo.png)\n\n[![build](https://example.com/badge.svg)](https://example.com)\n\n![Outside](../../outside.png)\n\n' + paragraphs + '\n',
+);
 
 const { browser, page } = await openApp({ width: 1440, height: 900 });
+// Every URL the page asked for, to see that a file's web image was not one.
+const asked = [];
+page.on('request', (r) => asked.push(r.url()));
 const sidebar = page.locator('main > aside:not(.files)');
 const panel = page.locator('aside.files');
 const tab = (label) => page.locator('.tabs .tab', { hasText: label });
@@ -147,6 +157,45 @@ await step('the source keeps its place when the preview reads a changed file', a
 	await page.locator('button[aria-label="Source"]').click();
 	const back = await until(cursor, (c) => c === from);
 	say('the cursor is where it was', back === from, { from, back });
+});
+
+await step('the preview shows the images of its repo, and keeps its place under them', async () => {
+	await panel.locator('.tree button.row', { hasText: 'docs' }).click();
+	await open('pictures.md');
+	const img = page.locator('.markdown .body img');
+	await img.waitFor();
+	const size = await until(
+		() => img.evaluate((i) => ({ natural: i.naturalWidth, height: Math.round(i.getBoundingClientRect().height) })),
+		(s) => s.natural > 0,
+	);
+	say('an image inside the repo, named from a folder below, loads', size.natural > 0 && size.height > 100, size);
+	const texts = await page.locator('.markdown .body span[title]').evaluateAll((spans) => spans.map((s) => [s.textContent, s.title, !!s.closest('a')]));
+	say(
+		'a web image and one outside the repo show as their alt text, with the reason',
+		texts.length === 2 && texts[0][0] === 'build' && texts[0][2] && /only images from files/.test(texts[0][1]) && texts[1][0] === 'Outside' && /outside the file's repo/.test(texts[1][1]),
+		texts,
+	);
+	say('the page asked the web for nothing', !asked.some((u) => u.includes('example.com')), asked.filter((u) => u.includes('example.com')));
+	await shot(page, '04-images');
+
+	// The paragraph at the top of the view, which the image above must not move.
+	const reading = () =>
+		page.evaluate(() => {
+			const view = document.querySelector('.markdown');
+			const top = view.getBoundingClientRect().top;
+			const p = [...view.querySelectorAll('.body p')].find((p) => p.getBoundingClientRect().bottom > top);
+			return { top: view.scrollTop, at: p?.textContent ?? null };
+		});
+	await wheel('.markdown', 2500);
+	const left = await reading();
+	say('scrolled down, past the image', left.top > size.height, left);
+	await tab('other.ts').click();
+	await until(firstLine, (l) => l !== null);
+	await tab('pictures.md').click();
+	await img.waitFor();
+	await until(() => img.evaluate((i) => i.naturalWidth), (n) => n > 0);
+	const back = await until(reading, (r) => r.top === left.top && r.at === left.at);
+	say('back at the same paragraph once the image has loaded again', back.top === left.top && back.at === left.at, { left, back });
 });
 
 await browser.close();

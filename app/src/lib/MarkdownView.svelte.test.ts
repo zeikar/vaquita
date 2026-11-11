@@ -7,7 +7,7 @@ import MarkdownView from './MarkdownView.svelte';
 
 // The sanitizing is markdown.test.ts's, under a DOM DOMPurify can walk; here
 // the text is shown as it comes, so the view's own rules can be seen.
-vi.mock('./markdown', () => ({ renderMarkdown: async (text: string) => text }));
+vi.mock('./markdown', async (original) => ({ ...(await original<typeof import('./markdown')>()), renderMarkdown: async (text: string) => text }));
 
 let target: HTMLElement;
 let shown: ReturnType<typeof mount> | undefined;
@@ -32,13 +32,18 @@ function setup(texts: Record<string, string> = {}) {
 	};
 	const opener = vi.fn();
 	const write = vi.fn(async (_text: string) => {});
-	return { read, readText: vi.fn((p: string) => read(p).promise), documents, opener, write };
+	// Lets through what is under docs/, as the app does what is in the repo.
+	const image = vi.fn(async (_file: string, src: string, _repo?: string) => {
+		if (!src.startsWith('docs/')) throw new Error('outside the file\'s repo or folder');
+		return `asset://localhost/${src}`;
+	});
+	return { read, readText: vi.fn((p: string) => read(p).promise), documents, opener, write, image };
 }
 
 type Setup = ReturnType<typeof setup>;
 
-function show(s: Setup, path: string) {
-	const props = $state({ path, report: vi.fn(), documents: s.documents, read: s.readText, opener: s.opener, write: s.write });
+function show(s: Setup, path: string, repo?: string) {
+	const props = $state({ path, repo, report: vi.fn(), documents: s.documents, read: s.readText, image: s.image, opener: s.opener, write: s.write });
 	target = document.createElement('div');
 	document.body.append(target);
 	shown = mount(MarkdownView, { target, props });
@@ -149,6 +154,82 @@ describe('MarkdownView', () => {
 			await settle();
 			expect(s.write).toHaveBeenCalledTimes(1);
 			expect(s.opener).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('images', () => {
+		const img = () => target.querySelector<HTMLImageElement>('img');
+		const texts = () => [...target.querySelectorAll('p span')].map((e) => [e.textContent, e.getAttribute('title')]);
+		const loaded = (i: HTMLImageElement) => {
+			Object.defineProperties(i, { naturalWidth: { value: 1200, configurable: true }, naturalHeight: { value: 800, configurable: true } });
+			i.dispatchEvent(new Event('load'));
+		};
+
+		it('loads one the app lets through, asked by the file, what it names and the repo', async () => {
+			const s = setup({ '/tmp/repo/README.md': '<p><img data-src="docs/a%20b.png?raw=1" alt="A shot"></p>' });
+			show(s, '/tmp/repo/README.md', '/tmp/repo');
+			await settle();
+			expect(s.image).toHaveBeenCalledWith('/tmp/repo/README.md', 'docs/a b.png', '/tmp/repo');
+			expect(img()?.getAttribute('src')).toBe('asset://localhost/docs/a b.png');
+		});
+
+		it('shows an image as its alt text until it has loaded', async () => {
+			const s = setup({ '/tmp/repo/README.md': '<p><img data-src="docs/a.png" alt="A shot"></p>' });
+			show(s, '/tmp/repo/README.md', '/tmp/repo');
+			await settle();
+			expect([img()!.hidden, texts()]).toEqual([true, [['A shot', null]]]);
+			loaded(img()!);
+			expect([img()!.hidden, texts()]).toEqual([false, []]);
+		});
+
+		it('shows a web image as its alt text, and asks the app nothing', async () => {
+			const s = setup({ '/tmp/repo/README.md': '<p><a href="https://example.com"><img data-src="https://example.com/badge.svg" alt="build"></a></p>' });
+			show(s, '/tmp/repo/README.md', '/tmp/repo');
+			await settle();
+			expect(img()).toBeNull();
+			expect(s.image).not.toHaveBeenCalled();
+			expect(target.querySelector('a span')).not.toBeNull();
+			expect(texts()).toEqual([['build', 'https://example.com/badge.svg is not shown: the preview shows only images from files']]);
+		});
+
+		it('shows one the app refuses, or that does not load, as its alt text with the reason', async () => {
+			const s = setup({ '/tmp/repo/README.md': '<p><img data-src="../out.png" alt="Out"><img data-src="docs/broken.png" alt="Broken"></p>' });
+			show(s, '/tmp/repo/README.md', '/tmp/repo');
+			await settle();
+			img()!.dispatchEvent(new Event('error'));
+			expect(img()).toBeNull();
+			expect(texts()).toEqual([
+				['Out', "../out.png is not shown: outside the file's repo or folder"],
+				['Broken', 'docs/broken.png is not shown: it could not be loaded'],
+			]);
+		});
+
+		it('gives an image its room when the file is shown again, until it has loaded', async () => {
+			const text = '<p><img data-src="docs/a.png" alt="A shot"></p>';
+			const s = setup({ '/tmp/repo/sized.md': text });
+			show(s, '/tmp/repo/sized.md');
+			await settle();
+			loaded(img()!);
+			unmount(shown!);
+			target.remove();
+			show(s, '/tmp/repo/sized.md');
+			await settle();
+			expect([img()!.hidden, img()!.getAttribute('width'), img()!.style.aspectRatio, texts()]).toEqual([false, '1200', '1200 / 800', []]);
+			loaded(img()!);
+			expect([img()!.hasAttribute('width'), img()!.style.aspectRatio]).toEqual([false, '']);
+
+			// One that no longer loads is text again, on this show and the next.
+			unmount(shown!);
+			target.remove();
+			show(s, '/tmp/repo/sized.md');
+			await settle();
+			img()!.dispatchEvent(new Event('error'));
+			expect(texts()).toEqual([['A shot', 'docs/a.png is not shown: it could not be loaded']]);
+			unmount(shown!);
+			target.remove();
+			show(s, '/tmp/repo/sized.md');
+			await settle();
+			expect([img()!.hidden, texts()]).toEqual([true, [['A shot', null]]]);
 		});
 	});
 

@@ -9,13 +9,17 @@
 //! The asset protocol serves a file it cannot identify as text/html, so HTML
 //! named .png is served as HTML. Media is safe as <img>, <audio> and <video>
 //! never render HTML. No asset URL is ever framed or navigated to.
+//!
+//! A Markdown preview shows the images its file names, which nobody clicked:
+//! only those inside the file's repo, or beside a file that is in none
+//! (view_image).
 
 use std::ffi::{CString, OsString};
 use std::fs::{File, Metadata, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
@@ -95,7 +99,7 @@ pub struct Viewable {
     kind: Kind,
 }
 
-// The static assetProtocol scope is empty: this is the one place a file is
+// The static assetProtocol scope is empty: here and in view_image a file is
 // allowed, one at a time and only just after it was judged, so the scope never
 // holds a folder, a glob or anything the gate in open_path.rs would reveal. A
 // tab asks this on every show, which judges a restored tab afresh.
@@ -114,6 +118,65 @@ pub async fn view_path(app: AppHandle, path: String) -> Result<Viewable, String>
             app.asset_protocol_scope().allow_file(&path).map_err(|e| e.to_string())?;
         }
         Ok(Viewable { path, kind })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+const OUTSIDE: &str = "outside the file's repo or folder";
+
+/// path without its `.` and `..`, by name alone.
+fn lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            // At the root there is nothing to pop, and `/..` is the root.
+            Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// The image the Markdown file names as src, a path relative to the file's
+/// folder or absolute, for its preview. The preview loads it with no click, so
+/// a file must not reach wherever it likes: the image has to be inside repo
+/// when the file is, else inside the file's own folder. The name is checked
+/// before the disk is asked about it, and the canonical path after, as a link
+/// inside may lead out.
+fn preview_image(file: &Path, src: &str, repo: Option<&Path>, home: &Path, handler: &dyn Fn(&Path) -> Option<String>) -> Result<PathBuf, String> {
+    let file = std::fs::canonicalize(file).map_err(open_path::io_error)?;
+    let folder = file.parent().ok_or("the file has no folder")?;
+    let root = match repo.and_then(|r| std::fs::canonicalize(r).ok()) {
+        Some(repo) if file.starts_with(&repo) => repo,
+        _ => folder.to_path_buf(),
+    };
+    let named = lexical(&folder.join(src));
+    if !named.starts_with(&root) {
+        return Err(OUTSIDE.to_string());
+    }
+    let (canonical, action) = open_path::resolve(named.to_str().ok_or(NOT_UTF8)?, "", home, handler)?;
+    if !canonical.starts_with(&root) {
+        return Err(OUTSIDE.to_string());
+    }
+    match action {
+        Action::View { kind: Kind::Image, .. } => Ok(canonical),
+        _ => Err("not an image the app shows".to_string()),
+    }
+}
+
+/// Lets the webview load an image a Markdown preview shows (preview_image),
+/// and names it.
+#[tauri::command]
+pub async fn view_image(app: AppHandle, file: String, src: String, repo: Option<String>) -> Result<PathBuf, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
+        let path = preview_image(Path::new(&file), &src, repo.as_deref().map(Path::new), Path::new(&home), &open_path::handler_id)?;
+        app.asset_protocol_scope().allow_file(&path).map_err(|e| e.to_string())?;
+        Ok(path)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -290,6 +353,76 @@ mod tests {
     }
 
     const OVER: usize = TEXT_MAX as usize + 1;
+
+    fn opener(_: &Path) -> Option<String> {
+        Some("com.apple.Preview".to_string())
+    }
+
+    /// A repo with README.md, docs/guide.md and docs/shot.png, and a folder
+    /// beside it with out.png; canonical paths.
+    fn image_repo(name: &str) -> (PathBuf, PathBuf) {
+        let d = std::fs::canonicalize(dir(&format!("image-{name}"))).unwrap();
+        let (repo, other) = (d.join("repo"), d.join("other"));
+        std::fs::create_dir_all(repo.join("docs")).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        file(&repo, "README.md", 0o644);
+        file(&repo.join("docs"), "guide.md", 0o644);
+        file(&repo.join("docs"), "shot.png", 0o644);
+        file(&other, "out.png", 0o644);
+        (repo, other)
+    }
+
+    fn image(file: &Path, src: &str, repo: Option<&Path>) -> Result<PathBuf, String> {
+        preview_image(file, src, repo, Path::new("/nonexistent-home"), &opener)
+    }
+
+    #[test]
+    fn a_preview_shows_an_image_inside_its_repo() {
+        let (repo, _) = image_repo("inside");
+        let shot = repo.join("docs/shot.png");
+        assert_eq!(image(&repo.join("README.md"), "docs/shot.png", Some(&repo)), Ok(shot.clone()));
+        assert_eq!(image(&repo.join("README.md"), "./docs/../docs/shot.png", Some(&repo)), Ok(shot.clone()));
+        // Up from the file's folder, still in the repo; and by its full path.
+        file(&repo, "logo.png", 0o644);
+        assert_eq!(image(&repo.join("docs/guide.md"), "../logo.png", Some(&repo)), Ok(repo.join("logo.png")));
+        assert_eq!(image(&repo.join("README.md"), shot.to_str().unwrap(), Some(&repo)), Ok(shot));
+    }
+
+    #[test]
+    fn a_preview_shows_no_image_outside_its_repo() {
+        let (repo, other) = image_repo("outside");
+        let readme = repo.join("README.md");
+        assert_eq!(image(&readme, "../other/out.png", Some(&repo)), Err(OUTSIDE.to_string()));
+        assert_eq!(image(&readme, other.join("out.png").to_str().unwrap(), Some(&repo)), Err(OUTSIDE.to_string()));
+        // Refused by its name, before the disk could say it is not there.
+        assert_eq!(image(&readme, "../../../../nowhere/x.png", Some(&repo)), Err(OUTSIDE.to_string()));
+        // A link inside the repo that leads out of it.
+        std::os::unix::fs::symlink(other.join("out.png"), repo.join("link.png")).unwrap();
+        assert_eq!(image(&readme, "link.png", Some(&repo)), Err(OUTSIDE.to_string()));
+    }
+
+    #[test]
+    fn a_file_in_no_repo_shows_images_from_its_own_folder_only() {
+        let (repo, other) = image_repo("norepo");
+        let guide = repo.join("docs/guide.md");
+        assert_eq!(image(&guide, "shot.png", None), Ok(repo.join("docs/shot.png")));
+        file(&repo, "logo.png", 0o644);
+        assert_eq!(image(&guide, "../logo.png", None), Err(OUTSIDE.to_string()));
+        // A repo the file is not in bounds nothing: the file's folder does.
+        assert_eq!(image(&guide, "shot.png", Some(&other)), Ok(repo.join("docs/shot.png")));
+        assert_eq!(image(&guide, "../logo.png", Some(&other)), Err(OUTSIDE.to_string()));
+    }
+
+    #[test]
+    fn a_preview_shows_only_images() {
+        let (repo, _) = image_repo("kinds");
+        let readme = repo.join("README.md");
+        assert_eq!(image(&readme, "docs/guide.md", Some(&repo)), Err("not an image the app shows".to_string()));
+        file(&repo, "clip.mp4", 0o644);
+        assert_eq!(image(&readme, "clip.mp4", Some(&repo)), Err("not an image the app shows".to_string()));
+        assert_eq!(image(&readme, "docs", Some(&repo)), Err("not an image the app shows".to_string()));
+        assert_eq!(image(&readme, "missing.png", Some(&repo)), Err("no such file".to_string()));
+    }
 
     #[test]
     fn markdown_is_text_named_md_under_the_cap() {
