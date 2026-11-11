@@ -163,6 +163,10 @@ fn preview_image(file: &Path, src: &str, repo: Option<&Path>, home: &Path, handl
         return Err(OUTSIDE.to_string());
     }
     let (canonical, action) = open_path::resolve(canonical.to_str().ok_or(NOT_UTF8)?, "", home, handler)?;
+    // The gate resolves the path again, and a link may have been put there since.
+    if !canonical.starts_with(&root) {
+        return Err(OUTSIDE.to_string());
+    }
     match action {
         Action::View { kind: Kind::Image, .. } => Ok(canonical),
         _ => Err("not an image the app shows".to_string()),
