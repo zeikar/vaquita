@@ -125,6 +125,8 @@
 		if (named === undefined) return unshown('the preview shows only images from files');
 		const sized = size !== undefined && !img.hasAttribute('width');
 		if (size === undefined) {
+			// A hidden image a file marked lazy would never load, nor show.
+			img.loading = 'eager';
 			img.hidden = true;
 			img.before(text);
 		} else {

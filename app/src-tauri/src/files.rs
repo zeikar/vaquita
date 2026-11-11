@@ -145,8 +145,8 @@ fn lexical(path: &Path) -> PathBuf {
 /// folder or absolute, for its preview. The preview loads it with no click, so
 /// a file must not reach wherever it likes: the image has to be inside repo
 /// when the file is, else inside the file's own folder. The name is checked
-/// before the disk is asked about it, and the canonical path after, as a link
-/// inside may lead out.
+/// before the disk is asked about it, and the canonical path, as a link inside
+/// may lead out, before the gate opens the file to judge it.
 fn preview_image(file: &Path, src: &str, repo: Option<&Path>, home: &Path, handler: &dyn Fn(&Path) -> Option<String>) -> Result<PathBuf, String> {
     let file = std::fs::canonicalize(file).map_err(open_path::io_error)?;
     let folder = file.parent().ok_or("the file has no folder")?;
@@ -158,10 +158,11 @@ fn preview_image(file: &Path, src: &str, repo: Option<&Path>, home: &Path, handl
     if !named.starts_with(&root) {
         return Err(OUTSIDE.to_string());
     }
-    let (canonical, action) = open_path::resolve(named.to_str().ok_or(NOT_UTF8)?, "", home, handler)?;
+    let canonical = std::fs::canonicalize(&named).map_err(open_path::io_error)?;
     if !canonical.starts_with(&root) {
         return Err(OUTSIDE.to_string());
     }
+    let (canonical, action) = open_path::resolve(canonical.to_str().ok_or(NOT_UTF8)?, "", home, handler)?;
     match action {
         Action::View { kind: Kind::Image, .. } => Ok(canonical),
         _ => Err("not an image the app shows".to_string()),
@@ -399,6 +400,12 @@ mod tests {
         // A link inside the repo that leads out of it.
         std::os::unix::fs::symlink(other.join("out.png"), repo.join("link.png")).unwrap();
         assert_eq!(image(&readme, "link.png", Some(&repo)), Err(OUTSIDE.to_string()));
+        // Also when what it leads to cannot be read: nothing outside is opened to be judged.
+        let locked = file(&other, "locked.png", 0o000);
+        std::os::unix::fs::symlink(&locked, repo.join("locked.png")).unwrap();
+        assert_eq!(image(&readme, "locked.png", Some(&repo)), Err(OUTSIDE.to_string()));
+        std::os::unix::fs::symlink(other.join("gone.png"), repo.join("dangling.png")).unwrap();
+        assert_eq!(image(&readme, "dangling.png", Some(&repo)), Err("no such file".to_string()));
     }
 
     #[test]

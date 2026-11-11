@@ -23,9 +23,10 @@ const paragraphs = Array.from({ length: 300 }, (_, i) => `Paragraph ${i + 1}.`).
 fs.writeFileSync(path.join(repo, 'long.md'), '# Long\n\n```sh\necho one\necho two\n```\n\n' + paragraphs + '\n');
 // logo.png is run.sh's; a copy beside the repo is outside it.
 fs.copyFileSync(path.join(repo, 'logo.png'), path.join(repo, '..', 'outside.png'));
+fs.copyFileSync(path.join(repo, 'logo.png'), path.join(repo, 'docs', 'lazy.png'));
 fs.writeFileSync(
 	path.join(repo, 'docs', 'pictures.md'),
-	'# Pictures\n\n![The logo](../logo.png)\n\n[![build](https://example.com/badge.svg)](https://example.com)\n\n![Outside](../../outside.png)\n\n' + paragraphs + '\n',
+	'# Pictures\n\n![The logo](../logo.png)\n\n<img src="lazy.png" loading="lazy" width="64" alt="Lazy">\n\n[![build](https://example.com/badge.svg)](https://example.com)\n\n![Outside](../../outside.png)\n\n' + paragraphs + '\n',
 );
 
 const { browser, page } = await openApp({ width: 1440, height: 900 });
@@ -162,13 +163,17 @@ await step('the source keeps its place when the preview reads a changed file', a
 await step('the preview shows the images of its repo, and keeps its place under them', async () => {
 	await panel.locator('.tree button.row', { hasText: 'docs' }).click();
 	await open('pictures.md');
-	const img = page.locator('.markdown .body img');
+	const img = page.locator('.markdown .body img').first();
 	await img.waitFor();
 	const size = await until(
 		() => img.evaluate((i) => ({ natural: i.naturalWidth, height: Math.round(i.getBoundingClientRect().height) })),
 		(s) => s.natural > 0,
 	);
 	say('an image inside the repo, named from a folder below, loads', size.natural > 0 && size.height > 100, size);
+	// Hidden until it has loaded, which a lazy image never would be.
+	const lazy = page.locator('.markdown .body img[alt="Lazy"]');
+	const lazyWidth = await until(() => lazy.evaluate((i) => (i.hidden ? 0 : Math.round(i.getBoundingClientRect().width))), (w) => w > 0);
+	say('one the file marks lazy loads too, at the width the file gives', lazyWidth === 64, lazyWidth);
 	const texts = await page.locator('.markdown .body span[title]').evaluateAll((spans) => spans.map((s) => [s.textContent, s.title, !!s.closest('a')]));
 	say(
 		'a web image and one outside the repo show as their alt text, with the reason',

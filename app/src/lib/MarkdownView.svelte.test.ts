@@ -174,10 +174,12 @@ describe('MarkdownView', () => {
 		});
 
 		it('shows an image as its alt text until it has loaded', async () => {
-			const s = setup({ '/tmp/repo/README.md': '<p><img data-src="docs/a.png" alt="A shot"></p>' });
+			const s = setup({ '/tmp/repo/README.md': '<p><img data-src="docs/a.png" alt="A shot" loading="lazy"></p>' });
 			show(s, '/tmp/repo/README.md', '/tmp/repo');
 			await settle();
 			expect([img()!.hidden, texts()]).toEqual([true, [['A shot', null]]]);
+			// A hidden image a file marked lazy would never load.
+			expect(img()!.getAttribute('loading')).toBe('eager');
 			loaded(img()!);
 			expect([img()!.hidden, texts()]).toEqual([false, []]);
 		});
