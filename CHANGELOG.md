@@ -2,6 +2,12 @@
 
 Each release's notes open with its section here.
 
+## 0.1.26
+
+- The Markdown preview shows the images that are files in the repo, such as a README's screenshots. An image from the web, or from outside the repo, shows as its alt text; hover it for the reason.
+- In a terminal, ⌘← and ⌘→ go to the start and the end of the line you are typing.
+- ⌥⌘← and ⌥⌘→ go to the previous and the next tab, as in Chrome.
+
 ## 0.1.25
 
 - The spinner of a working session no longer stops turning after you go back and forth between a file's tab and the session's.
