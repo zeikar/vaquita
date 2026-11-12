@@ -41,7 +41,7 @@ function lineEnd(ev: KeyboardEvent): string | null {
 // sends the composed text at once, unless the key is the IME's own (229) or
 // Shift, Ctrl or Option, and sends it again when the composition ends, with
 // the next key: the syllable was typed twice. Cmd is as much a modifier as
-// those three, so xterm must not see its keydown.
+// those three, so xterm must not see its keydown (xterm.js issue 6244).
 function isCmdWhileComposing(ev: KeyboardEvent): boolean {
 	return ev.type === 'keydown' && ev.key === 'Meta' && ev.isComposing;
 }
