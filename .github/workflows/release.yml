@@ -13,7 +13,10 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-15
+    # Xcode 27 so that the app is linked against the SDK a local build uses
+    # (Select Xcode below), and macOS treats the two alike. The image is a
+    # preview one: should it break, macos-15 built every release up to 0.1.27.
+    runs-on: xcode-27
     timeout-minutes: 60
     env:
       RUST_TOOLCHAIN: 1.99.1
@@ -46,6 +49,11 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.2.app
+          xcrun --sdk macosx --show-sdk-version
 
       # The release notes open with the version's section of CHANGELOG.md, the
       # lines under its "## <version>" heading. A release needs one; a
