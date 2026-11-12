@@ -116,6 +116,25 @@ describe('keyHandler, Cmd and an arrow', () => {
 	});
 });
 
+describe('keyHandler, Cmd while an IME composes', () => {
+	const meta = (init: Partial<KeyboardEvent>) => key('keydown', { key: 'Meta', keyCode: 91, metaKey: true, ...init });
+
+	it('keeps the Cmd press from xterm, which would send the composition and send it again at its end', () => {
+		const sent: string[] = [];
+		const handle = keyHandler((t) => void sent.push(t), () => void sent.push('commit'));
+		expect(handle(meta({ isComposing: true }))).toBe(false);
+		expect(sent).toEqual([]);
+	});
+
+	it('leaves a Cmd press outside a composition, and the other keys of one, to xterm', () => {
+		const handle = keyHandler(() => {}, () => {});
+		expect(handle(meta({}))).toBe(true);
+		expect(handle(key('keyup', { key: 'Meta', keyCode: 91, isComposing: true }))).toBe(true);
+		expect(handle(key('keydown', { key: 'Shift', keyCode: 16, shiftKey: true, isComposing: true }))).toBe(true);
+		expect(handle(key('keydown', { key: 'ㅣ', keyCode: 229, isComposing: true }))).toBe(true);
+	});
+});
+
 describe('isNewSessionShortcut', () => {
 	const t = (init: Partial<KeyboardEvent>) => key('keydown', { key: 't', keyCode: 84, ...init });
 

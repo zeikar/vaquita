@@ -1,6 +1,7 @@
 // The keys a session's terminal and the tab bar take: ⌘← and ⌘→ go to the
-// ends of the line being typed, and ⌥⌘← and ⌥⌘→ step through the tabs, from
-// the terminal and from a file's tab.
+// ends of the line being typed, a ⌘ press during a composition types nothing
+// twice, and ⌥⌘← and ⌥⌘→ step through the tabs, from the terminal and from a
+// file's tab.
 // node checks/keys.mjs <dir>, after run.sh up <dir>; see check.sh.
 import path from 'node:path';
 import { openApp, recorder, sleep, until } from './lib.mjs';
@@ -66,6 +67,36 @@ await step('Meta+ArrowLeft and Meta+ArrowRight in the terminal', async () => {
 	const others = await caret();
 	say('nor do Shift+Meta+ArrowLeft and Meta+ArrowUp move or select in it', others.at === others.value.length && (await page.evaluate(() => document.activeElement.selectionEnd)) === others.at, others);
 	await shot(page, '01-line-ends');
+	await page.keyboard.press('Control+u');
+});
+
+// In the released app the Korean input method composes with composition
+// events, which xterm handles itself. Their order here is the one recorded
+// there for 리, a ⌘ press and a space; no browser can drive the input method.
+await step('Meta pressed while a syllable is composed', async () => {
+	await page.evaluate(async () => {
+		const ta = document.activeElement;
+		const tick = () => new Promise((r) => setTimeout(r, 30));
+		const compose = (type, data) => ta.dispatchEvent(new CompositionEvent(type, { data, bubbles: true }));
+		const base = ta.value;
+		compose('compositionstart', '');
+		for (const text of ['ㄹ', '리']) {
+			ta.value = base + text;
+			compose('compositionupdate', text);
+			await tick();
+		}
+		ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Meta', code: 'MetaLeft', keyCode: 91, metaKey: true, isComposing: true, bubbles: true }));
+		ta.dispatchEvent(new KeyboardEvent('keyup', { key: 'Meta', code: 'MetaLeft', keyCode: 91, isComposing: true, bubbles: true }));
+		await tick();
+		ta.value = base + '리 ';
+		compose('compositionupdate', '리 ');
+		compose('compositionend', '리 ');
+		await tick();
+	});
+	const row = await until(lastRow, (r) => r.includes('리'));
+	await sleep(300);
+	const after = await lastRow();
+	say('the syllable is typed once', /\$ 리$/.test(after), { row, after });
 	await page.keyboard.press('Control+u');
 });
 

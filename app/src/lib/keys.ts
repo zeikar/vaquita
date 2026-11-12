@@ -37,12 +37,21 @@ function lineEnd(ev: KeyboardEvent): string | null {
 	return ev.key === 'ArrowLeft' ? '\x01' : ev.key === 'ArrowRight' ? '\x05' : null;
 }
 
+// A Cmd press while an IME composes. On a keydown during a composition xterm
+// sends the composed text at once, unless the key is the IME's own (229) or
+// Shift, Ctrl or Option, and sends it again when the composition ends, with
+// the next key: the syllable was typed twice. Cmd is as much a modifier as
+// those three, so xterm must not see its keydown.
+function isCmdWhileComposing(ev: KeyboardEvent): boolean {
+	return ev.type === 'keydown' && ev.key === 'Meta' && ev.isComposing;
+}
+
 // The handler for xterm's attachCustomKeyEventHandler: true lets xterm handle
 // the event, false means it was handled here (or must not be handled at all).
 // commit ends the syllable being composed, as a click does.
 export function keyHandler(send: (text: string) => void, commit: () => void): (ev: KeyboardEvent) => boolean {
 	return (ev) => {
-		if (swallowsKeypress(ev)) return false;
+		if (swallowsKeypress(ev) || isCmdWhileComposing(ev)) return false;
 		if (isCmdArrow(ev)) {
 			// Cancelled, so the hidden textarea's caret stays where it is.
 			ev.preventDefault();
