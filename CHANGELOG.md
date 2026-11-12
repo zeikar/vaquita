@@ -2,6 +2,10 @@
 
 Each release's notes open with its section here.
 
+## 0.1.27
+
+- Pressing ⌘ while a Korean syllable is being composed in a terminal, alone or for a shortcut such as ⌘←, no longer types the syllable twice.
+
 ## 0.1.26
 
 - The Markdown preview shows the images that are files in the repo, such as a README's screenshots. An image from the web, or from outside the repo, shows as its alt text; hover it for the reason.
