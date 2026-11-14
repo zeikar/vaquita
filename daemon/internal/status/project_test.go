@@ -131,6 +131,13 @@ func TestProjectorRecordings(t *testing.T) {
 			{1.937, report(Report{State: "blocked", Kind: "question", Msg: tea, App: "claude-code"}), input("question", tea), false, note(NotifyInput, tea), 0},
 			{3.066, report(cc("idle")), none, false, nil, 0},
 		}},
+		// An OSC 9 from something else in the terminal is no reply of Claude's.
+		{"claude turn after a stray OSC 9", []step{
+			{0.491, report(cc("working")), working, false, nil, 0},
+			{1.000, osc9("build finished"), working, false, nil, 0},
+			{4.114, report(cc("done")), done(""), true, nil, 7.114},
+			{6.668, report(Report{State: "done", App: "claude-code", Msg: summary}), done(summary), true, note(NotifyDone, summary), 0},
+		}},
 		{"claude esc-cancel", []step{
 			{0.454, report(cc("working")), working, false, nil, 0},
 			{2.105, report(cc("idle")), none, false, nil, 0},
@@ -218,6 +225,22 @@ func TestProjectorRecordings(t *testing.T) {
 			{2.418, osc9(question), input("", question), false, note(NotifyInput, question), 0},
 			{7.011, osc9("Tea"), input("", question), false, nil, 0},
 			{7.011, report(cx("done")), done("Tea"), true, nil, 8.511},
+		}},
+		{"codex 0.167 async question cancelled", []step{
+			{0.405, report(cx("working")), working, false, nil, 0},
+			{2.418, osc9(question), input("", question), false, note(NotifyInput, question), 0},
+			{4.000, report(cx("idle")), none, false, nil, 0},
+		}},
+		{"codex 0.167 async question cancelled after seen", []step{
+			{0.405, report(cx("working")), working, false, nil, 0},
+			{2.418, osc9(question), input("", question), false, note(NotifyInput, question), 0},
+			{3.000, seen, working, false, nil, 0},
+			{4.000, report(cx("idle")), none, false, nil, 0},
+		}},
+		{"codex 0.167 two async questions", []step{
+			{0.405, report(cx("working")), working, false, nil, 0},
+			{2.418, osc9(question), input("", question), false, note(NotifyInput, question), 0},
+			{5.000, osc9("Question: Milk?"), input("", "Question: Milk?"), false, note(NotifyInput, "Question: Milk?"), 0},
 		}},
 		// Esc on the popup at +7.189 sends no report.
 		{"codex-plan prompt released by seen", append(slices.Clone(prompted),

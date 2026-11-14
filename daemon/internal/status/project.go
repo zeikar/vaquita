@@ -80,6 +80,9 @@ type Projector struct {
 	soft bool
 	// app is the agent of the last report that named one.
 	app string
+	// question is an async question already shown, kept for Codex 0.163's
+	// blocked that follows it. Unlike osc9 it never ends a turn.
+	question string
 	// turn is set by working and cleared when the turn ends; only a done that
 	// ends a turn is notified.
 	turn bool
@@ -102,8 +105,8 @@ func (p *Projector) Report(r Report, now time.Time) {
 	// A notification that came due before this report is raised first, so
 	// the outcome does not depend on how late the caller's timer fired.
 	p.Tick(now)
-	body := p.osc9
-	p.osc9 = ""
+	body, question := p.osc9, p.question
+	p.osc9, p.question = "", ""
 	if r.App != "" {
 		p.app = r.App
 	}
@@ -116,6 +119,9 @@ func (p *Projector) Report(r Report, now time.Time) {
 		// question it waits on; for other agents it only fills in a missing
 		// msg.
 		msg := r.Msg
+		if body == "" {
+			body = question
+		}
 		if body != "" && (r.App == appCodex || msg == "") {
 			msg = body
 		}
@@ -140,7 +146,7 @@ func (p *Projector) Report(r Report, now time.Time) {
 		case r.App == appCodex && strings.HasPrefix(body, planPrompt):
 			p.prompt(body)
 			p.turn = false
-		case r.Msg == "" && body != "":
+		case r.App == appCodex && r.Msg == "" && body != "":
 			// Codex 0.167 ends a turn with done, its reply in the OSC 9.
 			p.done(body, now)
 		default:
@@ -184,8 +190,10 @@ func (p *Projector) done(msg string, now time.Time) {
 // means. A newer one replaces it. Codex's async question comes with no report
 // at all, so it shows at once.
 func (p *Projector) OSC9(body string) {
-	if p.app == appCodex && p.view.State == ViewWorking && strings.HasPrefix(body, asyncQuestion) {
+	if p.app == appCodex && p.turn && (p.view.State == ViewWorking || p.soft) && strings.HasPrefix(body, asyncQuestion) {
 		p.prompt(body)
+		p.question, p.osc9 = body, ""
+		return
 	}
 	p.osc9 = body
 }
@@ -201,7 +209,7 @@ func (p *Projector) prompt(body string) {
 // prompt or the reporter's death does. A done or error stays, and so does
 // the done's pending notification.
 func (p *Projector) Interrupt() {
-	p.osc9, p.turn = "", false
+	p.osc9, p.question, p.turn = "", "", false
 	switch p.view.State {
 	case ViewWorking, ViewInput, ViewAuth:
 		p.show(View{}, false)
@@ -213,7 +221,7 @@ func (p *Projector) Interrupt() {
 // raised stay for Take.
 func (p *Projector) Clear() {
 	p.show(View{}, false)
-	p.osc9, p.turn = "", false
+	p.osc9, p.question, p.turn = "", "", false
 }
 
 // Seen marks the session as looked at. It also releases the input inferred

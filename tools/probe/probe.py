@@ -515,7 +515,7 @@ def run_codex_plan(outdir):
     # A proposed plan ends the turn with the "Implement this plan?" prompt.
     p.ev('scenario', v='plan-prompt')
     p.type('/plan Propose a two-step plan to create hello.txt containing hi. Ask me nothing.')
-    p.wait_states([('working',), ('idle', 'blocked')], 180)
+    p.wait_states([('working',), ('idle', 'done', 'blocked')], 180)
     if p.wait_text(r'(?i)implement this plan\?', 20):
         time.sleep(2)
         p.key(b'\x1b', 'Esc(stay in plan)')
@@ -526,7 +526,7 @@ def run_codex_plan(outdir):
     if p.wait_states([('blocked',)], 180):
         time.sleep(2)
         p.key(b'\r', 'Enter(first option)')
-        p.wait_states([('idle',)], 180)
+        p.wait_states([('idle', 'done')], 180)
     # The prompt comes back only if the answer led to a new plan.
     if p.wait_text(r'(?i)implement this plan\?', 10):
         time.sleep(2)
@@ -550,7 +550,7 @@ def run_codex_question(outdir):
         p.key(b'\x1b[1;3A', 'Alt-Up')
         time.sleep(1)
         p.key(b'\r', 'Enter(first option)')
-    p.wait_states([('idle',)], 180)
+    p.wait_states([('idle', 'done')], 180)
     time.sleep(3)
     return p, stop_codex(p), cwd
 
