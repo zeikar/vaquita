@@ -12,7 +12,7 @@ import (
 type event func(p *Projector, now time.Time)
 
 func report(r Report) event  { return func(p *Projector, now time.Time) { p.Report(r, now) } }
-func osc9(body string) event { return func(p *Projector, _ time.Time) { p.OSC9(body) } }
+func osc9(body string) event { return func(p *Projector, now time.Time) { p.OSC9(body, now) } }
 
 var (
 	tick      event = (*Projector).Tick
@@ -214,7 +214,8 @@ func TestProjectorRecordings(t *testing.T) {
 		// no report: the turn goes on until its done.
 		{"codex 0.167 async question", []step{
 			{0.405, report(cx("working")), working, false, nil, 0},
-			{2.418, osc9(question), input("", question), false, note(NotifyInput, question), 0},
+			{2.418, osc9(question), working, false, nil, 2.718},
+			{2.718, tick, input("", question), false, note(NotifyInput, question), 0},
 			{4.000, seen, working, false, nil, 0},
 			{7.011, osc9("Tea"), working, false, nil, 0},
 			{7.011, report(cx("done")), done("Tea"), true, nil, 8.511},
@@ -222,25 +223,42 @@ func TestProjectorRecordings(t *testing.T) {
 		}},
 		{"codex 0.167 async question answered unseen", []step{
 			{0.405, report(cx("working")), working, false, nil, 0},
-			{2.418, osc9(question), input("", question), false, note(NotifyInput, question), 0},
+			{2.418, osc9(question), working, false, nil, 2.718},
+			{2.718, tick, input("", question), false, note(NotifyInput, question), 0},
 			{7.011, osc9("Tea"), input("", question), false, nil, 0},
 			{7.011, report(cx("done")), done("Tea"), true, nil, 8.511},
 		}},
 		{"codex 0.167 async question cancelled", []step{
 			{0.405, report(cx("working")), working, false, nil, 0},
-			{2.418, osc9(question), input("", question), false, note(NotifyInput, question), 0},
+			{2.418, osc9(question), working, false, nil, 2.718},
+			{2.718, tick, input("", question), false, note(NotifyInput, question), 0},
 			{4.000, report(cx("idle")), none, false, nil, 0},
 		}},
 		{"codex 0.167 async question cancelled after seen", []step{
 			{0.405, report(cx("working")), working, false, nil, 0},
-			{2.418, osc9(question), input("", question), false, note(NotifyInput, question), 0},
+			{2.418, osc9(question), working, false, nil, 2.718},
+			{2.718, tick, input("", question), false, note(NotifyInput, question), 0},
 			{3.000, seen, working, false, nil, 0},
 			{4.000, report(cx("idle")), none, false, nil, 0},
 		}},
 		{"codex 0.167 two async questions", []step{
 			{0.405, report(cx("working")), working, false, nil, 0},
-			{2.418, osc9(question), input("", question), false, note(NotifyInput, question), 0},
-			{5.000, osc9("Question: Milk?"), input("", "Question: Milk?"), false, note(NotifyInput, "Question: Milk?"), 0},
+			{2.418, osc9(question), working, false, nil, 2.718},
+			{2.718, tick, input("", question), false, note(NotifyInput, question), 0},
+			{5.000, osc9("Question: Milk?"), input("", question), false, nil, 5.300},
+			{5.300, tick, input("", "Question: Milk?"), false, note(NotifyInput, "Question: Milk?"), 0},
+		}},
+		// A reply that happens to start like a question comes with its report.
+		{"codex 0.167 reply starting with Question:", []step{
+			{0.405, report(cx("working")), working, false, nil, 0},
+			{2.000, osc9("Question: which database? Postgres."), working, false, nil, 2.300},
+			{2.000, report(cx("done")), done("Question: which database? Postgres."), true, nil, 3.500},
+			{3.500, tick, done("Question: which database? Postgres."), true, note(NotifyDone, "Question: which database? Postgres."), 0},
+		}},
+		{"codex 0.163 reply starting with Question:", []step{
+			{0.405, report(cx("working")), working, false, nil, 0},
+			{2.000, osc9("Question: which database? Postgres."), working, false, nil, 2.300},
+			{2.000, report(cx("idle")), done("Question: which database? Postgres."), true, nil, 3.500},
 		}},
 		// Esc on the popup at +7.189 sends no report.
 		{"codex-plan prompt released by seen", append(slices.Clone(prompted),
@@ -264,8 +282,8 @@ func TestProjectorRecordings(t *testing.T) {
 		}},
 		{"codex-question", []step{
 			{0.573, report(cx("working")), working, false, nil, 0},
-			{2.805, osc9(question), input("", question), false, note(NotifyInput, question), 0},
-			{2.805, report(cx("blocked")), input("", question), false, nil, 0},
+			{2.805, osc9(question), working, false, nil, 3.105},
+			{2.805, report(cx("blocked")), input("", question), false, note(NotifyInput, question), 0},
 			{5.917, report(cx("working")), working, false, nil, 0},
 			{7.754, osc9("Tea"), working, false, nil, 0},
 			{7.754, report(cx("idle")), done("Tea"), true, nil, 9.254},

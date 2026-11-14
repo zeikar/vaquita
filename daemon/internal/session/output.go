@@ -438,7 +438,10 @@ func (s statusSink) OSC(num int, payload []byte, oversized bool) {
 	// permission and a question alike.
 	case 9:
 		if n, ok := status.ParseNotify(num, payload); ok {
-			o.proj.OSC9(n.Body)
+			o.proj.OSC9(n.Body, o.Now())
+			// It changes no view, but may start a deadline no timer was
+			// armed for: Codex's async question.
+			o.rearm = true
 		}
 	case 0, 2:
 		// A truncated title is not the one the program set.

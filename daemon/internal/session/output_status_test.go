@@ -107,6 +107,34 @@ func TestOutputCodexNumericCompletion(t *testing.T) {
 	}
 }
 
+// Codex 0.167 asks a question mid-turn with an OSC 9 and no report: the read
+// must ask for a drain, so that a timer is armed for the question to show.
+func TestOutputCodexAsyncQuestion(t *testing.T) {
+	o, now := statusOutput()
+	t0 := *now
+	o.Feed([]byte("\x1b]7501;state=working:app=codex\x1b\\"))
+	o.TakeStatus()
+	o.TakeAppChange()
+	o.Tick(t0)
+	if o.NeedsDrain() {
+		t.Fatal("a drain is due before the question")
+	}
+	o.Feed([]byte("\x1b]9;Question: Tea or coffee?\x1b\\"))
+	if !o.NeedsDrain() {
+		t.Fatal("the question asks for no drain")
+	}
+	o.Tick(t0)
+	d, ok := o.NextDeadline()
+	if !ok || !d.Equal(t0.Add(status.QuestionWait)) {
+		t.Fatalf("deadline %v, %v", d, ok)
+	}
+	o.Tick(d)
+	want := status.View{State: status.ViewInput, Msg: "Question: Tea or coffee?"}
+	if v, _ := o.View(); v != want {
+		t.Fatalf("view %+v", v)
+	}
+}
+
 func TestOutputChildReportChangesNothing(t *testing.T) {
 	o, _ := statusOutput()
 	o.Feed([]byte("\x1b]7501;id=sub:state=done\x07"))

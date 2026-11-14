@@ -47,6 +47,11 @@ const (
 	asyncQuestion = "Question:"
 )
 
+// QuestionWait is how long an OSC 9 that may be Codex's async question waits
+// for a report: a reply starting with the same word comes with its done in
+// the same write.
+const QuestionWait = 300 * time.Millisecond
+
 // View is what the sidebar shows for a session.
 type View struct {
 	State string
@@ -80,9 +85,9 @@ type Projector struct {
 	soft bool
 	// app is the agent of the last report that named one.
 	app string
-	// question is an async question already shown, kept for Codex 0.163's
-	// blocked that follows it. Unlike osc9 it never ends a turn.
-	question string
+	// askAt is when the pending OSC 9, a possible async question, shows if
+	// no report has come by then; zero when there is none.
+	askAt time.Time
 	// turn is set by working and cleared when the turn ends; only a done that
 	// ends a turn is notified.
 	turn bool
@@ -105,8 +110,8 @@ func (p *Projector) Report(r Report, now time.Time) {
 	// A notification that came due before this report is raised first, so
 	// the outcome does not depend on how late the caller's timer fired.
 	p.Tick(now)
-	body, question := p.osc9, p.question
-	p.osc9, p.question = "", ""
+	body := p.osc9
+	p.osc9, p.askAt = "", time.Time{}
 	if r.App != "" {
 		p.app = r.App
 	}
@@ -119,23 +124,15 @@ func (p *Projector) Report(r Report, now time.Time) {
 		// question it waits on; for other agents it only fills in a missing
 		// msg.
 		msg := r.Msg
-		if body == "" {
-			body = question
-		}
 		if body != "" && (r.App == appCodex || msg == "") {
 			msg = body
 		}
-		// Codex 0.163 follows its async question's OSC 9 with a blocked,
-		// which the question already notified.
-		asked := p.soft && p.view.State == ViewInput && p.view.Msg == msg
 		if r.Kind == "auth" {
 			p.show(View{State: ViewAuth, Msg: msg}, false)
 			p.notify(NotifyAuth, msg)
 		} else {
 			p.show(View{State: ViewInput, Kind: r.Kind, Msg: msg}, false)
-			if !asked {
-				p.notify(NotifyInput, msg)
-			}
+			p.notify(NotifyInput, msg)
 		}
 	case StateError:
 		p.show(View{State: ViewError, Msg: r.Msg}, true)
@@ -188,14 +185,12 @@ func (p *Projector) done(msg string, now time.Time) {
 
 // OSC9 holds an OSC 9 body for the next root report, which decides what it
 // means. A newer one replaces it. Codex's async question comes with no report
-// at all, so it shows at once.
-func (p *Projector) OSC9(body string) {
+// at all, so one that none follows within QuestionWait shows by itself.
+func (p *Projector) OSC9(body string, now time.Time) {
+	p.osc9, p.askAt = body, time.Time{}
 	if p.app == appCodex && p.turn && (p.view.State == ViewWorking || p.soft) && strings.HasPrefix(body, asyncQuestion) {
-		p.prompt(body)
-		p.question, p.osc9 = body, ""
-		return
+		p.askAt = now.Add(QuestionWait)
 	}
-	p.osc9 = body
 }
 
 // prompt shows an input that no report will end, which Seen releases.
@@ -209,7 +204,7 @@ func (p *Projector) prompt(body string) {
 // prompt or the reporter's death does. A done or error stays, and so does
 // the done's pending notification.
 func (p *Projector) Interrupt() {
-	p.osc9, p.question, p.turn = "", "", false
+	p.osc9, p.askAt, p.turn = "", time.Time{}, false
 	switch p.view.State {
 	case ViewWorking, ViewInput, ViewAuth:
 		p.show(View{}, false)
@@ -221,7 +216,7 @@ func (p *Projector) Interrupt() {
 // raised stay for Take.
 func (p *Projector) Clear() {
 	p.show(View{}, false)
-	p.osc9, p.question, p.turn = "", "", false
+	p.osc9, p.askAt, p.turn = "", time.Time{}, false
 }
 
 // Seen marks the session as looked at. It also releases the input inferred
@@ -239,16 +234,29 @@ func (p *Projector) Seen() {
 	p.show(p.view, false)
 }
 
-// Tick raises the done notification once Deadline has passed.
+// Tick shows an async question and raises the done notification once their
+// deadlines have passed.
 func (p *Projector) Tick(now time.Time) {
-	if d, ok := p.Deadline(); ok && !now.Before(d) {
+	if !p.askAt.IsZero() && !now.Before(p.askAt) {
+		p.prompt(p.osc9)
+		p.osc9, p.askAt = "", time.Time{}
+	}
+	if d, ok := p.doneDeadline(); ok && !now.Before(d) {
 		p.notify(NotifyDone, p.view.Msg)
 		p.donePending = false
 	}
 }
 
-// Deadline reports when Tick has a notification to raise, if ever.
+// Deadline reports when Tick next has something to do, if ever.
 func (p *Projector) Deadline() (time.Time, bool) {
+	d, ok := p.doneDeadline()
+	if !p.askAt.IsZero() && (!ok || p.askAt.Before(d)) {
+		return p.askAt, true
+	}
+	return d, ok
+}
+
+func (p *Projector) doneDeadline() (time.Time, bool) {
 	if !p.donePending {
 		return time.Time{}, false
 	}
