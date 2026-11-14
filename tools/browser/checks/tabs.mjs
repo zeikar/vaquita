@@ -58,7 +58,8 @@ const focus = () =>
 		return { tag: a?.tagName, terminal: !!a?.classList.contains('xterm-helper-textarea') };
 	});
 const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem('vaquita.file-tabs') ?? '{}'));
-const ASK = /^noop plugin:dialog\|ask /;
+// The dialog plugin's ask() is this command; the bridge answers it Cancel.
+const ASK = /^noop plugin:dialog\|message /;
 
 await step('a session tab', async () => {
 	await repoSession.waitFor({ timeout: 10000 });
