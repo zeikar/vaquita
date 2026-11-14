@@ -9,7 +9,9 @@ pub const TRANSLOCATED: &str =
     "vaquita is running from a temporary location: move vaquita.app to Applications and open it again";
 // The daemon lives in a helper app that carries the app's bundle identifier, so
 // macOS privacy counts it as the same app. Relative to the bundle's Contents.
-const EMBEDDED: &str = "Helpers/vaquitad.app/Contents/MacOS/vaquitad";
+pub const HELPER: &str = "Helpers/vaquitad.app";
+// Relative to the helper app.
+pub const HELPER_EXE: &str = "Contents/MacOS/vaquitad";
 const NOT_INSTALLED: &str = "LaunchAgent not installed: run `vaquitad install --bootstrap`";
 
 /// What one command run produced.
@@ -19,7 +21,7 @@ pub struct Outcome {
     pub stderr: String,
 }
 
-/// Runs `launchctl`, `plutil` and the embedded `vaquitad`.
+/// Runs `launchctl`, `plutil`, `codesign`, `ditto` and the embedded `vaquitad`.
 pub trait Runner {
     fn run(&self, program: &str, args: &[&str]) -> Result<Outcome, String>;
 }
@@ -102,7 +104,7 @@ pub fn embedded(exe: &Path) -> Result<Option<PathBuf>, String> {
     // The app may have been launched through a symlink to its executable.
     let exe = std::fs::canonicalize(exe).map_err(|e| format!("resolve {}: {e}", exe.display()))?;
     let contents = exe.parent().and_then(Path::parent);
-    Ok(contents.map(|c| c.join(EMBEDDED)).filter(|p| p.exists()))
+    Ok(contents.map(|c| c.join(HELPER).join(HELPER_EXE)).filter(|p| p.exists()))
 }
 
 fn launchctl(r: &dyn Runner, args: &[&str]) -> Result<(), String> {
@@ -238,13 +240,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let macos = dir.join("vaquita.app/Contents/MacOS");
         std::fs::create_dir_all(&macos).unwrap();
-        std::fs::create_dir_all(dir.join("vaquita.app/Contents").join(EMBEDDED).parent().unwrap()).unwrap();
+        std::fs::create_dir_all(dir.join("vaquita.app/Contents").join(HELPER).join(HELPER_EXE).parent().unwrap()).unwrap();
         // temp_dir sits behind the /var -> /private/var symlink, and start
         // resolves the exe.
         let dir = std::fs::canonicalize(&dir).unwrap();
         let macos = dir.join("vaquita.app/Contents/MacOS");
         std::fs::write(macos.join("vaquita"), "").unwrap();
-        let embedded = dir.join("vaquita.app/Contents").join(EMBEDDED);
+        let embedded = dir.join("vaquita.app/Contents").join(HELPER).join(HELPER_EXE);
         if with_daemon {
             std::fs::write(&embedded, "").unwrap();
         }

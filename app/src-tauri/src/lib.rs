@@ -2,6 +2,7 @@ mod changes;
 mod conversations;
 mod files;
 mod folders;
+mod helper_copy;
 mod home;
 mod launchd;
 mod menu;
