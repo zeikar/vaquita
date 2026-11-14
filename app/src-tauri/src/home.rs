@@ -26,6 +26,14 @@ pub fn lock_path() -> PathBuf {
     home().join("vaquitad.lock")
 }
 
+pub fn helper_copies_path() -> PathBuf {
+    home().join("helper.noindex")
+}
+
+pub fn helper_lock_path() -> PathBuf {
+    home().join("helper.lock")
+}
+
 /// Mirrors Go's `state.Label`: a custom home gets the first 8 hex chars of the
 /// sha256 of its absolute, cleaned path, as `filepath.Abs` produces it.
 pub fn label() -> String {
@@ -95,6 +103,8 @@ mod tests {
             assert!(h.is_absolute());
             assert!(h.ends_with("relative/dir"));
             assert_eq!(endpoint_path(), h.join("endpoint.json"));
+            assert_eq!(helper_copies_path(), h.join("helper.noindex"));
+            assert_eq!(helper_lock_path(), h.join("helper.lock"));
         });
     }
 

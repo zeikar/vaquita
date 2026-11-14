@@ -160,8 +160,14 @@ fn app_exe() -> Result<PathBuf, String> {
 
 fn start_and_wait() -> Result<(), String> {
     let endpoint = home::endpoint_path();
+    // Taken first, so a daemon another app started while this one waited for the
+    // lock counts as new.
     let before = wait::snapshot(&endpoint);
-    launchd::start(&launchd::RealRunner, &home::label(), &home::plist_path(), &home::lock_path(), &app_exe()?)?;
+    // Held through the wait for the endpoint, whatever it returns, so no other
+    // app sharing the home copies, starts or removes in between.
+    let _lock = helper_copy::lock(&home::helper_lock_path())?;
+    let copies = home::helper_copies_path();
+    launchd::start(&launchd::RealRunner, &home::label(), &home::plist_path(), &home::lock_path(), &copies, &app_exe()?)?;
     wait::wait_for_endpoint(&endpoint, &before, STEP, 25 * STEP)
 }
 

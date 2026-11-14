@@ -1,3 +1,4 @@
+use crate::helper_copy;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -7,8 +8,9 @@ const UNLOAD_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub const TRANSLOCATED: &str =
     "vaquita is running from a temporary location: move vaquita.app to Applications and open it again";
-// The daemon lives in a helper app that carries the app's bundle identifier, so
-// macOS privacy counts it as the same app. Relative to the bundle's Contents.
+// The daemon ships in a helper app that carries the app's bundle identifier, so
+// macOS privacy counts it, and any copy of it, as the same app. Relative to the
+// bundle's Contents.
 pub const HELPER: &str = "Helpers/vaquitad.app";
 // Relative to the helper app.
 pub const HELPER_EXE: &str = "Contents/MacOS/vaquitad";
@@ -21,7 +23,7 @@ pub struct Outcome {
     pub stderr: String,
 }
 
-/// Runs `launchctl`, `plutil`, `codesign`, `ditto` and the embedded `vaquitad`.
+/// Runs `launchctl`, `plutil`, `codesign`, `ditto` and `vaquitad install`.
 pub trait Runner {
     fn run(&self, program: &str, args: &[&str]) -> Result<Outcome, String>;
 }
@@ -59,11 +61,14 @@ impl Runner for RealRunner {
 }
 
 /// Starts the daemon's LaunchAgent: kickstart when the job is loaded, else
-/// bootstrap from the plist, first writing it with the `vaquitad` in the app's helper app.
-/// A loaded job that runs another `vaquitad`, or one that is gone, is replaced
-/// when no daemon runs, so the daemon started is always this app's.
-pub fn start(r: &dyn Runner, label: &str, plist: &Path, lock: &Path, exe: &Path) -> Result<(), String> {
-    let embedded = embedded(exe)?;
+/// bootstrap from the plist, first writing it with the `vaquitad` of the app's
+/// copy of its helper app under `copies`, or of the helper itself when no copy
+/// could be made. A loaded job that runs another `vaquitad`, or one that is
+/// gone, is replaced when no daemon runs; a daemon still running an older copy
+/// holds the instance lock and is left alone.
+pub fn start(r: &dyn Runner, label: &str, plist: &Path, lock: &Path, copies: &Path, exe: &Path) -> Result<(), String> {
+    let app = app_bundle(exe)?;
+    let vaquitad = app.as_deref().and_then(|app| helper_in(app).map(|emb| copy_or(r, copies, app, emb)));
     // SAFETY: getuid has no preconditions and cannot fail.
     let target = format!("gui/{}", unsafe { libc::getuid() });
     let service = format!("{target}/{label}");
@@ -74,19 +79,19 @@ pub fn start(r: &dyn Runner, label: &str, plist: &Path, lock: &Path, exe: &Path)
         // launchd may accept a kickstart of a missing program (the spawn then
         // fails), and a running daemon outlives its binary being moved. The
         // daemon's instance lock does, so only an unheld one allows a bootout.
-        return match &embedded {
-            Some(emb) if program(r, plist)?.is_some_and(|p| !same_file(&p, emb)) && !lock_held(lock) => {
+        return match &vaquitad {
+            Some(v) if program(r, plist)?.is_some_and(|p| !same_file(&p, v)) && !lock_held(lock) => {
                 launchctl(r, &["bootout", &service])?;
                 wait_unloaded(r, &service)?;
-                install(r, emb)?;
+                install(r, v)?;
                 bootstrap()
             }
             _ => launchctl(r, &["kickstart", &service]),
         };
     }
-    match &embedded {
-        // Rewritten every time, so the plist follows the app's binary and template.
-        Some(emb) => install(r, emb)?,
+    match &vaquitad {
+        // Rewritten every time, so the plist follows the app's copy and template.
+        Some(v) => install(r, v)?,
         None if !plist.exists() => return Err(NOT_INSTALLED.to_string()),
         None => {}
     }
@@ -96,6 +101,12 @@ pub fn start(r: &dyn Runner, label: &str, plist: &Path, lock: &Path, exe: &Path)
 /// The `vaquitad` in the helper app of the app whose executable is `exe`, if there is one;
 /// an error for an app that `start` refuses to run a daemon from.
 pub fn embedded(exe: &Path) -> Result<Option<PathBuf>, String> {
+    Ok(app_bundle(exe)?.as_deref().and_then(helper_in))
+}
+
+/// The bundle of the app whose executable is `exe`; an error for an app that
+/// `start` refuses to run a daemon from.
+fn app_bundle(exe: &Path) -> Result<Option<PathBuf>, String> {
     // Gatekeeper runs a quarantined app from a randomized copy that goes away
     // when it quits; a LaunchAgent pointing into it would break.
     if exe.to_string_lossy().contains("/AppTranslocation/") {
@@ -103,8 +114,21 @@ pub fn embedded(exe: &Path) -> Result<Option<PathBuf>, String> {
     }
     // The app may have been launched through a symlink to its executable.
     let exe = std::fs::canonicalize(exe).map_err(|e| format!("resolve {}: {e}", exe.display()))?;
-    let contents = exe.parent().and_then(Path::parent);
-    Ok(contents.map(|c| c.join(HELPER).join(HELPER_EXE)).filter(|p| p.exists()))
+    // `<app>/Contents/MacOS/<exe>`
+    Ok(exe.ancestors().nth(3).map(Path::to_path_buf))
+}
+
+fn helper_in(app: &Path) -> Option<PathBuf> {
+    Some(app.join("Contents").join(HELPER).join(HELPER_EXE)).filter(|p| p.exists())
+}
+
+/// The `vaquitad` of the app's copy of its helper, or `embedded` when no copy
+/// could be made, as for an ad hoc local build.
+fn copy_or(r: &dyn Runner, copies: &Path, app: &Path, embedded: PathBuf) -> PathBuf {
+    helper_copy::materialize(r, copies, app).unwrap_or_else(|e| {
+        eprintln!("vaquita: running the daemon from inside the app: {e}");
+        embedded
+    })
 }
 
 fn launchctl(r: &dyn Runner, args: &[&str]) -> Result<(), String> {
@@ -176,10 +200,20 @@ mod tests {
         // What the plist runs, as plutil prints it; None makes plutil fail.
         program: Option<PathBuf>,
         install_fails_with: Option<&'static str>,
+        // The helper's, as codesign prints it; None makes codesign fail, so
+        // start falls back to the helper inside the app.
+        cdhash: Option<&'static str>,
     }
 
     impl Runner for Fake {
         fn run(&self, program: &str, args: &[&str]) -> Result<Outcome, String> {
+            // Not recorded: helper_copy's tests check its calls.
+            if program == "/usr/bin/codesign" {
+                return Ok(match (self.cdhash, args[0]) {
+                    (Some(h), "-dvvv") => Outcome { ok: true, stdout: String::new(), stderr: format!("CDHash={h}") },
+                    _ => Outcome { ok: false, stdout: String::new(), stderr: "not signed".to_string() },
+                });
+            }
             let mut call = vec![program.to_string()];
             call.extend(args.iter().map(|a| a.to_string()));
             self.calls.borrow_mut().push(call);
@@ -227,6 +261,7 @@ mod tests {
         embedded: PathBuf,
         plist: PathBuf,
         lock: PathBuf,
+        copies: PathBuf,
     }
 
     impl Drop for Bundle {
@@ -254,14 +289,25 @@ mod tests {
         if with_plist {
             std::fs::write(&plist, "").unwrap();
         }
-        Bundle { exe: macos.join("vaquita"), embedded, plist, lock: dir.join("vaquitad.lock"), dir }
+        Bundle { exe: macos.join("vaquita"), embedded, plist, lock: dir.join("vaquitad.lock"), copies: dir.join("helper.noindex"), dir }
     }
 
     impl Bundle {
         fn start(&self, f: &dyn Runner) -> Result<(), String> {
-            start(f, "lbl", &self.plist, &self.lock, &self.exe)
+            start(f, "lbl", &self.plist, &self.lock, &self.copies, &self.exe)
+        }
+
+        // A copy published under `copies` for the helper with `cdhash`.
+        fn copy(&self, cdhash: &str) -> PathBuf {
+            let copy = self.copies.join(cdhash).join("vaquitad.app").join(HELPER_EXE);
+            std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+            std::fs::write(&copy, "").unwrap();
+            copy
         }
     }
+
+    const HASH: &str = "937918932045335991360a01c87c6a4b23588379";
+    const OLD_HASH: &str = "0123456789abcdef0123456789abcdef01234567";
 
     fn target() -> String {
         format!("gui/{}", unsafe { libc::getuid() })
@@ -275,7 +321,7 @@ mod tests {
     fn a_translocated_app_is_refused_before_any_call() {
         let f = Fake::default();
         let exe = Path::new("/private/var/folders/xy/abc/T/AppTranslocation/1234/d/vaquita.app/Contents/MacOS/vaquita");
-        assert_eq!(start(&f, "lbl", Path::new("/p/lbl.plist"), Path::new("/p/vaquitad.lock"), exe).unwrap_err(), TRANSLOCATED);
+        assert_eq!(start(&f, "lbl", Path::new("/p/lbl.plist"), Path::new("/p/vaquitad.lock"), Path::new("/p/helper.noindex"), exe).unwrap_err(), TRANSLOCATED);
         assert!(f.calls.borrow().is_empty());
     }
 
@@ -393,7 +439,7 @@ mod tests {
         let link = b.dir.join("vaquita-link");
         std::os::unix::fs::symlink(&b.exe, &link).unwrap();
         let f = Fake::default();
-        start(&f, "lbl", &b.plist, &b.lock, &link).unwrap();
+        start(&f, "lbl", &b.plist, &b.lock, &b.copies, &link).unwrap();
         assert_eq!(f.calls.borrow()[1], strs(&[&b.embedded.to_string_lossy(), "install"]));
     }
 
@@ -420,6 +466,47 @@ mod tests {
         let f = Fake::default();
         assert_eq!(b.start(&f).unwrap_err(), NOT_INSTALLED);
         assert_eq!(f.steps(), ["print"]);
+    }
+
+    #[test]
+    fn an_unloaded_job_is_installed_from_the_copy_then_bootstrapped() {
+        let b = bundle("copyinstall", true, false);
+        let copy = b.copy(HASH);
+        let f = Fake { cdhash: Some(HASH), ..Fake::default() };
+        b.start(&f).unwrap();
+        assert_eq!(f.steps(), ["print", "install", "bootstrap"]);
+        assert_eq!(f.calls.borrow()[1], strs(&[&copy.to_string_lossy(), "install"]));
+    }
+
+    #[test]
+    fn a_loaded_job_running_the_current_copy_is_kickstarted() {
+        let b = bundle("copykick", true, true);
+        std::fs::write(&b.lock, "").unwrap();
+        let f = Fake { program: Some(b.copy(HASH)), cdhash: Some(HASH), ..Fake::loaded() };
+        b.start(&f).unwrap();
+        assert_eq!(f.steps(), ["print", "plutil", "kickstart"]);
+    }
+
+    #[test]
+    fn a_job_running_an_older_copy_is_kept_while_the_lock_is_held() {
+        let b = bundle("oldcopyheld", true, true);
+        b.copy(HASH);
+        let f = Fake { program: Some(b.copy(OLD_HASH)), cdhash: Some(HASH), ..Fake::loaded() };
+        let held = std::fs::File::create(&b.lock).unwrap();
+        assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+        b.start(&f).unwrap();
+        assert_eq!(f.steps(), ["print", "plutil", "kickstart"]);
+    }
+
+    #[test]
+    fn a_job_running_an_older_copy_is_moved_to_the_current_one_when_the_lock_is_free() {
+        let b = bundle("oldcopyfree", true, true);
+        let copy = b.copy(HASH);
+        std::fs::write(&b.lock, "").unwrap();
+        let f = Fake { program: Some(b.copy(OLD_HASH)), cdhash: Some(HASH), ..Fake::loaded() };
+        b.start(&f).unwrap();
+        assert_eq!(f.steps(), ["print", "plutil", "bootout", "print", "install", "bootstrap"]);
+        assert_eq!(f.calls.borrow()[4], strs(&[&copy.to_string_lossy(), "install"]));
     }
 
     #[test]

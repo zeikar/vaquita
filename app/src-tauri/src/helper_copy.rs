@@ -8,6 +8,25 @@ use std::path::{Path, PathBuf};
 
 const COPY: &str = "vaquitad.app";
 
+/// The home's helper lock, held until dropped. Two apps sharing a home must not
+/// copy, start and remove at once, or one could remove a copy the other is
+/// about to start a daemon from.
+pub struct Lock {
+    _file: std::fs::File,
+}
+
+/// Takes the helper lock at `path`, waiting for another app's turn.
+pub fn lock(path: &Path) -> Result<Lock, String> {
+    let fail = |e: std::io::Error| format!("could not lock {}: {e}", path.display());
+    if let Some(parent) = path.parent() {
+        // 0700, as Go's `state.Home` does: the app may be the first to create the home.
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(parent).map_err(fail)?;
+    }
+    let file = std::fs::OpenOptions::new().write(true).create(true).truncate(false).open(path).map_err(fail)?;
+    file.lock().map_err(fail)?;
+    Ok(Lock { _file: file })
+}
+
 /// The `vaquitad` of a copy, under `root`, of the helper app in the app bundle `app`,
 /// one per helper CDHash. A missing copy is made, and published only once it
 /// passes the app's designated requirement, so a present one is used as is.
@@ -255,6 +274,18 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success(), "codesign {}", bundle.display());
+    }
+
+    #[test]
+    fn the_lock_is_exclusive_until_dropped() {
+        let d = dir("lock");
+        let path = d.dir.join("home/helper.lock");
+        let held = lock(&path).unwrap();
+        let other = std::fs::File::open(&path).unwrap();
+        assert!(other.try_lock().is_err());
+        drop(held);
+        assert!(other.try_lock().is_ok());
+        assert_eq!(std::fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
     }
 
     // A local build is signed ad hoc: the app's requirement is its own cdhash,
