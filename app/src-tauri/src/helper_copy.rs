@@ -97,6 +97,49 @@ fn requirement(r: &dyn Runner, app: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("could not {step}: none in {:?}", out.stdout))
 }
 
+/// Removes each entry of `root` that no process uses: copies older daemons ran
+/// from, and staging directories a crash left. Taking the held lock keeps
+/// another app from starting a daemon from a copy while it is checked.
+pub fn retire(r: &dyn Runner, root: &Path, _held: &Lock) {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => {
+            eprintln!("vaquita: could not read {}: {e}", root.display());
+            return;
+        }
+    };
+    // An entry that cannot be read is kept.
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if unused(r, &path) {
+            if let Err(e) = std::fs::remove_dir_all(&path) {
+                eprintln!("vaquita: could not remove {}: {e}", path.display());
+            }
+        }
+    }
+}
+
+// lsof exits 1 whether or not it finds a process, and prints `p<pid>` for one,
+// so only a scan that ran to its end and printed nothing counts as none.
+fn unused(r: &dyn Runner, path: &Path) -> bool {
+    let Ok(path) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    match r.run("/usr/sbin/lsof", &["-F", "p", "+D", &path.to_string_lossy()]) {
+        Ok(out) if out.code == Some(1) && out.stderr.is_empty() => out.stdout.is_empty(),
+        // Said, so that copies piling up on a Mac where lsof always fails show why.
+        Ok(out) => {
+            eprintln!("vaquita: keeping {}: lsof exited {:?}: {}", path.display(), out.code, out.stderr.trim());
+            false
+        }
+        Err(e) => {
+            eprintln!("vaquita: keeping {}: {e}", path.display());
+            false
+        }
+    }
+}
+
 fn run(r: &dyn Runner, step: &str, program: &str, args: &[&str]) -> Result<Outcome, String> {
     let out = r.run(program, args).map_err(|e| format!("could not {step}: {e}"))?;
     if out.ok {
@@ -133,7 +176,7 @@ mod tests {
             let mut call = vec![program.to_string()];
             call.extend(args.iter().map(|a| a.to_string()));
             self.calls.borrow_mut().push(call);
-            let ran = |ok: bool, stdout: String, stderr: String| Ok(Outcome { ok, stdout, stderr });
+            let ran = |ok: bool, stdout: String, stderr: String| Ok(Outcome { ok, code: Some(if ok { 0 } else { 1 }), stdout, stderr });
             match (program, args[0]) {
                 ("/usr/bin/codesign", "-dvvv") => ran(true, String::new(), format!("Identifier=x\nCDHash={}\nSignature=adhoc", self.cdhash)),
                 ("/usr/bin/codesign", "-d") => ran(true, format!("designated => {DR}\n"), String::new()),
@@ -313,5 +356,79 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(copy, d.root.join(&entries[0]).join("vaquitad.app/Contents/MacOS/vaquitad"));
         assert!(copy.exists());
+    }
+
+    // Answers each lsof scan by the name of the entry scanned.
+    struct Lsof {
+        calls: RefCell<Vec<Vec<String>>>,
+        answer: fn(&str) -> Result<Outcome, String>,
+    }
+
+    impl Runner for Lsof {
+        fn run(&self, program: &str, args: &[&str]) -> Result<Outcome, String> {
+            assert_eq!(program, "/usr/sbin/lsof");
+            self.calls.borrow_mut().push(strs(args));
+            (self.answer)(&Path::new(args[3]).file_name().unwrap().to_string_lossy())
+        }
+    }
+
+    fn scan(code: Option<i32>, stdout: &str, stderr: &str) -> Result<Outcome, String> {
+        Ok(Outcome { ok: code == Some(0), code, stdout: stdout.to_string(), stderr: stderr.to_string() })
+    }
+
+    #[test]
+    fn only_copies_lsof_finds_no_process_for_are_removed() {
+        let d = dir("retire");
+        let staging = format!("{HASH}.staging-123");
+        let names = ["unused", staging.as_str(), "used", "warned", "exited0", "signalled", "timedout"];
+        for name in names {
+            std::fs::create_dir_all(d.root.join(name).join(COPY)).unwrap();
+        }
+        std::os::unix::fs::symlink(d.dir.join("gone"), d.root.join("dangling")).unwrap();
+        let f = Lsof {
+            calls: RefCell::default(),
+            answer: |name| match name {
+                "used" => scan(Some(1), "p123\nftxt\n", ""),
+                "warned" => scan(Some(1), "", "lsof: WARNING: can't stat() smbfs file system /Volumes/x"),
+                "exited0" => scan(Some(0), "", ""),
+                "signalled" => scan(None, "", ""),
+                "timedout" => Err("/usr/sbin/lsof -F timed out".to_string()),
+                _ => scan(Some(1), "", ""),
+            },
+        };
+        let held = lock(&d.dir.join("home/helper.lock")).unwrap();
+        retire(&f, &d.root, &held);
+        assert_eq!(entries(&d.root), ["dangling", "exited0", "signalled", "timedout", "used", "warned"]);
+        // Every entry that resolves is scanned, by its canonical path.
+        assert_eq!(f.calls.borrow().len(), names.len());
+        let used = std::fs::canonicalize(d.root.join("used")).unwrap();
+        assert!(f.calls.borrow().contains(&strs(&["-F", "p", "+D", &used.to_string_lossy()])));
+    }
+
+    #[test]
+    fn a_missing_root_runs_nothing() {
+        let d = dir("retiremissing");
+        let f = Lsof { calls: RefCell::default(), answer: |_| panic!("ran lsof") };
+        let held = lock(&d.dir.join("helper.lock")).unwrap();
+        retire(&f, &d.root, &held);
+        assert!(f.calls.borrow().is_empty());
+    }
+
+    // temp_dir sits behind the /var -> /private/var symlink.
+    #[test]
+    fn a_copy_a_process_runs_from_is_kept_and_an_unused_one_removed() {
+        use crate::stop::tests::stand_in_from;
+        let d = dir("retirereal");
+        let exe = |name: &str| d.root.join(name).join(COPY).join(HELPER_EXE);
+        for name in ["running", "idle"] {
+            std::fs::create_dir_all(exe(name).parent().unwrap()).unwrap();
+        }
+        std::fs::write(exe("idle"), "").unwrap();
+        let mut child = stand_in_from(&exe("running"));
+        let held = lock(&d.dir.join("home/helper.lock")).unwrap();
+        retire(&RealRunner, &d.root, &held);
+        let _ = child.kill();
+        child.wait().unwrap();
+        assert_eq!(entries(&d.root), ["running"]);
     }
 }

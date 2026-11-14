@@ -19,11 +19,13 @@ const NOT_INSTALLED: &str = "LaunchAgent not installed: run `vaquitad install --
 /// What one command run produced.
 pub struct Outcome {
     pub ok: bool,
+    /// None when a signal ended the command.
+    pub code: Option<i32>,
     pub stdout: String,
     pub stderr: String,
 }
 
-/// Runs `launchctl`, `plutil`, `codesign`, `ditto` and `vaquitad install`.
+/// Runs `launchctl`, `plutil`, `codesign`, `ditto`, `lsof` and `vaquitad install`.
 pub trait Runner {
     fn run(&self, program: &str, args: &[&str]) -> Result<Outcome, String>;
 }
@@ -54,6 +56,7 @@ impl Runner for RealRunner {
         let out = child.wait_with_output().map_err(|e| format!("{program}: {e}"))?;
         Ok(Outcome {
             ok: status.success(),
+            code: status.code(),
             stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
         })
@@ -210,14 +213,14 @@ mod tests {
             // Not recorded: helper_copy's tests check its calls.
             if program == "/usr/bin/codesign" {
                 return Ok(match (self.cdhash, args[0]) {
-                    (Some(h), "-dvvv") => Outcome { ok: true, stdout: String::new(), stderr: format!("CDHash={h}") },
-                    _ => Outcome { ok: false, stdout: String::new(), stderr: "not signed".to_string() },
+                    (Some(h), "-dvvv") => Outcome { ok: true, code: Some(0), stdout: String::new(), stderr: format!("CDHash={h}") },
+                    _ => Outcome { ok: false, code: Some(1), stdout: String::new(), stderr: "not signed".to_string() },
                 });
             }
             let mut call = vec![program.to_string()];
             call.extend(args.iter().map(|a| a.to_string()));
             self.calls.borrow_mut().push(call);
-            let ran = |ok: bool, stdout: String, stderr: &str| Ok(Outcome { ok, stdout, stderr: stderr.to_string() });
+            let ran = |ok: bool, stdout: String, stderr: &str| Ok(Outcome { ok, code: Some(if ok { 0 } else { 1 }), stdout, stderr: stderr.to_string() });
             match (program, args[0]) {
                 ("launchctl", "print") => {
                     let linger = self.linger.get();
@@ -514,7 +517,7 @@ mod tests {
         struct Failing;
         impl Runner for Failing {
             fn run(&self, _: &str, args: &[&str]) -> Result<Outcome, String> {
-                Ok(Outcome { ok: false, stdout: String::new(), stderr: format!("{} boom", args[0]) })
+                Ok(Outcome { ok: false, code: Some(1), stdout: String::new(), stderr: format!("{} boom", args[0]) })
             }
         }
         let b = bundle("bootfail", false, true);
