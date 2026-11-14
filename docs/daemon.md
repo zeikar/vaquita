@@ -26,7 +26,7 @@ From another terminal, after the same `export`:
 
 ## Codex notifications
 
-A session whose command starts with `codex`, from the app or from `attach --new -- codex`, runs it with `-c` options that turn on Codex's OSC 9 notifications for that session only: the daemon tells a finished Codex turn from a cancelled one by them. The options also make the terminal title the thread's name, which the app shows as the session's title. Codex typed into a shell, in a plain shell session or after the session's own Codex has exited, runs without them, so its finished turns are not shown and the session gets no title from it.
+A session whose command starts with `codex`, from the app or from `attach --new -- codex`, runs it with `-c` options that turn on Codex's OSC 9 notifications for that session only: the daemon tells a finished Codex turn from a cancelled one by them. The options also make the terminal title the thread's name, which the app shows as the session's title. Codex typed into a shell, in a plain shell session or after the session's own Codex has exited, runs without them, so the session gets no title from it, and its finished turns show without the reply, or not at all before Codex 0.167, which first ended a turn with `done`.
 
 ## Reopening sessions after a restart
 

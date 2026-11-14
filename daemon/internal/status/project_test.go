@@ -86,8 +86,8 @@ func note(kind, msg string) []Notification {
 	return []Notification{{Kind: kind, Msg: msg}}
 }
 
-// TestProjectorRecordings replays the recorded sessions of Claude Code 2.1.308
-// and Codex 0.163.0, with the offsets from each scenario's input.
+// TestProjectorRecordings replays the recorded sessions of Claude Code 2.1.308,
+// Codex 0.163.0 and Codex 0.167.0, with the offsets from each scenario's input.
 func TestProjectorRecordings(t *testing.T) {
 	const (
 		summary   = `replied "pong" as requested`
@@ -172,6 +172,53 @@ func TestProjectorRecordings(t *testing.T) {
 			{4.380, report(cx("working")), working, false, nil, 0},
 			{4.412, report(cx("idle")), none, false, nil, 0},
 		}},
+		// Codex 0.167 ends a turn with done instead of idle, after the OSC 9,
+		// and sends idle only when the next prompt starts.
+		{"codex 0.167 turn", []step{
+			{0.447, report(cx("working")), working, false, nil, 0},
+			{2.903, osc9("pong"), working, false, nil, 0},
+			{2.903, report(cx("done")), done("pong"), true, nil, 4.403},
+			{4.403, tick, done("pong"), true, note(NotifyDone, "pong"), 0},
+			{7.021, report(cx("idle")), done("pong"), true, nil, 0},
+		}},
+		{"codex 0.167 approval", []step{
+			{0.442, report(cx("working")), working, false, nil, 0},
+			{3.120, osc9(approval), working, false, nil, 0},
+			{3.120, report(Report{State: "blocked", Kind: "permission", App: "codex"}), input("permission", approval), false, note(NotifyInput, approval), 0},
+			{5.234, report(cx("idle")), none, false, nil, 0},
+		}},
+		{"codex 0.167 plan prompt", []step{
+			{0.406, report(cx("working")), working, false, nil, 0},
+			{5.341, osc9(implement), working, false, nil, 0},
+			{5.341, report(cx("done")), input("", implement), false, note(NotifyInput, implement), 0},
+			// Esc on the popup now sends idle.
+			{182.450, report(cx("idle")), none, false, nil, 0},
+		}},
+		{"codex 0.167 plan question", []step{
+			{0.406, report(cx("working")), working, false, nil, 0},
+			{2.931, osc9(newline), working, false, nil, 0},
+			{2.931, report(Report{State: "blocked", Kind: "question", App: "codex"}), input("question", newline), false, note(NotifyInput, newline), 0},
+			{4.998, report(cx("working")), working, false, nil, 0},
+			{6.089, osc9(answer), working, false, nil, 0},
+			{6.089, report(cx("done")), done(answer), true, nil, 7.589},
+			{7.589, tick, done(answer), true, note(NotifyDone, answer), 0},
+		}},
+		// The async question comes as an OSC 9 alone, and its answer sends
+		// no report: the turn goes on until its done.
+		{"codex 0.167 async question", []step{
+			{0.405, report(cx("working")), working, false, nil, 0},
+			{2.418, osc9(question), input("", question), false, note(NotifyInput, question), 0},
+			{4.000, seen, working, false, nil, 0},
+			{7.011, osc9("Tea"), working, false, nil, 0},
+			{7.011, report(cx("done")), done("Tea"), true, nil, 8.511},
+			{8.511, tick, done("Tea"), true, note(NotifyDone, "Tea"), 0},
+		}},
+		{"codex 0.167 async question answered unseen", []step{
+			{0.405, report(cx("working")), working, false, nil, 0},
+			{2.418, osc9(question), input("", question), false, note(NotifyInput, question), 0},
+			{7.011, osc9("Tea"), input("", question), false, nil, 0},
+			{7.011, report(cx("done")), done("Tea"), true, nil, 8.511},
+		}},
 		// Esc on the popup at +7.189 sends no report.
 		{"codex-plan prompt released by seen", append(slices.Clone(prompted),
 			step{7.189, seen, none, false, nil, 0},
@@ -194,8 +241,8 @@ func TestProjectorRecordings(t *testing.T) {
 		}},
 		{"codex-question", []step{
 			{0.573, report(cx("working")), working, false, nil, 0},
-			{2.805, osc9(question), working, false, nil, 0},
-			{2.805, report(cx("blocked")), input("", question), false, note(NotifyInput, question), 0},
+			{2.805, osc9(question), input("", question), false, note(NotifyInput, question), 0},
+			{2.805, report(cx("blocked")), input("", question), false, nil, 0},
 			{5.917, report(cx("working")), working, false, nil, 0},
 			{7.754, osc9("Tea"), working, false, nil, 0},
 			{7.754, report(cx("idle")), done("Tea"), true, nil, 9.254},

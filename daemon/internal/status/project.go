@@ -39,9 +39,12 @@ const (
 const (
 	appCodex = "codex"
 	// planPrompt starts the OSC 9 body of Codex's plan-mode popups. Its
-	// "Implement this plan?" popup reports idle, not blocked, and the turn
-	// sends no completion notification of its own.
+	// "Implement this plan?" popup reports idle (0.163) or done (0.167), not
+	// blocked, and the turn sends no completion notification of its own.
 	planPrompt = "Plan mode prompt:"
+	// asyncQuestion starts the OSC 9 body of a question Codex asks without
+	// ending the turn. 0.167 sends no report with it, nor when it is answered.
+	asyncQuestion = "Question:"
 )
 
 // View is what the sidebar shows for a session.
@@ -72,9 +75,11 @@ type Notification struct {
 type Projector struct {
 	view   View
 	unread bool // only while the view is done or error
-	// soft marks an input view inferred from Codex's plan prompt idle, which
-	// Seen releases.
+	// soft marks an input view inferred from Codex's plan prompt or async
+	// question, which Seen releases.
 	soft bool
+	// app is the agent of the last report that named one.
+	app string
 	// turn is set by working and cleared when the turn ends; only a done that
 	// ends a turn is notified.
 	turn bool
@@ -99,6 +104,9 @@ func (p *Projector) Report(r Report, now time.Time) {
 	p.Tick(now)
 	body := p.osc9
 	p.osc9 = ""
+	if r.App != "" {
+		p.app = r.App
+	}
 	switch r.State {
 	case StateWorking:
 		p.show(View{State: ViewWorking, Msg: r.Msg}, false)
@@ -111,25 +119,37 @@ func (p *Projector) Report(r Report, now time.Time) {
 		if body != "" && (r.App == appCodex || msg == "") {
 			msg = body
 		}
+		// Codex 0.163 follows its async question's OSC 9 with a blocked,
+		// which the question already notified.
+		asked := p.soft && p.view.State == ViewInput && p.view.Msg == msg
 		if r.Kind == "auth" {
 			p.show(View{State: ViewAuth, Msg: msg}, false)
 			p.notify(NotifyAuth, msg)
 		} else {
 			p.show(View{State: ViewInput, Kind: r.Kind, Msg: msg}, false)
-			p.notify(NotifyInput, msg)
+			if !asked {
+				p.notify(NotifyInput, msg)
+			}
 		}
 	case StateError:
 		p.show(View{State: ViewError, Msg: r.Msg}, true)
 		p.turn = false
 		p.notify(NotifyError, r.Msg)
 	case StateDone:
-		p.done(r.Msg, now)
+		switch {
+		case r.App == appCodex && strings.HasPrefix(body, planPrompt):
+			p.prompt(body)
+			p.turn = false
+		case r.Msg == "" && body != "":
+			// Codex 0.167 ends a turn with done, its reply in the OSC 9.
+			p.done(body, now)
+		default:
+			p.done(r.Msg, now)
+		}
 	case StateIdle:
 		switch {
 		case r.App == appCodex && strings.HasPrefix(body, planPrompt):
-			p.show(View{State: ViewInput, Msg: body}, false)
-			p.soft = true
-			p.notify(NotifyInput, body)
+			p.prompt(body)
 		case r.App == appCodex && body != "":
 			p.done(body, now)
 		case p.view.State == ViewDone || p.view.State == ViewError:
@@ -161,8 +181,21 @@ func (p *Projector) done(msg string, now time.Time) {
 }
 
 // OSC9 holds an OSC 9 body for the next root report, which decides what it
-// means. A newer one replaces it.
-func (p *Projector) OSC9(body string) { p.osc9 = body }
+// means. A newer one replaces it. Codex's async question comes with no report
+// at all, so it shows at once.
+func (p *Projector) OSC9(body string) {
+	if p.app == appCodex && p.view.State == ViewWorking && strings.HasPrefix(body, asyncQuestion) {
+		p.prompt(body)
+	}
+	p.osc9 = body
+}
+
+// prompt shows an input that no report will end, which Seen releases.
+func (p *Projector) prompt(body string) {
+	p.show(View{State: ViewInput, Msg: body}, false)
+	p.soft = true
+	p.notify(NotifyInput, body)
+}
 
 // Interrupt ends whatever was working or waiting for input, as a new shell
 // prompt or the reporter's death does. A done or error stays, and so does
@@ -184,11 +217,15 @@ func (p *Projector) Clear() {
 }
 
 // Seen marks the session as looked at. It also releases the input inferred
-// from Codex's plan prompt: no report ends it when the user dismisses the
-// popup.
+// from Codex's plan prompt or async question, which no report may end, back
+// to the turn it came in.
 func (p *Projector) Seen() {
 	if p.soft {
-		p.show(View{}, false)
+		if p.turn {
+			p.show(View{State: ViewWorking}, false)
+		} else {
+			p.show(View{}, false)
+		}
 		return
 	}
 	p.show(p.view, false)
@@ -227,8 +264,8 @@ func (p *Projector) Take() (changed bool, notes []Notification) {
 // Pending reports whether Take has a view change or a notification to hand over.
 func (p *Projector) Pending() bool { return p.changed || len(p.notes) > 0 }
 
-// show sets the view, noting whether anything visible changed. Only the plan
-// prompt's input is soft, so any view set here is not. Leaving the done view
+// show sets the view, noting whether anything visible changed. Only prompt
+// makes an input soft, so any view set here is not. Leaving the done view
 // cancels its pending notification: a working within DoneQuiet is the agent
 // flickering, and a blocked or error raises its own notification.
 func (p *Projector) show(v View, unread bool) {

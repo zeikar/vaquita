@@ -456,7 +456,9 @@ def start_codex(outdir, name, notify):
     subprocess.run(['git', 'init', '-q', cwd], check=True)
     # The cheapest listed model; it also offers request_user_input_async (codex-question).
     argv = [shutil.which('codex'), '-m', 'gpt-6-luna', '-a', 'on-request', '-s', 'read-only',
-            '-c', 'model_reasoning_effort="low"', '-c', 'plan_mode_reasoning_effort="low"']
+            '-c', 'model_reasoning_effort="low"', '-c', 'plan_mode_reasoning_effort="low"',
+            # An "Update available" prompt at start would take the first typed line.
+            '-c', 'check_for_update_on_startup=false']
     if notify:
         # Codex's own terminal notifications, as a per-session override like Claude's --settings.
         # "always" because vaquita, not Codex, decides whether to show the notification.
@@ -539,7 +541,10 @@ def run_codex_question(outdir):
     p.ev('scenario', v='async-question')
     p.type('Use the request_user_input_async tool to ask me one question: tea or coffee? Options: Tea, Coffee. '
            'Then wait for my answer and reply with only my answer.')
-    if p.wait_states([('blocked',)], 180):
+    # Codex 0.163 sent blocked with the question; 0.167 sends only the OSC 9.
+    asked = lambda: any(e['k'] == '7501' and e.get('state') == 'blocked' or
+                        e['k'] == 'notify' and e.get('v', '').startswith('Question:') for e in p.events)
+    if p.wait(asked, 180):
         time.sleep(2)
         # Alt-Up opens the question; Enter sends the preselected first option.
         p.key(b'\x1b[1;3A', 'Alt-Up')
