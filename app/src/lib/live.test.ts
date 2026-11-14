@@ -239,20 +239,24 @@ describe.skipIf(process.env.VAQUITA_LIVE !== '1')('live daemon', () => {
 			expect(a.row(s)?.ro).toBe(false);
 			b.m.stop();
 
-			// (3) About 2.7MB, past the daemon's 1MB ring and unacked cap.
+			// (3) About 2.7MB, past the daemon's 1MB ring and unacked cap. ONLCR
+			// is off while seq runs: when the pty's output queue is full, which
+			// the daemon's flow control allows, macOS can turn a \n into \r\r\n,
+			// so the bytes would not be the program's.
 			const mark = a.text(s).length;
-			core.sendInput(`\x15seq 1 ${LINES}\r`);
+			const command = `stty -onlcr; seq 1 ${LINES}; stty onlcr`;
+			core.sendInput(`\x15${command}\r`);
 			await until(
-				() => a.text(s).endsWith(`${LINES}\r\n${PROMPT}`) || skipped(a.log, s).length > 0,
+				() => a.text(s).endsWith(`${LINES}\n${PROMPT}`) || skipped(a.log, s).length > 0,
 				`the prompt after ${LINES}`,
 				90_000,
 			);
 			expect(skipped(a.log, s)).toEqual([]);
 			const typed = a.text(s).slice(mark);
-			const echo = `seq 1 ${LINES}\r\n`;
+			const echo = `${command}\r\n`;
 			const start = typed.indexOf(echo);
 			expect(start).toBeGreaterThanOrEqual(0);
-			const output = typed.slice(start + echo.length, -PROMPT.length).replaceAll('\r\n', '\n');
+			const output = typed.slice(start + echo.length, -PROMPT.length);
 			const want = Array.from({ length: LINES }, (_, i) => `${i + 1}\n`).join('');
 			expect(firstDifference(output, want)).toBeUndefined();
 
