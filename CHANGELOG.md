@@ -4,7 +4,8 @@ Each release's notes open with its section here.
 
 ## 0.1.28
 
-- After an update, the daemon left running from the old app is restarted, by itself when no session runs and from the notice otherwise. macOS had kept its sessions out of protected folders such as Documents, Downloads and Full Disk Access, even with the permission on.
+- An update no longer cuts running sessions off from protected folders such as Documents, Desktop, Downloads and Full Disk Access: the daemon now runs from its own copy, outside the app, so sessions keep running through updates with their access intact.
+- A daemon started by an earlier version and already cut off by an update is restarted once, by itself when no session runs and otherwise from a notice that says why.
 
 ## 0.1.27
 

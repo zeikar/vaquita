@@ -198,8 +198,11 @@ jobs:
             check "$APP" ""
             codesign --verify --deep --strict --verbose=2 "$APP"
             # macOS shares privacy grants between the app and the helper only
-            # if the helper satisfies the app's designated requirement. codesign
-            # prefixes an implicit requirement with "# ".
+            # if the helper satisfies the app's designated requirement. The app
+            # also runs the daemon from a copy of the helper in its home only if
+            # the copy passes this check, and otherwise falls back to the helper
+            # inside the app, which an update deletes under a running daemon.
+            # codesign prefixes an implicit requirement with "# ".
             dr="$(codesign -d -r- "$APP" 2>/dev/null | sed -n 's/^#* *designated => //p')"
             if [ -z "$dr" ]; then
               echo "::error::Could not read the designated requirement of $APP."
