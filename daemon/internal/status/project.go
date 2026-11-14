@@ -107,11 +107,13 @@ type Projector struct {
 // so a child's done never completes its parent. The report consumes the
 // pending OSC 9 whatever its state: Codex writes the two together.
 func (p *Projector) Report(r Report, now time.Time) {
+	// A pending OSC 9 belongs to this report, however late it comes, as long
+	// as the question it may be has not shown yet.
+	body := p.osc9
+	p.osc9, p.askAt = "", time.Time{}
 	// A notification that came due before this report is raised first, so
 	// the outcome does not depend on how late the caller's timer fired.
 	p.Tick(now)
-	body := p.osc9
-	p.osc9, p.askAt = "", time.Time{}
 	if r.App != "" {
 		p.app = r.App
 	}

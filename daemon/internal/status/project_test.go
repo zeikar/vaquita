@@ -255,6 +255,12 @@ func TestProjectorRecordings(t *testing.T) {
 			{2.000, report(cx("done")), done("Question: which database? Postgres."), true, nil, 3.500},
 			{3.500, tick, done("Question: which database? Postgres."), true, note(NotifyDone, "Question: which database? Postgres."), 0},
 		}},
+		// The reader can fall behind between the two, past QuestionWait.
+		{"codex 0.167 reply starting with Question:, its done late", []step{
+			{0.405, report(cx("working")), working, false, nil, 0},
+			{2.000, osc9("Question: which database? Postgres."), working, false, nil, 2.300},
+			{2.400, report(cx("done")), done("Question: which database? Postgres."), true, nil, 3.900},
+		}},
 		{"codex 0.163 reply starting with Question:", []step{
 			{0.405, report(cx("working")), working, false, nil, 0},
 			{2.000, osc9("Question: which database? Postgres."), working, false, nil, 2.300},
