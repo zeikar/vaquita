@@ -161,7 +161,7 @@ Worktrees were dropped from the plan on 2026-10-23 because they were rarely used
 ## Releases and updates
 
 - A `v*` tag builds, signs and publishes in CI ([Release build](app.md#release-build)).
-- The daemon's build carries a fingerprint of its committed code, so a release that leaves the daemon alone restarts no daemon, and the sessions keep running.
+- The daemon's build carries a fingerprint of its committed code, so that a release that left the daemon alone would restart no daemon and the sessions would keep running. An update still replaces the daemon, since the old app's vaquitad is deleted under it ([launchd and macOS privacy](#launchd-and-macos-privacy)); the fingerprint only tells the two apart by code.
 - Updates use `tauri-plugin-updater`, called only from two Rust commands: the webview gets no updater permission and never names a URL. Only the release configuration has a feed, so dev and local builds never check, and the signature must name the feed's version.
 - After installing, the app quits and is opened again with `open` once it is gone. `open -n`, which starts it while the old one still runs, left a second tile in the Dock.
 
