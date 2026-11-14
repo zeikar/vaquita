@@ -79,6 +79,45 @@ fn shipped_build(exe: &Path) -> Result<Option<String>, String> {
     Ok(Some(String::from_utf8_lossy(&out.stdout).trim().to_string()))
 }
 
+/// Whether the daemon with `pid` runs the vaquitad inside this app; true in a
+/// `tauri dev` run and in an app without one, which leave the daemon alone. An
+/// update moves the old app away and deletes it, and a daemon still running
+/// its vaquitad then has a file with no path: macOS privacy cannot tell whose
+/// it is and refuses its sessions every protected folder, Full Disk Access
+/// included, even when its build matches the app's.
+#[tauri::command]
+async fn daemon_in_place(pid: u32) -> Result<bool, String> {
+    if tauri::is_dev() {
+        return Ok(true);
+    }
+    tauri::async_runtime::spawn_blocking(move || in_place(&app_exe()?, pid)).await.map_err(|e| e.to_string())?
+}
+
+fn in_place(exe: &Path, pid: u32) -> Result<bool, String> {
+    let Some(embedded) = launchd::embedded(exe)? else {
+        return Ok(true);
+    };
+    match executable(pid) {
+        Ok(path) => Ok(launchd::same_file(&path, &embedded)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(format!("find the executable of pid {pid}: {e}")),
+    }
+}
+
+/// Where pid's executable is now, as macOS privacy looks it up: NotFound once
+/// the file has been deleted.
+fn executable(pid: u32) -> std::io::Result<PathBuf> {
+    let pid = libc::c_int::try_from(pid).map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+    let mut buf = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    // SAFETY: proc_pidpath writes at most buf.len() bytes into buf.
+    let n = unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
+    if n <= 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    buf.truncate(n as usize);
+    Ok(PathBuf::from(<std::ffi::OsString as std::os::unix::ffi::OsStringExt>::from_vec(buf)))
+}
+
 const NO_EMBEDDED: &str = "the app has no vaquitad inside it to start in place of the running one";
 
 /// Whether the app can start a daemon of its own, which a restart needs
@@ -154,6 +193,7 @@ pub fn run() {
             endpoint,
             start_daemon,
             app_build,
+            daemon_in_place,
             check_restart,
             restart_daemon,
             notify::notification_permission,
@@ -235,5 +275,32 @@ mod tests {
         std::fs::create_dir_all(daemon.parent().unwrap()).unwrap();
         std::fs::write(&daemon, "").unwrap();
         check_restart_at(&exe).unwrap();
+    }
+
+    #[test]
+    fn a_daemon_runs_in_place_until_an_update_moves_and_deletes_its_file() {
+        use crate::stop::tests::stand_in_from;
+        let d = dir("inplace");
+        let exe = stand_in_app(&d);
+        let daemon = helper_daemon(&d);
+        std::fs::create_dir_all(daemon.parent().unwrap()).unwrap();
+        let mut child = stand_in_from(&daemon);
+        let pid = child.id();
+        let at_home = in_place(&exe, pid);
+        // What the updater does: the old app goes aside and a new one takes its place.
+        let aside = d.join("vaquitad-old");
+        std::fs::rename(&daemon, &aside).unwrap();
+        std::fs::copy(&aside, &daemon).unwrap();
+        let moved = in_place(&exe, pid);
+        std::fs::remove_file(&aside).unwrap();
+        let deleted = in_place(&exe, pid);
+        let _ = child.kill();
+        child.wait().unwrap();
+        assert_eq!(at_home, Ok(true));
+        assert_eq!(moved, Ok(false));
+        assert_eq!(deleted, Ok(false));
+        // An app without a vaquitad inside it leaves the daemon alone.
+        std::fs::remove_file(&daemon).unwrap();
+        assert_eq!(in_place(&exe, pid), Ok(true));
     }
 }

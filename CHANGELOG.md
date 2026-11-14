@@ -2,6 +2,10 @@
 
 Each release's notes open with its section here.
 
+## 0.1.28
+
+- After an update, the daemon left running from the old app is restarted, by itself when no session runs and from the notice otherwise. macOS had kept its sessions out of protected folders such as Documents, Downloads and Full Disk Access, even with the permission on.
+
 ## 0.1.27
 
 - Pressing ⌘ while a Korean syllable is being composed in a terminal, alone or for a shortcut such as ⌘←, no longer types the syllable twice.

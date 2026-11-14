@@ -55,5 +55,5 @@ Most of these come from bugs seen in other terminal multiplexers and from review
 - **A kill reaches every process group in the PTY session**, as an agent runs in a group other than its shell's; processes are found by their session id (`getsid`).
 - **Under launchd**: `ProcessType=Interactive`, an explicit list of environment variables to keep (`SSH_AUTH_SOCK` among them), `LANG` set, the shell by absolute path. The daemon is never a child the app would take down with it.
 - **The daemon removes only the socket, port and lock files it created**, so a daemon on its way out never deletes a newer one's.
-- **A daemon is replaced only when no session runs**, or when the user chooses to; the app compares the build fingerprint (`vaquitad version`) to tell whether a restart is needed at all. Development uses its own `VAQUITA_HOME`.
+- **A daemon is replaced only when no session runs**, or when the user chooses to; the app compares the build fingerprint (`vaquitad version`), and checks that the daemon still runs the vaquitad inside the app, to tell whether a restart is needed at all. Development uses its own `VAQUITA_HOME`.
 - **No hooks and no writes into the agents' settings.** State comes from what Claude Code and Codex write to the terminal; per-session `-c` options for Codex are the only thing added, and only to a Codex the daemon starts.

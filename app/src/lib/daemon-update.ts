@@ -29,11 +29,16 @@ export interface DaemonUpdate {
 	app: string;
 	// Why the last restart did not leave this app's daemon running.
 	note?: string;
+	// The daemon runs a vaquitad that is no longer the one in this app.
+	away?: true;
 }
 
 // appBuild is the build of the vaquitad the app ships, null in a dev run,
 // which never manages the daemon; daemonBuild is the hello's, undefined from a
-// daemon older than builds. Builds are compared by the daemon code they name. An outdated
+// daemon older than builds. Builds are compared by the daemon code they name,
+// and inPlace tells whether the daemon runs the very vaquitad inside the app:
+// one left running from an app an update replaced is not the app's even with
+// the same code, as macOS privacy refuses its sessions. An outdated
 // daemon is restarted at once only when that ends no running session, and
 // only once per app run, so a restart that brings back the same build never
 // loops; otherwise the user is offered the restart. The daemon itself makes
@@ -44,9 +49,10 @@ export function updateAction(
 	daemonBuild: string | undefined,
 	running: number,
 	autoTried: boolean,
+	inPlace: boolean,
 ): UpdateAction {
 	if (appBuild === null || appBuild === DEV_BUILD || daemonBuild === DEV_BUILD) return 'none';
-	if (daemonBuild !== undefined && code(daemonBuild) === code(appBuild)) return 'none';
+	if (inPlace && daemonBuild !== undefined && code(daemonBuild) === code(appBuild)) return 'none';
 	return daemonBuild !== undefined && running === 0 && !autoTried ? 'restart-now' : 'offer';
 }
 

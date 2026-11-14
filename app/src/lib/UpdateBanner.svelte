@@ -21,6 +21,8 @@
 		const daemon = update.daemon === undefined ? 'An older vaquitad' : `vaquitad ${shownBuild(update.daemon)}`;
 		const ends = running === 0 ? '' : ` — ${running} running session${running === 1 ? '' : 's'} will end and can be reopened`;
 		const note = update.note === undefined ? '' : ` (${update.note})`;
+		if (update.away)
+			return `${daemon} is running from a vaquita that has been moved or replaced, so macOS keeps its sessions out of protected folders. Restart it to run ${shownBuild(update.app)}${ends}.${note}`;
 		return `${daemon} is running; this app ships ${shownBuild(update.app)}. Restart it to update${ends}.${note}`;
 	});
 </script>

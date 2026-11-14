@@ -94,7 +94,18 @@ pub(crate) mod tests {
         let _ = std::fs::remove_file(&bin);
         let exe = std::env::current_exe().unwrap();
         std::fs::hard_link(&exe, &bin).or_else(|_| std::fs::copy(&exe, &bin).map(drop)).unwrap();
-        std::process::Command::new(&bin)
+        run_stand_in(&bin)
+    }
+
+    /// A process started from bin, a copy of its own, whose file can be moved
+    /// and deleted without touching the test binary.
+    pub(crate) fn stand_in_from(bin: &Path) -> Child {
+        std::fs::copy(std::env::current_exe().unwrap(), bin).unwrap();
+        run_stand_in(bin)
+    }
+
+    fn run_stand_in(bin: &Path) -> Child {
+        std::process::Command::new(bin)
             .args(["--exact", "stop::tests::stand_in_daemon", "--ignored"])
             .env("VAQUITA_STAND_IN", "1")
             .stdout(std::process::Stdio::null())

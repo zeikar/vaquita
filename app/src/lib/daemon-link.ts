@@ -46,6 +46,9 @@ export interface LinkDeps {
 	// The build of the vaquitad this app ships; null when the app does not
 	// manage the daemon, as in a dev run.
 	appBuild: () => Promise<string | null>;
+	// Whether the daemon at endpoint runs the vaquitad inside the app; true
+	// when the app does not manage the daemon.
+	daemonInPlace: (endpoint: Endpoint) => Promise<boolean>;
 	// Rejects when the app could not start a daemon of its own; asked before
 	// one is stopped.
 	checkRestart: () => Promise<void>;
@@ -104,8 +107,9 @@ export class DaemonLink {
 	// How the last restart ended, its error if it failed, for the next ready
 	// to tell the user when the daemon is still not the app's.
 	private restarted?: { error?: string };
-	// The ready connection's daemon, as its endpoint and hello described it.
-	private daemon?: { endpoint: Endpoint; build?: string };
+	// The ready connection's daemon, as its endpoint and hello described it,
+	// and whether it ran the app's vaquitad when the app connected.
+	private daemon?: { endpoint: Endpoint; build?: string; inPlace: boolean };
 	// The daemon a shutdown request went to: its closing the connection is
 	// its agreement.
 	private shuttingDown?: Endpoint;
@@ -175,6 +179,12 @@ export class DaemonLink {
 			return;
 		}
 		if (id !== this.attempt) return;
+		const inPlace = await this.deps.daemonInPlace(endpoint).catch((e) => {
+			// Without an answer the daemon is left as it is.
+			console.warn(`daemon executable unknown: ${e instanceof Error ? e.message : String(e)}`);
+			return true;
+		});
+		if (id !== this.attempt) return;
 		// Every handler does nothing once this attempt has been abandoned.
 		const current =<A extends unknown[]>(fn: (...a: A) => void) => (...a: A): void => {
 			if (id === this.attempt) fn(...a);
@@ -183,7 +193,7 @@ export class DaemonLink {
 		const on = this.host.handlers(() => conn);
 		try {
 			conn = this.deps.connect(endpoint, {
-				ready: current((list, build) => this.onReady(conn, endpoint, list, build)),
+				ready: current((list, build) => this.onReady(conn, endpoint, inPlace, list, build)),
 				sessions: current(on.sessions),
 				replay: current(on.replay),
 				live: current(on.live),
@@ -209,22 +219,22 @@ export class DaemonLink {
 		}, READY_TIMEOUT_MS);
 	}
 
-	private onReady(conn: ConnectionLike, endpoint: Endpoint, list: SessionInfo[], build: string | undefined): void {
+	private onReady(conn: ConnectionLike, endpoint: Endpoint, inPlace: boolean, list: SessionInfo[], build: string | undefined): void {
 		this.clearTimers();
 		this.failures = 0;
 		this.startTried = false;
 		this.readyConn = conn;
-		this.daemon = { endpoint, build };
+		this.daemon = { endpoint, build, inPlace };
 		this.host.ready(conn, list);
-		this.checkDaemon(build);
+		this.checkDaemon(build, inPlace);
 	}
 
 	// Acts on whether the daemon that answered, of the given build, is the
 	// vaquitad this app ships.
-	private checkDaemon(build: string | undefined): void {
+	private checkDaemon(build: string | undefined, inPlace: boolean): void {
 		const app = this.appBuild ?? null;
 		const running = this.host.running();
-		switch (updateAction(app, build, running, this.autoRestarted)) {
+		switch (updateAction(app, build, running, this.autoRestarted, inPlace)) {
 			case 'none':
 				this.restarted = undefined;
 				if (this.state.update) this.set({ update: undefined });
@@ -243,7 +253,11 @@ export class DaemonLink {
 	private offer(): void {
 		const r = this.restarted;
 		const note = r && (r.error === undefined ? 'still running after a restart' : `restart failed: ${r.error}`);
-		this.set({ status: 'connected', update: { daemon: this.daemon?.build, app: this.appBuild!, ...(note && { note }) } });
+		const away = this.daemon?.inPlace === false;
+		this.set({
+			status: 'connected',
+			update: { daemon: this.daemon?.build, app: this.appBuild!, ...(note && { note }), ...(away && { away }) },
+		});
 	}
 
 	// Nothing is stopped before the app is known to be able to start its own

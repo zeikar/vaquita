@@ -108,6 +108,7 @@ export function setup(
 	startDaemon: () => Promise<void> = rejectStart,
 	{
 		appBuild = async (): Promise<string | null> => null,
+		daemonInPlace = async (_endpoint: Endpoint): Promise<boolean> => true,
 		checkRestart = async () => {},
 		restartDaemon = async (_endpoint: Endpoint, _signal: boolean) => {},
 	} = {},
@@ -122,6 +123,7 @@ export function setup(
 		readEndpoint: read,
 		startDaemon: start,
 		appBuild,
+		daemonInPlace,
 		checkRestart: check,
 		restartDaemon: restart,
 		connect: (endpoint, handlers) => {
