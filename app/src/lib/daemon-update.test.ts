@@ -40,14 +40,14 @@ describe('updateAction', () => {
 
 	it.each([
 		// app, daemon, running, auto tried, action
-		// The same code run from an app that was replaced is not the app's.
+		// A daemon whose executable is gone is replaced whatever its build.
 		['0.2.1+3b9cdd54fa29', '0.2.0+3b9cdd54fa29', 0, false, 'restart-now'],
 		['0.2.1+3b9cdd54fa29', '0.2.1+3b9cdd54fa29', 2, false, 'offer'],
 		['0.2.1+3b9cdd54fa29', '0.2.0+3b9cdd54fa29', 0, true, 'offer'],
 		// Neither a dev run nor a developer's daemon is managed.
 		[null, '0.2.0+3b9cdd54fa29', 0, false, 'none'],
 		['0.2.0', DEV_BUILD, 0, false, 'none'],
-	] as const)('not in place: app %s, daemon %s, %i running, tried %s: %s', (app, daemon, running, tried, want) => {
+	] as const)('executable gone: app %s, daemon %s, %i running, tried %s: %s', (app, daemon, running, tried, want) => {
 		expect(updateAction(app, daemon, running, tried, false)).toBe(want);
 	});
 });

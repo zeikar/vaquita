@@ -61,12 +61,12 @@ export async function appBuild(): Promise<string | null> {
 	return invoke<string | null>('app_build');
 }
 
-// Whether the daemon at endpoint runs the vaquitad inside the app; true in a
+// Whether the executable of the daemon at endpoint still exists; true in a
 // dev run and in a plain browser, which never manage the daemon.
-export async function daemonInPlace(endpoint: Endpoint): Promise<boolean> {
+export async function daemonOnDisk(endpoint: Endpoint): Promise<boolean> {
 	if (!isTauri()) return true;
 	try {
-		return await invoke<boolean>('daemon_in_place', { pid: endpoint.pid });
+		return await invoke<boolean>('daemon_on_disk', { pid: endpoint.pid });
 	} catch (e) {
 		throw new Error(String(e));
 	}

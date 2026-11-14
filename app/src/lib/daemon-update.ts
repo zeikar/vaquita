@@ -29,30 +29,30 @@ export interface DaemonUpdate {
 	app: string;
 	// Why the last restart did not leave this app's daemon running.
 	note?: string;
-	// The daemon runs a vaquitad that is no longer the one in this app.
-	away?: true;
+	// The daemon's executable was deleted, which macOS privacy cannot attribute.
+	deleted?: true;
 }
 
 // appBuild is the build of the vaquitad the app ships, null in a dev run,
 // which never manages the daemon; daemonBuild is the hello's, undefined from a
 // daemon older than builds. Builds are compared by the daemon code they name,
-// and inPlace tells whether the daemon runs the very vaquitad inside the app:
-// one left running from an app an update replaced is not the app's even with
-// the same code, as macOS privacy refuses its sessions. An outdated
-// daemon is restarted at once only when that ends no running session, and
-// only once per app run, so a restart that brings back the same build never
-// loops; otherwise the user is offered the restart. The daemon itself makes
-// sure no session runs when it stops, which one older than builds cannot, so
-// restarting that takes the user's click.
+// and onDisk tells whether the daemon's executable still exists: a daemon
+// whose executable was deleted is replaced whatever its build, as macOS
+// privacy refuses its sessions. An outdated daemon is restarted at once only
+// when that ends no running session, and only once per app run, so a restart
+// that brings back the same build never loops; otherwise the user is offered
+// the restart. The daemon itself makes sure no session runs when it stops,
+// which one older than builds cannot, so restarting that takes the user's
+// click.
 export function updateAction(
 	appBuild: string | null,
 	daemonBuild: string | undefined,
 	running: number,
 	autoTried: boolean,
-	inPlace: boolean,
+	onDisk: boolean,
 ): UpdateAction {
 	if (appBuild === null || appBuild === DEV_BUILD || daemonBuild === DEV_BUILD) return 'none';
-	if (inPlace && daemonBuild !== undefined && code(daemonBuild) === code(appBuild)) return 'none';
+	if (onDisk && daemonBuild !== undefined && code(daemonBuild) === code(appBuild)) return 'none';
 	return daemonBuild !== undefined && running === 0 && !autoTried ? 'restart-now' : 'offer';
 }
 

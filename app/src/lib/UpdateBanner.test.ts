@@ -6,7 +6,7 @@ import UpdateBanner from './UpdateBanner.svelte';
 let target: HTMLElement;
 let app: ReturnType<typeof mount> | undefined;
 
-function show(props: { update: { daemon?: string; app: string; note?: string; away?: true }; running: number; onrestart?: () => void; ondismiss?: () => void }) {
+function show(props: { update: { daemon?: string; app: string; note?: string; deleted?: true }; running: number; onrestart?: () => void; ondismiss?: () => void }) {
 	target = document.createElement('div');
 	document.body.append(target);
 	app = mount(UpdateBanner, { target, props: { onrestart: () => {}, ondismiss: () => {}, ...props } });
@@ -35,10 +35,10 @@ describe('UpdateBanner', () => {
 		);
 	});
 
-	it('says why a daemon running from a replaced app needs a restart', () => {
-		const el = show({ update: { daemon: '0.1.0+3b9cdd54fa29', app: '0.2.0+3b9cdd54fa29', away: true }, running: 1 });
+	it('says why a daemon whose executable is gone needs a restart', () => {
+		const el = show({ update: { daemon: '0.1.0+3b9cdd54fa29', app: '0.2.0+3b9cdd54fa29', deleted: true }, running: 1 });
 		expect(el.querySelector('span')?.textContent).toBe(
-			'vaquitad 0.1.0 is running from a vaquita that has been moved or replaced, so macOS keeps its sessions out of protected folders. Restart it to run 0.2.0 — 1 running session will end and can be reopened.',
+			'vaquitad 0.1.0 is running from a file that no longer exists, so macOS keeps its sessions out of protected folders. Restart it to run 0.2.0 — 1 running session will end and can be reopened.',
 		);
 	});
 

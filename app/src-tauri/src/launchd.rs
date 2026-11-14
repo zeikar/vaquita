@@ -135,7 +135,7 @@ fn lock_held(lock: &Path) -> bool {
 }
 
 /// Whether both paths name one existing file; false when either is gone.
-pub fn same_file(a: &Path, b: &Path) -> bool {
+fn same_file(a: &Path, b: &Path) -> bool {
     matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(a), Ok(b)) if a == b)
 }
 

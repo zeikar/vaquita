@@ -79,26 +79,22 @@ fn shipped_build(exe: &Path) -> Result<Option<String>, String> {
     Ok(Some(String::from_utf8_lossy(&out.stdout).trim().to_string()))
 }
 
-/// Whether the daemon with `pid` runs the vaquitad inside this app; true in a
-/// `tauri dev` run and in an app without one, which leave the daemon alone. An
-/// update moves the old app away and deletes it, and a daemon still running
-/// its vaquitad then has a file with no path: macOS privacy cannot tell whose
-/// it is and refuses its sessions every protected folder, Full Disk Access
-/// included, even when its build matches the app's.
+/// Whether the executable of the daemon with `pid` still exists; true in a
+/// `tauri dev` run, which leaves the daemon alone. A deleted file has no path:
+/// macOS privacy cannot tell whose the daemon is and refuses its sessions every
+/// protected folder, Full Disk Access included, whatever its build. A daemon
+/// running another, existing file (a copy of an older build) is fine.
 #[tauri::command]
-async fn daemon_in_place(pid: u32) -> Result<bool, String> {
+async fn daemon_on_disk(pid: u32) -> Result<bool, String> {
     if tauri::is_dev() {
         return Ok(true);
     }
-    tauri::async_runtime::spawn_blocking(move || in_place(&app_exe()?, pid)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || on_disk(pid)).await.map_err(|e| e.to_string())?
 }
 
-fn in_place(exe: &Path, pid: u32) -> Result<bool, String> {
-    let Some(embedded) = launchd::embedded(exe)? else {
-        return Ok(true);
-    };
+fn on_disk(pid: u32) -> Result<bool, String> {
     match executable(pid) {
-        Ok(path) => Ok(launchd::same_file(&path, &embedded)),
+        Ok(_) => Ok(true),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(e) => Err(format!("find the executable of pid {pid}: {e}")),
     }
@@ -193,7 +189,7 @@ pub fn run() {
             endpoint,
             start_daemon,
             app_build,
-            daemon_in_place,
+            daemon_on_disk,
             check_restart,
             restart_daemon,
             notify::notification_permission,
@@ -278,29 +274,26 @@ mod tests {
     }
 
     #[test]
-    fn a_daemon_runs_in_place_until_an_update_moves_and_deletes_its_file() {
+    fn a_daemon_is_on_disk_until_its_file_is_deleted() {
         use crate::stop::tests::stand_in_from;
-        let d = dir("inplace");
-        let exe = stand_in_app(&d);
+        let d = dir("ondisk");
         let daemon = helper_daemon(&d);
         std::fs::create_dir_all(daemon.parent().unwrap()).unwrap();
         let mut child = stand_in_from(&daemon);
         let pid = child.id();
-        let at_home = in_place(&exe, pid);
-        // What the updater does: the old app goes aside and a new one takes its place.
+        let at_home = on_disk(pid);
+        // Moved aside, the file still resolves; deleted, it has no path.
         let aside = d.join("vaquitad-old");
         std::fs::rename(&daemon, &aside).unwrap();
-        std::fs::copy(&aside, &daemon).unwrap();
-        let moved = in_place(&exe, pid);
+        let moved = on_disk(pid);
         std::fs::remove_file(&aside).unwrap();
-        let deleted = in_place(&exe, pid);
+        let deleted = on_disk(pid);
         let _ = child.kill();
         child.wait().unwrap();
         assert_eq!(at_home, Ok(true));
-        assert_eq!(moved, Ok(false));
+        assert_eq!(moved, Ok(true));
         assert_eq!(deleted, Ok(false));
-        // An app without a vaquitad inside it leaves the daemon alone.
-        std::fs::remove_file(&daemon).unwrap();
-        assert_eq!(in_place(&exe, pid), Ok(true));
+        // No such process fails with ESRCH, not NotFound, so it is an error.
+        assert!(on_disk(4_000_000).is_err());
     }
 }

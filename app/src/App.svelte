@@ -14,7 +14,7 @@
 	import { DaemonConnection } from './lib/connection';
 	import { runningCount } from './lib/daemon-update';
 	import { documents } from './lib/documents';
-	import { appBuild, checkAppUpdate, checkRestart, daemonInPlace, installAppUpdate, onUpdateCheckAsked, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
+	import { appBuild, checkAppUpdate, checkRestart, daemonOnDisk, installAppUpdate, onUpdateCheckAsked, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
 	import { openPath } from './lib/file-links';
 	import { clampPanelWidth, loadPanelWidth, PANEL_DEFAULT_WIDTH, PANEL_HIDDEN, PANEL_WIDTH } from './lib/file-panel';
 	import FilePane from './lib/FilePane.svelte';
@@ -51,7 +51,7 @@
 		readEndpoint,
 		startDaemon,
 		appBuild,
-		daemonInPlace,
+		daemonOnDisk,
 		checkRestart,
 		restartDaemon,
 		connect: (endpoint, handlers) => new DaemonConnection(endpoint, handlers),

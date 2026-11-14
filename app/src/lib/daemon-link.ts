@@ -46,9 +46,9 @@ export interface LinkDeps {
 	// The build of the vaquitad this app ships; null when the app does not
 	// manage the daemon, as in a dev run.
 	appBuild: () => Promise<string | null>;
-	// Whether the daemon at endpoint runs the vaquitad inside the app; true
+	// Whether the executable of the daemon at endpoint still exists; true
 	// when the app does not manage the daemon.
-	daemonInPlace: (endpoint: Endpoint) => Promise<boolean>;
+	daemonOnDisk: (endpoint: Endpoint) => Promise<boolean>;
 	// Rejects when the app could not start a daemon of its own; asked before
 	// one is stopped.
 	checkRestart: () => Promise<void>;
@@ -108,8 +108,8 @@ export class DaemonLink {
 	// to tell the user when the daemon is still not the app's.
 	private restarted?: { error?: string };
 	// The ready connection's daemon, as its endpoint and hello described it,
-	// and whether it ran the app's vaquitad when the app connected.
-	private daemon?: { endpoint: Endpoint; build?: string; inPlace: boolean };
+	// and whether its executable still existed when the app connected.
+	private daemon?: { endpoint: Endpoint; build?: string; onDisk: boolean };
 	// The daemon a shutdown request went to: its closing the connection is
 	// its agreement.
 	private shuttingDown?: Endpoint;
@@ -179,7 +179,7 @@ export class DaemonLink {
 			return;
 		}
 		if (id !== this.attempt) return;
-		const inPlace = await this.deps.daemonInPlace(endpoint).catch((e) => {
+		const onDisk = await this.deps.daemonOnDisk(endpoint).catch((e) => {
 			// Without an answer the daemon is left as it is.
 			console.warn(`daemon executable unknown: ${e instanceof Error ? e.message : String(e)}`);
 			return true;
@@ -193,7 +193,7 @@ export class DaemonLink {
 		const on = this.host.handlers(() => conn);
 		try {
 			conn = this.deps.connect(endpoint, {
-				ready: current((list, build) => this.onReady(conn, endpoint, inPlace, list, build)),
+				ready: current((list, build) => this.onReady(conn, endpoint, onDisk, list, build)),
 				sessions: current(on.sessions),
 				replay: current(on.replay),
 				live: current(on.live),
@@ -219,22 +219,22 @@ export class DaemonLink {
 		}, READY_TIMEOUT_MS);
 	}
 
-	private onReady(conn: ConnectionLike, endpoint: Endpoint, inPlace: boolean, list: SessionInfo[], build: string | undefined): void {
+	private onReady(conn: ConnectionLike, endpoint: Endpoint, onDisk: boolean, list: SessionInfo[], build: string | undefined): void {
 		this.clearTimers();
 		this.failures = 0;
 		this.startTried = false;
 		this.readyConn = conn;
-		this.daemon = { endpoint, build, inPlace };
+		this.daemon = { endpoint, build, onDisk };
 		this.host.ready(conn, list);
-		this.checkDaemon(build, inPlace);
+		this.checkDaemon(build, onDisk);
 	}
 
-	// Acts on whether the daemon that answered, of the given build, is the
-	// vaquitad this app ships.
-	private checkDaemon(build: string | undefined, inPlace: boolean): void {
+	// Acts on whether the daemon that answered, of the given build and with or
+	// without its executable, is the vaquitad this app ships.
+	private checkDaemon(build: string | undefined, onDisk: boolean): void {
 		const app = this.appBuild ?? null;
 		const running = this.host.running();
-		switch (updateAction(app, build, running, this.autoRestarted, inPlace)) {
+		switch (updateAction(app, build, running, this.autoRestarted, onDisk)) {
 			case 'none':
 				this.restarted = undefined;
 				if (this.state.update) this.set({ update: undefined });
@@ -253,10 +253,10 @@ export class DaemonLink {
 	private offer(): void {
 		const r = this.restarted;
 		const note = r && (r.error === undefined ? 'still running after a restart' : `restart failed: ${r.error}`);
-		const away = this.daemon?.inPlace === false;
+		const deleted = this.daemon?.onDisk === false;
 		this.set({
 			status: 'connected',
-			update: { daemon: this.daemon?.build, app: this.appBuild!, ...(note && { note }), ...(away && { away }) },
+			update: { daemon: this.daemon?.build, app: this.appBuild!, ...(note && { note }), ...(deleted && { deleted }) },
 		});
 	}
 

@@ -41,10 +41,10 @@ describe('SessionManager daemon update', () => {
 		t.m.stop();
 	});
 
-	it('replaces a daemon of its own build that runs from a replaced app', async () => {
+	it('replaces a daemon of its own build whose executable is gone', async () => {
 		const asked: number[] = [];
 		const t = await app([], '0.2.0', {
-			daemonInPlace: async (e) => {
+			daemonOnDisk: async (e) => {
 				asked.push(e.pid);
 				return asked.length > 1;
 			},
@@ -61,17 +61,17 @@ describe('SessionManager daemon update', () => {
 		t.m.stop();
 	});
 
-	it('offers to replace one from a replaced app while sessions run, saying why', async () => {
-		const t = await app([info(1)], '0.2.0', { daemonInPlace: async () => false });
+	it('offers to replace one whose executable is gone while sessions run, saying why', async () => {
+		const t = await app([info(1)], '0.2.0', { daemonOnDisk: async () => false });
 		expect(t.conns[0].shutdowns).toEqual([]);
-		expect(t.state()).toMatchObject({ status: 'connected', update: { daemon: '0.2.0', app: '0.2.0', away: true } });
+		expect(t.state()).toMatchObject({ status: 'connected', update: { daemon: '0.2.0', app: '0.2.0', deleted: true } });
 		t.m.stop();
 	});
 
 	it('leaves the daemon alone when it cannot tell where it runs from', async () => {
 		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		const t = await app([], '0.2.0', {
-			daemonInPlace: async () => {
+			daemonOnDisk: async () => {
 				throw new Error('no such process');
 			},
 		});

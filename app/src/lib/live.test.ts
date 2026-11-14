@@ -50,7 +50,7 @@ function client() {
 		startDaemon: async () => {},
 		// As a dev run, which leaves the dev daemon alone.
 		appBuild: async () => null,
-		daemonInPlace: async () => true,
+		daemonOnDisk: async () => true,
 		checkRestart: async () => {},
 		restartDaemon: async () => {},
 		connect: (endpoint, h) => {
