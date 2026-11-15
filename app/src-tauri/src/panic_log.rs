@@ -1,8 +1,7 @@
-//! A release build aborts on a panic and its binary carries no symbols, so a
-//! crash report shows only addresses. The panic's message and location
-//! (`file.rs:line:col`, kept even in a stripped binary) are appended to
-//! `app-panic.log` in the vaquita home, beside the daemon's log, before the
-//! default hook runs and the process aborts.
+//! A release binary carries no symbols, so a crash report shows only
+//! addresses. Each panic's message and location (`file.rs:line:col`, kept even
+//! in a stripped binary) are appended to `app-panic.log` in the vaquita home,
+//! beside the daemon's log, before the default hook runs.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -11,15 +10,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::home;
 
-pub fn install() {
+/// version is the app's, which a release sets from its tag; the crate's own
+/// version stays at 0.1.0.
+pub fn install(version: String) {
     let default = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        write(&home::home().join("app-panic.log"), &line(info));
+        write(&home::home().join("app-panic.log"), &line(&version, info));
         default(info);
     }));
 }
 
-fn line(info: &std::panic::PanicHookInfo) -> String {
+fn line(version: &str, info: &std::panic::PanicHookInfo) -> String {
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let thread = std::thread::current().name().unwrap_or("unnamed").to_string();
     let message = info
@@ -29,7 +30,7 @@ fn line(info: &std::panic::PanicHookInfo) -> String {
         .or_else(|| info.payload().downcast_ref::<String>().cloned())
         .unwrap_or_else(|| "(no message)".to_string());
     let location = info.location().map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column())).unwrap_or_default();
-    format!("{secs} vaquita {} thread {thread} at {location}: {message}\n", env!("CARGO_PKG_VERSION"))
+    format!("{secs} vaquita {version} thread {thread} at {location}: {message}\n")
 }
 
 // Best effort: a hook that failed here would hide the panic it records.
@@ -57,10 +58,11 @@ mod tests {
         let got = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
         let seen = got.clone();
         let previous = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| *seen.lock().unwrap() = line(info)));
+        std::panic::set_hook(Box::new(move |info| *seen.lock().unwrap() = line("9.8.7", info)));
         let _ = std::panic::catch_unwind(|| panic!("boom {}", 7));
         std::panic::set_hook(previous);
         let got = got.lock().unwrap().clone();
+        assert!(got.contains(" vaquita 9.8.7 thread "), "{got}");
         assert!(got.contains("panic_log.rs:"), "{got}");
         assert!(got.ends_with(": boom 7\n"), "{got}");
     }

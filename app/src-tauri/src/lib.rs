@@ -176,7 +176,8 @@ fn start_and_wait() -> Result<(), String> {
 }
 
 pub fn run() {
-    panic_log::install();
+    let context = tauri::generate_context!();
+    panic_log::install(context.package_info().version.to_string());
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -220,7 +221,7 @@ pub fn run() {
             update::check_app_update,
             update::install_app_update
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }
 
