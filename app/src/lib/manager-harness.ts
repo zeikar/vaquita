@@ -70,6 +70,7 @@ export class FakeConnection implements ConnectionLike {
 class FakeView {
 	size: Size | undefined;
 	disposed = false;
+	focuses = 0;
 	constructor(
 		readonly term: Terminal,
 		readonly core: SessionCore,
@@ -80,6 +81,12 @@ class FakeView {
 	dispose(): void {
 		this.disposed = true;
 	}
+	// What the app's Tabs store asks of a view beside the manager.
+	focus(): void {
+		this.focuses++;
+	}
+	refit(): void {}
+	sendInput(): void {}
 }
 
 export const ep: Endpoint = { url: 'ws://127.0.0.1:1/ws', token: 't', pid: 1 };
