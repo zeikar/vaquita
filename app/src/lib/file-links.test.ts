@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activateUri, fileUrlToPath, findPaths, openPath, resolvePath, type Invoker } from './file-links';
+import { activateUri, fileUrlToPath, gateTarget, findPaths, openPath, resolvePath, type Invoker } from './file-links';
 
 describe('fileUrlToPath', () => {
 	it('splits host and path', () => {
@@ -20,6 +20,22 @@ describe('fileUrlToPath', () => {
 	it('refuses other shapes', () => {
 		expect(fileUrlToPath('file://host')).toBeUndefined();
 		expect(fileUrlToPath('https://x')).toBeUndefined();
+	});
+});
+
+describe('gateTarget', () => {
+	it('gives a plain path or a ~ path as itself with no host', () => {
+		expect(gateTarget('/tmp/a.ts')).toEqual({ path: '/tmp/a.ts', host: '' });
+		expect(gateTarget('~')).toEqual({ path: '~', host: '' });
+		expect(gateTarget('~/a.ts')).toEqual({ path: '~/a.ts', host: '' });
+	});
+
+	it('decodes a file URL into its path and host', () => {
+		expect(gateTarget('file://localhost/tmp/a%20b.txt')).toEqual({ path: '/tmp/a b.txt', host: 'localhost' });
+	});
+
+	it('gives nothing for a web URL', () => {
+		expect(gateTarget('https://example.com')).toBeUndefined();
 	});
 });
 

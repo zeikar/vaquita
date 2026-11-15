@@ -173,6 +173,14 @@ export async function openPath(
 	}
 }
 
+// What open_path is asked with for a link's text, or undefined when the text is
+// no file (a web URL). The existence check and the click share it, so the
+// check answers about the very path a click would open.
+export function gateTarget(text: string): { path: string; host: string } | undefined {
+	if (text.startsWith('/') || text === '~' || text.startsWith('~/')) return { path: text, host: '' };
+	return fileUrlToPath(text);
+}
+
 // The only place that decides whether a click on terminal text opens anything.
 export function activateUri(
 	e: MouseEvent,
@@ -184,13 +192,10 @@ export function activateUri(
 ): void {
 	if (!e.metaKey) return;
 	const [uri, fallback] = typeof text === 'string' ? [text, undefined] : text;
-	if (uri.startsWith('/') || uri === '~' || uri.startsWith('~/')) {
-		void openPath(uri, '', report, onView, invoker, fallback);
-		return;
-	}
-	const file = fileUrlToPath(uri);
-	if (file) {
-		void openPath(file.path, file.host, report, onView, invoker);
+	const target = gateTarget(uri);
+	if (target) {
+		// The fallback is another path on the clicked row; a file URL has none.
+		void openPath(target.path, target.host, report, onView, invoker, uri.startsWith('file:') ? undefined : fallback);
 		return;
 	}
 	openExternal(uri, (err) => report(`open ${uri}: ${errText(err)}`), opener);
