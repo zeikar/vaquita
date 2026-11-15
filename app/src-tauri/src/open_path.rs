@@ -12,17 +12,23 @@
 //! that is a convenience verdict, not a danger. Everything else opens with its
 //! default app, but for the images, audio and video that the webview shows
 //! itself. The lists are all the guard knows.
+//!
+//! `paths_exist` asks, for the webview's path links, whether a path is there, by
+//! the same rules for `~` and host, so a link underlines only for a path a click
+//! can reach. It decides the underline and nothing about opening: the gate above
+//! still judges every click.
 
 use std::ffi::{CStr, CString};
 use std::fs::Metadata;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use objc2::rc::autoreleasepool;
 use objc2_app_kit::NSWorkspace;
 use objc2_foundation::{NSBundle, NSString, NSURL};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::files::{self, Kind};
 
@@ -194,18 +200,20 @@ fn judge(canonical: &Path, meta: &Metadata, handler: &dyn Fn(&Path) -> Option<St
     }
 }
 
-pub(crate) fn io_error(e: std::io::Error) -> String {
-    match e.kind() {
-        // A path that runs through a file (a.txt/b) names nothing either, and the
-        // webview takes this word as a miss.
-        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => "no such file".to_string(),
-        _ => e.to_string(),
-    }
+/// Whether an error says there is nothing at the path. A path that runs through
+/// a file (a.txt/b) names nothing either.
+fn is_missing(kind: std::io::ErrorKind) -> bool {
+    matches!(kind, std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory)
 }
 
-/// The canonical path a file URL or a path in the output names, and what a
-/// click does with it. No error names the path: the webview adds it.
-pub(crate) fn resolve(path: &str, host: &str, home: &Path, handler: &dyn Fn(&Path) -> Option<String>) -> Result<(PathBuf, Action), String> {
+pub(crate) fn io_error(e: std::io::Error) -> String {
+    // The webview takes this word as a miss.
+    if is_missing(e.kind()) { "no such file".to_string() } else { e.to_string() }
+}
+
+/// The absolute path a file URL or a path in the output names, for this Mac.
+/// Shared by resolve and exists, so what one refuses the other does too.
+fn locate(path: &str, host: &str, home: &Path) -> Result<PathBuf, String> {
     if !is_local_host(host) {
         return Err(format!("not this Mac: {host}"));
     }
@@ -213,6 +221,13 @@ pub(crate) fn resolve(path: &str, host: &str, home: &Path, handler: &dyn Fn(&Pat
     if !path.is_absolute() {
         return Err("not an absolute path".to_string());
     }
+    Ok(path)
+}
+
+/// The canonical path a file URL or a path in the output names, and what a
+/// click does with it. No error names the path: the webview adds it.
+pub(crate) fn resolve(path: &str, host: &str, home: &Path, handler: &dyn Fn(&Path) -> Option<String>) -> Result<(PathBuf, Action), String> {
+    let path = locate(path, host, home)?;
     let canonical = std::fs::canonicalize(&path).map_err(io_error)?;
     let meta = std::fs::metadata(&canonical).map_err(io_error)?;
     let kind = files::kind_of(&canonical, &meta);
@@ -238,6 +253,71 @@ pub(crate) fn resolve(path: &str, host: &str, home: &Path, handler: &dyn Fn(&Pat
         action => action,
     };
     Ok((canonical, action))
+}
+
+/// Whether the path is there: None when that cannot be told (no permission, a
+/// loop). A stat that follows symlinks, so a dangling one is missing, as
+/// open_path says of it; a path locate refuses is missing, as open_path never
+/// opens it.
+fn exists(path: &str, host: &str, home: &Path) -> Option<bool> {
+    let Ok(path) = locate(path, host, home) else { return Some(false) };
+    match std::fs::metadata(&path) {
+        Ok(_) => Some(true),
+        Err(e) if is_missing(e.kind()) => Some(false),
+        Err(_) => None,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PathQuery {
+    path: String,
+    host: String,
+}
+
+// A batch runs on a blocking thread of the runtime's pool, which every command
+// shares, and a stat on a dead mount can hold it long after the webview stopped
+// waiting. So only a few batches run at once, and a slot comes back when the
+// stats end, not when the caller gives up.
+const BATCHES: usize = 4;
+static SLOTS: Slots = Slots::new(BATCHES);
+
+struct Slots {
+    taken: AtomicUsize,
+    cap: usize,
+}
+
+struct Slot<'a>(&'a Slots);
+
+impl Slots {
+    const fn new(cap: usize) -> Self {
+        Slots { taken: AtomicUsize::new(0), cap }
+    }
+
+    /// A slot, or None at once when all are taken: nothing waits.
+    fn take(&self) -> Option<Slot<'_>> {
+        self.taken.try_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < self.cap).then_some(n + 1)).ok()?;
+        Some(Slot(self))
+    }
+}
+
+impl Drop for Slot<'_> {
+    fn drop(&mut self) {
+        self.0.taken.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+// One answer per path, in order: true, false, or null when unknown. With no
+// slot free every answer is null and no thread is spawned.
+#[tauri::command]
+pub async fn paths_exist(paths: Vec<PathQuery>) -> Result<Vec<Option<bool>>, String> {
+    let Some(slot) = SLOTS.take() else { return Ok(vec![None; paths.len()]) };
+    let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _slot = slot;
+        paths.iter().map(|q| exists(&q.path, &q.host, Path::new(&home))).collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 // Async, with the work on its own thread: canonicalize can hang on a dead
@@ -328,6 +408,67 @@ pub(crate) mod tests {
         assert_eq!(serde_json::to_string(&revealed("w")).unwrap(), r#"{"action":"revealed","why":"w"}"#);
         let view = Action::View { path: PathBuf::from("/tmp/repo/a.md"), kind: Kind::Markdown };
         assert_eq!(serde_json::to_string(&view).unwrap(), r#"{"action":"view","path":"/tmp/repo/a.md"}"#);
+    }
+
+    #[test]
+    fn the_webview_asks_for_paths_and_gets_three_answers() {
+        let q: PathQuery = serde_json::from_str(r#"{"path":"/tmp/repo/a.md","host":""}"#).unwrap();
+        assert_eq!((q.path.as_str(), q.host.as_str()), ("/tmp/repo/a.md", ""));
+        assert_eq!(serde_json::to_string(&[Some(true), Some(false), None]).unwrap(), "[true,false,null]");
+    }
+
+    #[test]
+    fn a_file_and_a_folder_exist_and_a_missing_name_does_not() {
+        let d = dir("exists");
+        let f = file(&d, "x.txt", 0o644);
+        let home = Path::new("/nonexistent");
+        let ask = |p: &Path| exists(p.to_str().unwrap(), "", home);
+        assert_eq!(ask(&f), Some(true));
+        assert_eq!(ask(&d), Some(true));
+        assert_eq!(ask(&d.join("missing.txt")), Some(false));
+        assert_eq!(ask(&f.join("y.txt")), Some(false));
+        symlink(&f, d.join("link")).unwrap();
+        symlink(d.join("gone"), d.join("dangling")).unwrap();
+        assert_eq!(ask(&d.join("link")), Some(true));
+        assert_eq!(ask(&d.join("dangling")), Some(false));
+    }
+
+    #[test]
+    fn exists_expands_home() {
+        let d = dir("exists-home");
+        file(&d, "x.txt", 0o644);
+        assert_eq!(exists("~/x.txt", "", &d), Some(true));
+        assert_eq!(exists("~/y.txt", "", &d), Some(false));
+    }
+
+    #[test]
+    fn exists_follows_the_gates_host_and_shape_rules() {
+        let f = file(&dir("exists-host"), "x.txt", 0o644);
+        let p = f.to_str().unwrap();
+        let home = Path::new("/nonexistent");
+        assert_eq!(exists(p, "localhost", home), Some(true));
+        assert_eq!(exists(p, &hostname().unwrap(), home), Some(true));
+        assert_eq!(exists(p, "other.example", home), Some(false));
+        assert_eq!(exists("rel/x.txt", "", home), Some(false));
+    }
+
+    #[test]
+    fn exists_is_not_known_when_the_stat_is_refused() {
+        let d = dir("exists-denied");
+        let f = file(&d, "x.txt", 0o644);
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let answer = exists(f.to_str().unwrap(), "", Path::new("/nonexistent"));
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(answer, None);
+    }
+
+    #[test]
+    fn only_so_many_batches_run_at_once() {
+        let slots = Slots::new(4);
+        let mut taken: Vec<_> = (0..4).map(|_| slots.take().unwrap()).collect();
+        assert!(slots.take().is_none());
+        drop(taken.pop());
+        assert!(slots.take().is_some());
     }
 
     #[test]

@@ -208,6 +208,7 @@ pub fn run() {
             notify::notify,
             notify::take_notification_click,
             open_path::open_path,
+            open_path::paths_exist,
             files::view_path,
             files::view_image,
             files::read_text,
