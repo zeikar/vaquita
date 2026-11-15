@@ -4,13 +4,11 @@
 	import AddRepo from './lib/AddRepo.svelte';
 	import { setApp } from './lib/app-context';
 	import AppWelcome from './lib/AppWelcome.svelte';
-	import { tabFile } from './lib/changes';
 	import { DaemonConnection } from './lib/connection';
 	import { appBuild, checkRestart, daemonOnDisk, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
-	import { clampPanelWidth, PANEL_DEFAULT_WIDTH } from './lib/file-panel';
 	import { watchFileDrop } from './lib/file-drop';
 	import FilePane from './lib/FilePane.svelte';
-	import FilesPanel from './lib/FilesPanel.svelte';
+	import FilesAside from './lib/FilesAside.svelte';
 	import Icon from './lib/Icon.svelte';
 	import { holdLayout } from './lib/layout-hold';
 	import { Layout } from './lib/layout.svelte';
@@ -162,36 +160,7 @@
 	<!-- Unmounted, not hidden, while it is off, so nothing of the tree or the
 	     changes runs and no folder is watched. -->
 	{#if layout.panelShown}
-		<aside class="files">
-			<FilesPanel
-				root={tabs.root}
-				cwd={tabs.selectedRow?.info.cwd}
-				home={startup.home}
-				connected={$manager.status === 'connected'}
-				creating={$manager.creating}
-				sessions={$manager.sessions.map((r) => r.info)}
-				repos={$manager.repos}
-				highlight={tabs.active === undefined || tabs.active === WELCOME || isSessionTab(tabs.active) ? undefined : tabFile(tabs.active)}
-				onopen={tabs.openFromTree}
-				onopendiff={tabs.openDiff}
-				onaddrepo={(f) => manager.addRepo(f)}
-				onresume={(cwd, cmd) => void manager.create(cwd, cmd, '')}
-				onselect={tabs.selectSession}
-				onreopen={(sid) => manager.reopen(sid)}
-				onleave={tabs.refocus}
-				report={(m) => manager.report(m)}
-			/>
-			<SidebarEdge
-				side="left"
-				clamp={clampPanelWidth}
-				defaultWidth={PANEL_DEFAULT_WIDTH}
-				label="Resize files panel"
-				width={layout.panelWidth}
-				onstart={() => holdLayout(true)}
-				onresize={(w) => (layout.panelWidth = w)}
-				onend={layout.panelResized}
-			/>
-		</aside>
+		<FilesAside />
 	{/if}
 	<Notices />
 	<StatusBar />
