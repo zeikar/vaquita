@@ -1,6 +1,4 @@
 <script lang="ts">
-	import { getVersion } from '@tauri-apps/api/app';
-	import { homeDir } from '@tauri-apps/api/path';
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import type { Terminal } from '@xterm/xterm';
@@ -9,11 +7,11 @@
 	import { setApp } from './lib/app-context';
 	import AppUpdateBanner from './lib/AppUpdateBanner.svelte';
 	import AppWelcome from './lib/AppWelcome.svelte';
-	import { AppUpdater, releaseUrl } from './lib/app-update';
+	import { releaseUrl } from './lib/app-update';
 	import { tabFile } from './lib/changes';
 	import { DaemonConnection } from './lib/connection';
 	import { runningCount } from './lib/daemon-update';
-	import { appBuild, checkAppUpdate, checkRestart, daemonOnDisk, installAppUpdate, onUpdateCheckAsked, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
+	import { appBuild, checkRestart, daemonOnDisk, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
 	import { clampPanelWidth, PANEL_DEFAULT_WIDTH } from './lib/file-panel';
 	import FilePane from './lib/FilePane.svelte';
 	import FilesPanel from './lib/FilesPanel.svelte';
@@ -37,6 +35,7 @@
 	import { Tabs } from './lib/tabs.svelte';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
+	import { Startup } from './lib/startup.svelte';
 	import { isTauri } from './lib/tauri';
 	import { createTauriNotifier } from './lib/tauri-notify';
 	import { createTerminal, TermView } from './lib/term-view';
@@ -63,19 +62,11 @@
 	const tabs: Tabs<Terminal, TermView> = new Tabs({ manager });
 	onDestroy(() => tabs.stop());
 	const layout = new Layout(tabs);
-	setApp({ manager, tabs, layout });
-
-	// The install ends in an exit, which no close request precedes. Editing is
-	// frozen before the question and until the install fails or is declined, so
-	// that nothing typed meanwhile is lost to the exit.
-	let updating = $state(false);
-	async function installUpdate(): Promise<void> {
-		if (updating) return;
-		updating = true;
-		if (await tabs.mayLoseAll('Update and relaunch?', 'Update')) await appUpdater.install();
-		// A successful install leaves the app on its way out, still installing.
-		updating = $appUpdater.installing;
-	}
+	const startup = new Startup({ manager, tabs });
+	onDestroy(() => startup.stop());
+	setApp({ manager, tabs, layout, startup });
+	// For the notices' $appUpdater.
+	const appUpdater = startup.updater;
 
 	// Every way of closing the window but ⌘Q comes here: its close button, ⌘W
 	// and the menu. With a listener, Tauri leaves the closing to it.
@@ -102,17 +93,6 @@
 	// Closed for this app run: the restart can wait, and the notice covers the terminal.
 	let daemonNoticeClosed = $state(false);
 
-	const appUpdater = new AppUpdater({
-		check: checkAppUpdate,
-		install: installAppUpdate,
-		warn: (m) => console.warn(m),
-		report: (m, tone) => manager.report(m, tone),
-	});
-	appUpdater.start();
-	onDestroy(() => appUpdater.stop());
-	const unlistenCheck = onUpdateCheckAsked(() => void appUpdater.checkNow());
-	unlistenCheck.catch((e) => manager.report(`Check for Updates unavailable: ${e instanceof Error ? e.message : String(e)}`));
-	onDestroy(() => void unlistenCheck.then((f) => f(), () => {}));
 	const unlistenTabs = onTabAsked((a) => {
 		switch (a) {
 			case 'close':
@@ -204,24 +184,6 @@
 		unlisten.catch((e) => manager.report(`file drop unavailable: ${e instanceof Error ? e.message : String(e)}`));
 		onDestroy(() => void unlisten.then((f) => f(), () => {}));
 	}
-
-	// Rows show paths under it with ~; in a plain browser it stays unknown and
-	// paths absolute, as a guess could show another user's folder as home.
-	let home = $state<string>();
-	if (isTauri()) {
-		homeDir().then(
-			(h) => (home = h),
-			(e) => manager.report(`home folder unavailable: ${e instanceof Error ? e.message : String(e)}`),
-		);
-	}
-	// For the app welcome's corner; unknown in a plain browser, as home is.
-	let version = $state<string>();
-	if (isTauri()) {
-		getVersion().then(
-			(v) => (version = v),
-			(e) => manager.report(`app version unavailable: ${e instanceof Error ? e.message : String(e)}`),
-		);
-	}
 </script>
 
 <svelte:window onkeydowncapture={shortcut} />
@@ -241,7 +203,7 @@
 			onselectrepo={(r) => (r === OTHER ? tabs.openOther() : tabs.openWelcome(r))}
 			onkill={(sid) => manager.kill(sid)}
 			repos={$manager.repos}
-			{home}
+			home={startup.home}
 			disabled={$manager.creating || $manager.status !== 'connected'}
 			onreopen={(sid) => manager.reopen(sid)}
 			ondismiss={(sid) => manager.dismiss(sid)}
@@ -297,7 +259,7 @@
 					<RepoWelcome
 						bind:this={tabs.repoWelcome}
 						{repo}
-						{home}
+						home={startup.home}
 						sessions={$manager.sessions.map((r) => r.info)}
 						repos={$manager.repos}
 						connected={$manager.status === 'connected'}
@@ -312,10 +274,10 @@
 				{/key}
 			{:else if tabs.active !== undefined && !isSessionTab(tabs.active)}
 				{@const path = tabs.active}
-				<FilePane bind:this={tabs.filePane} {path} repo={tabs.root} {home} readOnly={updating} onclose={() => void tabs.close([path])} onopenfile={(p) => tabs.openFromTree(p)} report={(m) => manager.report(m)} />
+				<FilePane bind:this={tabs.filePane} {path} repo={tabs.root} home={startup.home} readOnly={startup.updating} onclose={() => void tabs.close([path])} onopenfile={(p) => tabs.openFromTree(p)} report={(m) => manager.report(m)} />
 			{/if}
 			{#if tabs.group === undefined}
-				<AppWelcome bind:this={tabs.appWelcome} {version} addDisabled={$manager.status !== 'connected'} onaddrepo={() => void addRepo?.open()} onnewsession={tabs.newSession} />
+				<AppWelcome bind:this={tabs.appWelcome} version={startup.version} addDisabled={$manager.status !== 'connected'} onaddrepo={() => void addRepo?.open()} onnewsession={tabs.newSession} />
 			{/if}
 		</div>
 	</section>
@@ -326,7 +288,7 @@
 			<FilesPanel
 				root={tabs.root}
 				cwd={tabs.selectedRow?.info.cwd}
-				{home}
+				home={startup.home}
 				connected={$manager.status === 'connected'}
 				creating={$manager.creating}
 				sessions={$manager.sessions.map((r) => r.info)}
@@ -360,7 +322,7 @@
 				{version}
 				installing={$appUpdater.installing}
 				error={$appUpdater.error}
-				oninstall={() => void installUpdate()}
+				oninstall={() => void startup.install()}
 				ondismiss={() => appUpdater.dismiss()}
 				onnotes={() => openExternal(releaseUrl(version), (e) => manager.report(`opening the release notes failed: ${e instanceof Error ? e.message : String(e)}`))}
 			/>

@@ -2,6 +2,7 @@ import type { Terminal } from '@xterm/xterm';
 import { getContext, setContext } from 'svelte';
 import type { Layout } from './layout.svelte';
 import type { SessionManager } from './manager';
+import type { Startup } from './startup.svelte';
 import type { Tabs } from './tabs.svelte';
 import type { TermView } from './term-view';
 
@@ -13,6 +14,7 @@ export type AppContext = {
 	manager: SessionManager<Terminal, TermView>;
 	tabs: Tabs<Terminal, TermView>;
 	layout: Layout;
+	startup: Startup;
 };
 
 export function setApp(ctx: AppContext): void {
