@@ -2,6 +2,10 @@
 
 Each release's notes open with its section here.
 
+## 0.1.30
+
+- A file double-clicked in the files tree is kept in its tab every time; now and then it used to open as a second tab beside the preview.
+
 ## 0.1.29
 
 - With Codex 0.167 and later, a finished turn shows Codex's reply again in the sidebar and its notification, the "Implement this plan?" prompt shows as waiting for your input rather than done, and so does a question Codex asks in the middle of a turn.

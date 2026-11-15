@@ -8,7 +8,7 @@ import { LAST_CWD } from './NewSessionDialog.svelte';
 import type { SessionInfo } from './protocol';
 import { diffTab } from './changes';
 import { OTHER, TABS_KEY, WELCOME } from './tabs';
-import { Tabs, type TabDocuments } from './tabs.svelte';
+import { Tabs, type TabDocuments, type TabsDeps } from './tabs.svelte';
 
 fakeTimersAndStorage();
 
@@ -46,12 +46,12 @@ afterEach(() => {
 });
 
 // dirty is what isDirty answers; tell is what turns a document dirty for the store.
-async function make(list = [info(1), info(2)], dirty: string[] = [], selected?: number) {
+async function make(list = [info(1), info(2)], dirty: string[] = [], selected?: number, open?: TabsDeps<never, never>['open']) {
 	const t = await connected(list, selected);
 	const d = fakeDocuments(dirty);
 	const ask = vi.fn(async (_message: string, _okLabel: string) => false);
 	const closeWindow = vi.fn(async () => {});
-	const build = () => new Tabs({ manager: t.m, documents: d.docs, ask, closeWindow });
+	const build = () => new Tabs({ manager: t.m, documents: d.docs, ask, closeWindow, open });
 	let tabs: ReturnType<typeof build> | undefined;
 	cleanup = $effect.root(() => {
 		tabs = build();
@@ -320,6 +320,37 @@ describe('Tabs', () => {
 			expect(tabs.previews[repo]).toBeUndefined();
 			tabs.openFile(repo, b);
 			expect(tabs.groups[repo]).toEqual([a, b]);
+		});
+
+		// A double-click in the tree asks the gate three times: click, click, dblclick.
+		async function doubleClick(order: number[]) {
+			const asked: (() => void)[] = [];
+			const open: TabsDeps<never, never>['open'] = (path, _host, _report, onView) =>
+				new Promise<void>((done) => asked.push(() => (onView(path), done())));
+			const t = await make(undefined, [], undefined, open);
+			t.c.emit.repos([repo]);
+			t.tabs.group = repo;
+			t.tabs.openFile(repo, a);
+			t.tabs.openFromTree(b);
+			t.tabs.openFromTree(b);
+			t.tabs.openFromTree(b, true);
+			for (const i of order) {
+				asked[i]();
+				await vi.advanceTimersByTimeAsync(0);
+			}
+			return t.tabs;
+		}
+
+		it('keeps a file double-clicked in the tree, its preview replacing the last', async () => {
+			const tabs = await doubleClick([0, 1, 2]);
+			expect(tabs.groups[repo].filter((k) => !k.startsWith('session:'))).toEqual([b]);
+			expect(tabs.previews[repo]).toBeUndefined();
+		});
+
+		it("applies the tree's answers in the order asked, a late click undoing no double-click", async () => {
+			const tabs = await doubleClick([2, 0, 1]);
+			expect(tabs.groups[repo].filter((k) => !k.startsWith('session:'))).toEqual([b]);
+			expect(tabs.previews[repo]).toBeUndefined();
 		});
 
 		it('stores the order a drag left', async () => {

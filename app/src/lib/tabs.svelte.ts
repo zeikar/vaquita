@@ -26,6 +26,7 @@ export type TabsDeps<T extends ManagedTerm, V extends TabView> = {
 	documents?: TabDocuments;
 	ask?: (message: string, okLabel: string) => Promise<boolean>;
 	closeWindow?: () => Promise<void>;
+	open?: typeof openPath;
 };
 
 // The tabs of every group and what shows, outside any component, so that the
@@ -81,13 +82,17 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	private readonly documents: TabDocuments;
 	private readonly ask: (message: string, okLabel: string) => Promise<boolean>;
 	private readonly closeWindow: () => Promise<void>;
+	private readonly open: typeof openPath;
+	// The tree's opens not yet applied, which the next one waits for.
+	private treeOpens: Promise<void> = Promise.resolve();
 	private readonly stops: (() => void)[];
 	// What the selection and repo-list effects in the constructor last acted on.
 	private shownSid: number | undefined | null = null;
 	private knownRepos: string[] | undefined;
 
-	constructor({ manager, documents = appDocuments, ask = askUser, closeWindow = () => getCurrentWindow().close() }: TabsDeps<T, V>) {
+	constructor({ manager, documents = appDocuments, ask = askUser, closeWindow = () => getCurrentWindow().close(), open = openPath }: TabsDeps<T, V>) {
 		this.manager = manager;
+		this.open = open;
 		this.documents = documents;
 		this.ask = ask;
 		this.closeWindow = closeWindow;
@@ -362,10 +367,17 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// A file clicked in the tree goes through the gate a ⌘-click does, so what
 	// the app does not show in a tab is opened or revealed the same way. Its tab
 	// lands in the shown group, the tree's repo.
+	// A double-click asks three times (click, click, dblclick), and the answers
+	// apply in the order asked: a click answered last would not take back the
+	// double-click's keeping the tab.
 	openFromTree = (path: string, pin = false): void => {
 		const cwd = this.selectedRow?.info.cwd ?? this.root;
 		if (cwd === undefined) return;
-		void openPath(path, '', (m, tone) => this.manager.report(m, tone), (p) => this.openFile(cwd, p, pin));
+		let view: string | undefined;
+		const asked = this.open(path, '', (m, tone) => this.manager.report(m, tone), (p) => (view = p));
+		this.treeOpens = Promise.all([this.treeOpens, asked]).then(() => {
+			if (view !== undefined) this.openFile(cwd, view, pin);
+		});
 	};
 
 	// By path, not through an editor, so a tab that shows no editor saves too.
