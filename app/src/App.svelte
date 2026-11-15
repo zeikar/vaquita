@@ -11,9 +11,7 @@
 	import { clampPanelWidth, PANEL_DEFAULT_WIDTH } from './lib/file-panel';
 	import FilePane from './lib/FilePane.svelte';
 	import FilesPanel from './lib/FilesPanel.svelte';
-	import { onTabAsked } from './lib/files';
 	import Icon from './lib/Icon.svelte';
-	import { isNewSessionShortcut, isNextTabShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut, tabNumber } from './lib/keys';
 	import { holdLayout } from './lib/layout-hold';
 	import { Layout } from './lib/layout.svelte';
 	import { SessionManager } from './lib/manager';
@@ -30,6 +28,7 @@
 	import { Tabs } from './lib/tabs.svelte';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
+	import { watchMenu, windowShortcut } from './lib/shortcuts';
 	import { Startup } from './lib/startup.svelte';
 	import { isTauri } from './lib/tauri';
 	import { createTerminal, TermView } from './lib/term-view';
@@ -58,41 +57,11 @@
 	const startup = new Startup({ manager, tabs, useNotifier: (n) => (notifier = n) });
 	onDestroy(() => startup.stop());
 	setApp({ manager, tabs, layout, startup });
-
-	const unlistenTabs = onTabAsked((a) => {
-		switch (a) {
-			case 'close':
-				return tabs.closeActive();
-			case 'prev':
-				return tabs.step(-1);
-			case 'next':
-				return tabs.step(1);
-			case 'files':
-				return layout.togglePanel();
-		}
-	});
-	unlistenTabs.catch((e) => manager.report(`tab shortcuts unavailable: ${e instanceof Error ? e.message : String(e)}`));
-	onDestroy(() => void unlistenTabs.then((f) => f(), () => {}));
+	const shortcut = windowShortcut(tabs, layout);
+	onDestroy(watchMenu(tabs, layout, manager));
 
 	let aside = $state<HTMLElement>();
 	let addRepo = $state<ReturnType<typeof AddRepo>>();
-
-	// On the window in the capture phase, so it runs before xterm's handler on
-	// its textarea and the terminal never sees the key. ⌃Tab and ⌃⇧Tab are
-	// here and not in the menu, as AppKit would run its key-view loop on them;
-	// ⌥⌘← and ⌥⌘→ are here beside them. The menu has ⌘⇧[ and ⌘⇧].
-	function shortcut(e: KeyboardEvent) {
-		const n = tabNumber(e);
-		if (isNewSessionShortcut(e)) tabs.newSession();
-		else if (isSidebarShortcut(e)) layout.toggleSidebar();
-		else if (isPrevTabShortcut(e)) tabs.step(-1);
-		else if (isNextTabShortcut(e)) tabs.step(1);
-		else if (n !== undefined) tabs.showAt(n);
-		else if (isSaveShortcut(e)) tabs.save();
-		else return;
-		e.preventDefault();
-		e.stopPropagation();
-	}
 
 	// The OS file drop only exists inside Tauri. Paths dropped on the sidebar
 	// are added as repos; anywhere else they are typed into the selected session.
