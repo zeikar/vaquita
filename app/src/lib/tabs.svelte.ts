@@ -83,8 +83,9 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	private readonly ask: (message: string, okLabel: string) => Promise<boolean>;
 	private readonly closeWindow: () => Promise<void>;
 	private readonly open: typeof openPath;
-	// The tree's opens not yet applied, which the next one waits for.
-	private treeOpens: Promise<void> = Promise.resolve();
+	// The tree's opens not yet applied, by path: the next of the same path
+	// waits for them, any other path for none, as a gate can hang on a dead mount.
+	private readonly treeOpens = new Map<string, Promise<void>>();
 	private readonly stops: (() => void)[];
 	// What the selection and repo-list effects in the constructor last acted on.
 	private shownSid: number | undefined | null = null;
@@ -368,15 +369,19 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// the app does not show in a tab is opened or revealed the same way. Its tab
 	// lands in the shown group, the tree's repo.
 	// A double-click asks three times (click, click, dblclick), and the answers
-	// apply in the order asked: a click answered last would not take back the
-	// double-click's keeping the tab.
+	// for one path apply in the order asked: a click answered last would not
+	// take back the double-click's keeping the tab.
 	openFromTree = (path: string, pin = false): void => {
 		const cwd = this.selectedRow?.info.cwd ?? this.root;
 		if (cwd === undefined) return;
 		let view: string | undefined;
 		const asked = this.open(path, '', (m, tone) => this.manager.report(m, tone), (p) => (view = p));
-		this.treeOpens = Promise.all([this.treeOpens, asked]).then(() => {
+		const done = Promise.all([this.treeOpens.get(path), asked]).then(() => {
 			if (view !== undefined) this.openFile(cwd, view, pin);
+		});
+		this.treeOpens.set(path, done);
+		void done.then(() => {
+			if (this.treeOpens.get(path) === done) this.treeOpens.delete(path);
 		});
 	};
 

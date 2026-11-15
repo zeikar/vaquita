@@ -353,6 +353,20 @@ describe('Tabs', () => {
 			expect(tabs.previews[repo]).toBeUndefined();
 		});
 
+		it('opens another file while an earlier one still waits on the gate', async () => {
+			const asked = new Map<string, () => void>();
+			const open: TabsDeps<never, never>['open'] = (path, _host, _report, onView) =>
+				new Promise<void>((done) => asked.set(path, () => (onView(path), done())));
+			const t = await make(undefined, [], undefined, open);
+			t.c.emit.repos([repo]);
+			t.tabs.group = repo;
+			t.tabs.openFromTree(a, true);
+			t.tabs.openFromTree(b, true);
+			asked.get(b)!();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(t.tabs.active).toBe(b);
+		});
+
 		it('stores the order a drag left', async () => {
 			localStorage.setItem(TABS_KEY, JSON.stringify({ [repo]: [a, b] }));
 			const { tabs } = await make();
