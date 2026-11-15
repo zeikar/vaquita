@@ -2,6 +2,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { answer, connected, fakeTimersAndStorage, info } from './manager-harness';
 import { LAST_CWD } from './NewSessionDialog.svelte';
+import type { SessionInfo } from './protocol';
+import { diffTab } from './changes';
 import { OTHER, TABS_KEY, WELCOME } from './tabs';
 import { Tabs, type TabDocuments } from './tabs.svelte';
 
@@ -33,11 +35,22 @@ function fakeDocuments(dirty: string[] = []) {
 	return { docs, calls, tell, listeners };
 }
 
-async function make(list = [info(1), info(2)]) {
+// dirty is what isDirty answers; tell is what turns a document dirty for the store.
+async function make(list = [info(1), info(2)], dirty: string[] = []) {
 	const t = await connected(list);
-	const d = fakeDocuments();
-	const tabs = new Tabs({ manager: t.m, documents: d.docs });
-	return { ...t, ...d, tabs };
+	const d = fakeDocuments(dirty);
+	const ask = vi.fn(async (_message: string, _okLabel: string) => false);
+	const closeWindow = vi.fn(async () => {});
+	const tabs = new Tabs({ manager: t.m, documents: d.docs, ask, closeWindow });
+	return { ...t, ...d, tabs, ask, closeWindow };
+}
+
+const stored = () => JSON.parse(localStorage.getItem(TABS_KEY) ?? '{}');
+
+function deferred<T>() {
+	let resolve!: (v: T) => void;
+	const promise = new Promise<T>((res) => (resolve = res));
+	return { promise, resolve };
 }
 
 describe('Tabs', () => {
@@ -246,6 +259,199 @@ describe('Tabs', () => {
 			localStorage.removeItem(LAST_CWD);
 			tabs.newSession();
 			expect(tabs.dialogCwd).toBe('');
+		});
+	});
+
+	describe('opening', () => {
+		it('opens a preview, replaced by the next file, a dirty one pinned, each saved', async () => {
+			const c = `${repo}/c.md`;
+			const t = await make(undefined, [c]);
+			t.c.emit.repos([repo]);
+			t.tabs.openFile(repo, a);
+			expect(t.tabs.active).toBe(a);
+			expect(t.tabs.previews[repo]).toBe(a);
+			expect(stored()).toEqual({ [repo]: [a] });
+			t.tabs.openFile(repo, b);
+			expect(t.tabs.groups[repo]).toEqual([b]);
+			expect(t.calls.dropped).toEqual([a]);
+			expect(stored()).toEqual({ [repo]: [b] });
+			t.tabs.openFile(repo, c);
+			expect(t.tabs.groups[repo]).toEqual([b, c]);
+			expect(t.tabs.previews[repo]).toBe(b);
+			expect(stored()).toEqual({ [repo]: [b, c] });
+		});
+
+		it("opens a diff in the shown repo's group, and none with no repo shown", async () => {
+			const { tabs } = await make();
+			tabs.openDiff(a);
+			tabs.group = OTHER;
+			tabs.openDiff(a);
+			expect(tabs.groups).toEqual({});
+			expect(tabs.active).toBeUndefined();
+			tabs.group = repo;
+			tabs.openDiff(a);
+			expect(tabs.groups[repo]).toEqual([diffTab(a)]);
+			expect(tabs.active).toBe(diffTab(a));
+		});
+
+		it('keeps a pinned preview when the next file opens', async () => {
+			const { tabs, c } = await make();
+			c.emit.repos([repo]);
+			tabs.openFile(repo, a);
+			tabs.pin(a);
+			expect(tabs.previews[repo]).toBeUndefined();
+			tabs.openFile(repo, b);
+			expect(tabs.groups[repo]).toEqual([a, b]);
+		});
+
+		it('stores the order a drag left', async () => {
+			localStorage.setItem(TABS_KEY, JSON.stringify({ [repo]: [a, b] }));
+			const { tabs } = await make();
+			tabs.group = repo;
+			tabs.reorder([b, a]);
+			expect(tabs.groups[repo]).toEqual([b, a]);
+			expect(stored()).toEqual({ [repo]: [b, a] });
+		});
+
+		it('saves the shown tab by its path', async () => {
+			const { tabs, calls } = await make();
+			tabs.save();
+			tabs.active = a;
+			tabs.save();
+			expect(calls.saved).toEqual([a]);
+		});
+	});
+
+	describe('closing', () => {
+		const c3 = `${repo}/c.md`;
+
+		it('asks once for several unsaved files and, declined, closes nothing', async () => {
+			localStorage.setItem(TABS_KEY, JSON.stringify({ [repo]: [a, b, c3] }));
+			const t = await make(undefined, [a, b]);
+			t.tabs.group = repo;
+			await t.tabs.show(c3);
+			await t.tabs.show(a);
+			await t.tabs.close([a, b]);
+			expect(t.ask.mock.calls).toEqual([['2 files have unsaved changes. Close them?', 'Close']]);
+			expect(t.tabs.groups[repo]).toEqual([a, b, c3]);
+			expect(t.tabs.active).toBe(a);
+			expect(t.calls.dropped).toEqual([]);
+		});
+
+		it('drops the documents once accepted and shows the tab viewed before', async () => {
+			localStorage.setItem(TABS_KEY, JSON.stringify({ [repo]: [a, b, c3] }));
+			const t = await make(undefined, [a, b]);
+			t.ask.mockResolvedValue(true);
+			t.tabs.group = repo;
+			await t.tabs.show(c3);
+			await t.tabs.show(a);
+			await t.tabs.close([a, b]);
+			expect(t.calls.dropped).toEqual([a, b]);
+			expect(t.tabs.groups[repo]).toEqual([c3]);
+			expect(stored()).toEqual({ [repo]: [c3] });
+			expect(t.tabs.active).toBe(c3);
+		});
+
+		it('neither asks about nor drops a path another group still has', async () => {
+			localStorage.setItem(TABS_KEY, JSON.stringify({ [repo]: [a], [OTHER]: [a] }));
+			const t = await make(undefined, [a]);
+			t.tabs.group = repo;
+			await t.tabs.close([a]);
+			expect(t.ask).not.toHaveBeenCalled();
+			expect(t.calls.dropped).toEqual([]);
+			expect(t.tabs.groups).toEqual({ [OTHER]: [a] });
+		});
+
+		it('closes nothing when the tabs changed under the question so that an unasked edit would go', async () => {
+			localStorage.setItem(TABS_KEY, JSON.stringify({ [repo]: [a, b], [OTHER]: [b] }));
+			const t = await make(undefined, [a, b]);
+			const answer = deferred<boolean>();
+			t.ask.mockReturnValue(answer.promise);
+			t.tabs.group = repo;
+			const closing = t.tabs.close([a, b]);
+			expect(t.ask.mock.calls).toEqual([['a.md has unsaved changes. Close it?', 'Close']]);
+			t.tabs.groups = { [repo]: [a, b] };
+			answer.resolve(true);
+			await closing;
+			expect(t.calls.dropped).toEqual([]);
+			expect(t.tabs.groups).toEqual({ [repo]: [a, b] });
+			expect(t.state().report?.text).toBe('The tabs changed while asking; nothing was closed.');
+		});
+
+		it('asks once about working sessions and kills only those still the same', async () => {
+			const working = (sid: number, inc = 'i'): SessionInfo => ({ ...info(sid, inc), status: { state: 'working' } });
+			const t = await make([working(1), working(2), info(3)]);
+			const answer = deferred<boolean>();
+			t.ask.mockReturnValue(answer.promise);
+			const closing = t.tabs.close(['session:1', 'session:2', 'session:3']);
+			expect(t.ask).toHaveBeenCalledTimes(1);
+			expect(t.ask.mock.calls[0][1]).toBe('Kill');
+			t.c.emit.sessions([working(1), working(2, 'j'), info(3)]);
+			answer.resolve(true);
+			await closing;
+			expect(t.c.requests.filter((r) => r[0] === 'kill')).toEqual([['kill', 1], ['kill', 3]]);
+		});
+
+		it('kills nothing when the question about a working session is declined', async () => {
+			const t = await make([{ ...info(1), status: { state: 'input' } }]);
+			await t.tabs.close(['session:1']);
+			expect(t.ask).toHaveBeenCalledTimes(1);
+			expect(t.c.requests.filter((r) => r[0] === 'kill')).toEqual([]);
+		});
+
+		it('closes the dialog, else the shown tab, else a welcome for the last tab, else the window', async () => {
+			localStorage.setItem(TABS_KEY, JSON.stringify({ [repo]: [a, b] }));
+			const t = await make();
+			t.tabs.group = repo;
+			await t.tabs.show(b);
+			await t.tabs.show(a);
+			t.tabs.dialogOpen = true;
+			t.tabs.closeActive();
+			expect(t.tabs.dialogOpen).toBe(false);
+			expect(t.tabs.groups[repo]).toEqual([a, b]);
+			t.tabs.closeActive();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(t.tabs.groups[repo]).toEqual([b]);
+			expect(t.tabs.active).toBe(b);
+			t.tabs.active = WELCOME;
+			t.tabs.closeActive();
+			expect(t.tabs.active).toBe(b);
+			expect(t.closeWindow).not.toHaveBeenCalled();
+			t.tabs.group = undefined;
+			t.tabs.active = undefined;
+			t.tabs.closeActive();
+			expect(t.closeWindow).toHaveBeenCalledTimes(1);
+		});
+
+		it('reports a window that would not close', async () => {
+			const t = await make();
+			t.closeWindow.mockRejectedValue(new Error('no window'));
+			t.tabs.closeActive();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(t.state().report?.text).toBe('closing the window failed: no window');
+		});
+
+		it('asks before the app run ends only with something unsaved, counting the files', async () => {
+			const t = await make();
+			expect(await t.tabs.mayLoseAll('Close the window?', 'Close')).toBe(true);
+			expect(t.ask).not.toHaveBeenCalled();
+			t.tell(a, true);
+			expect(await t.tabs.mayLoseAll('Close the window?', 'Close')).toBe(false);
+			t.tell(b, true);
+			t.ask.mockResolvedValue(true);
+			expect(await t.tabs.mayLoseAll('Update and relaunch?', 'Update')).toBe(true);
+			expect(t.ask.mock.calls).toEqual([
+				['1 file has unsaved changes. Close the window?', 'Close'],
+				['2 files have unsaved changes. Update and relaunch?', 'Update'],
+			]);
+		});
+
+		it('keeps what a question that could not be asked was about, and reports it', async () => {
+			const t = await make();
+			t.ask.mockRejectedValue(new Error('no dialog'));
+			t.tell(a, true);
+			expect(await t.tabs.mayLoseAll('Close the window?', 'Close')).toBe(false);
+			expect(t.state().report?.text).toBe('asking about unsaved changes failed: no dialog');
 		});
 	});
 });

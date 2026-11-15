@@ -80,7 +80,7 @@
 
 	// The menu gives the focus back to what had it when it opened, which a file
 	// shown since may cover, so it is dropped (unmounting gives no focus back)
-	// once its tab is gone or another tab shows: showTab focuses what shows.
+	// once its tab is gone or another tab shows: Tabs.show focuses what shows.
 	$effect(() => {
 		if (menu && (!tabs.includes(menu.path) || active !== menu.shown)) menu = undefined;
 	});

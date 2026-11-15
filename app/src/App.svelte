@@ -9,13 +9,10 @@
 	import AppUpdateBanner from './lib/AppUpdateBanner.svelte';
 	import AppWelcome from './lib/AppWelcome.svelte';
 	import { AppUpdater, releaseUrl } from './lib/app-update';
-	import { ask } from './lib/ask';
-	import { diffTab, tabFile } from './lib/changes';
+	import { tabFile } from './lib/changes';
 	import { DaemonConnection } from './lib/connection';
 	import { runningCount } from './lib/daemon-update';
-	import { documents } from './lib/documents';
 	import { appBuild, checkAppUpdate, checkRestart, daemonOnDisk, installAppUpdate, onUpdateCheckAsked, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
-	import { openPath } from './lib/file-links';
 	import { clampPanelWidth, loadPanelWidth, PANEL_DEFAULT_WIDTH, PANEL_HIDDEN, PANEL_WIDTH } from './lib/file-panel';
 	import FilePane from './lib/FilePane.svelte';
 	import FilesPanel, { showView } from './lib/FilesPanel.svelte';
@@ -27,15 +24,15 @@
 	import { openExternal } from './lib/links';
 	import { SessionManager } from './lib/manager';
 	import NewSessionDialog from './lib/NewSessionDialog.svelte';
-	import { sessionTitle, type Notifier, type Target } from './lib/notify';
+	import type { Notifier, Target } from './lib/notify';
 	import RepoWelcome from './lib/RepoWelcome.svelte';
-	import { isSessionTab, needsAsk, reconcile, sessionTab, tabSid } from './lib/session-tabs';
+	import { isSessionTab, reconcile, sessionTab } from './lib/session-tabs';
 	import SessionList from './lib/SessionList.svelte';
 	import { loadWidth, SIDEBAR_HIDDEN, SIDEBAR_WIDTH } from './lib/sidebar';
 	import SidebarEdge from './lib/SidebarEdge.svelte';
 	import { load, save } from './lib/storage';
 	import TabBar from './lib/TabBar.svelte';
-	import { closeInGroup, fallback, fileName, groupKey, openFileTab, OTHER, prune, saveTabs, setOrder, touch, unpreview, WELCOME } from './lib/tabs';
+	import { groupKey, OTHER, prune, saveTabs, touch, WELCOME } from './lib/tabs';
 	import { Tabs } from './lib/tabs.svelte';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
@@ -58,7 +55,7 @@
 		connect: (endpoint, handlers) => new DaemonConnection(endpoint, handlers),
 		createTerminal: (cols, rows) => createTerminal(cols, rows),
 		createView: (term, core, cwd) =>
-			new TermView(term, core, (m, tone) => manager.report(m, tone), cwd, (path) => openFile(cwd, path), () => tabs.active !== undefined && isSessionTab(tabs.active)),
+			new TermView(term, core, (m, tone) => manager.report(m, tone), cwd, (path) => tabs.openFile(cwd, path), () => tabs.active !== undefined && isSessionTab(tabs.active)),
 		notifier: { show: (n) => notifier.show(n) },
 	});
 	// Typed, as the manager's views read it: inferred, its type and the
@@ -171,128 +168,6 @@
 		if (added !== undefined) untrack(() => tabs.openWelcome(added));
 	});
 
-	// A ⌘-clicked file in a session's terminal; cwd is its starting folder.
-	// Unpinned, it opens as the group's preview. A dirty document opens pinned:
-	// documents are shared by path across groups, so it may hold another
-	// group's edits, and a preview, which the next file replaces, holds none.
-	function openFile(cwd: string, path: string, pin = false): void {
-		const r = openFileTab(tabs.groups, tabs.previews, groupKey(cwd, $manager.repos), path, pin || documents.isDirty(path));
-		tabs.groups = r.groups;
-		tabs.previews = r.previews;
-		if (r.drop !== undefined) documents.dropDocument(r.drop);
-		saveTabs(tabs.groups);
-		void tabs.show(path);
-	}
-
-	// A file's diff against HEAD, as a tab of the shown group: the repo the
-	// changes were listed for, which Other is not.
-	function openDiff(path: string, pin = false): void {
-		if (tabs.group === undefined || tabs.group === OTHER) return;
-		const r = openFileTab(tabs.groups, tabs.previews, tabs.group, diffTab(path), pin);
-		tabs.groups = r.groups;
-		tabs.previews = r.previews;
-		// The preview it took the place of, a file tab's maybe.
-		if (r.drop !== undefined) documents.dropDocument(r.drop);
-		saveTabs(tabs.groups);
-		void tabs.show(diffTab(path));
-	}
-
-	// The order a drag on the bar left the group's tabs in, kept across restarts.
-	function reorderTabs(order: string[]): void {
-		if (tabs.group === undefined) return;
-		tabs.groups = setOrder(tabs.groups, tabs.group, order);
-		saveTabs(tabs.groups);
-	}
-
-	// A file clicked in the tree goes through the gate a ⌘-click does, so what
-	// the app does not show in a tab is opened or revealed the same way. Its tab
-	// lands in the shown group, the tree's repo.
-	function openFromTree(path: string, pin = false): void {
-		const cwd = tabs.selectedRow?.info.cwd ?? tabs.root;
-		if (cwd === undefined) return;
-		void openPath(path, '', (m, tone) => manager.report(m, tone), (p) => openFile(cwd, p, pin));
-	}
-
-	// Asked before unsaved edits or a working session are lost; false when the
-	// user keeps them or the question could not be asked.
-	async function mayLose(message: string, okLabel: string, about = 'unsaved changes'): Promise<boolean> {
-		try {
-			return await ask(message, okLabel);
-		} catch (e) {
-			manager.report(`asking about ${about} failed: ${e instanceof Error ? e.message : String(e)}`);
-			return false;
-		}
-	}
-
-	// File keys and session keys: the files close, the sessions are killed.
-	// Falling back from a killed session's tab is the fallback effect's, as
-	// the session leaves the list only later.
-	async function closeTabs(keys: string[]): Promise<void> {
-		const files = keys.filter((k) => !isSessionTab(k));
-		if (files.length > 0) await closeFileTabs(files);
-		const sids = keys.flatMap((k) => tabSid(k) ?? []);
-		if (sids.length > 0) await killSessions(sids);
-	}
-
-	// An agent mid-turn or waiting on a permission is asked about once; the
-	// rest are killed at once, an exited one's record going with its kill.
-	// Only the sessions that are still the same ones after the question: a sid
-	// with another inc is another session, from a restarted daemon.
-	async function killSessions(sids: number[]): Promise<void> {
-		const rows = $manager.sessions.filter((r) => sids.includes(r.info.sid));
-		// Session closes come one at a time, so the question names one session.
-		const working = rows.find((r) => needsAsk(r.info));
-		if (working && !(await mayLose(`${sessionTitle(working.info)} is working. Kill it?`, 'Kill', 'killing a working session'))) return;
-		for (const r of rows) if ($manager.sessions.some((n) => n.info.sid === r.info.sid && n.info.inc === r.info.inc)) manager.kill(r.info.sid);
-	}
-
-	// One question for all the unsaved among them; declined, nothing closes,
-	// so the bar is not left half-changed under the answer.
-	// Only the documents that go are asked about: edits in a path another group
-	// still has stay reachable from its tab there.
-	async function closeFileTabs(paths: string[]): Promise<void> {
-		const key = tabs.group;
-		if (key === undefined) return;
-		const unsaved = closeInGroup(tabs.groups, tabs.previews, key, paths).drop.filter((p) => documents.isDirty(p));
-		if (unsaved.length > 0) {
-			const question =
-				unsaved.length === 1
-					? `${fileName(unsaved[0])} has unsaved changes. Close it?`
-					: `${unsaved.length} files have unsaved changes. Close them?`;
-			if (!(await mayLose(question, 'Close'))) return;
-		}
-		// Again on the tabs as they are after the question, which a repo list
-		// from the daemon may have moved; closing stops if that left an unsaved
-		// document going that was not asked about, its tabs kept.
-		const r = closeInGroup(tabs.groups, tabs.previews, key, paths);
-		if (r.drop.some((p) => documents.isDirty(p) && !unsaved.includes(p))) {
-			manager.report('The tabs changed while asking; nothing was closed.');
-			return;
-		}
-		for (const p of r.drop) documents.dropDocument(p);
-		tabs.groups = r.groups;
-		tabs.previews = r.previews;
-		saveTabs(tabs.groups);
-		if (tabs.active !== undefined && paths.includes(tabs.active) && tabs.group === key) tabs.showFallback();
-	}
-
-	// ⌘W: the tab shown; the welcome is set aside like a tab while the group
-	// has tabs; otherwise the window, as the menu's Close Window did. A menu
-	// key reaches the page under the new-session dialog too, where it closes
-	// the dialog, as Escape does, and nothing behind it.
-	function closeActive(): void {
-		if (tabs.dialogOpen) tabs.dialogOpen = false;
-		else if (tabs.active !== undefined && tabs.active !== WELCOME) void closeTabs([tabs.active]);
-		else if (tabs.active === WELCOME && tabs.groupTabs.length > 0) void tabs.show(fallback((tabs.group !== undefined && tabs.recent.get(tabs.group)) || [], tabs.groupTabs));
-		else getCurrentWindow().close().catch((e) => manager.report(`closing the window failed: ${e instanceof Error ? e.message : String(e)}`));
-	}
-
-	// For what ends the app run: true at once when nothing is unsaved.
-	async function mayLoseAll(question: string, okLabel: string): Promise<boolean> {
-		const n = tabs.dirty.size;
-		return n === 0 || (await mayLose(`${n === 1 ? '1 file has' : `${n} files have`} unsaved changes. ${question}`, okLabel));
-	}
-
 	// The install ends in an exit, which no close request precedes. Editing is
 	// frozen before the question and until the install fails or is declined, so
 	// that nothing typed meanwhile is lost to the exit.
@@ -300,7 +175,7 @@
 	async function installUpdate(): Promise<void> {
 		if (updating) return;
 		updating = true;
-		if (await mayLoseAll('Update and relaunch?', 'Update')) await appUpdater.install();
+		if (await tabs.mayLoseAll('Update and relaunch?', 'Update')) await appUpdater.install();
 		// A successful install leaves the app on its way out, still installing.
 		updating = $appUpdater.installing;
 	}
@@ -309,7 +184,7 @@
 	// and the menu. With a listener, Tauri leaves the closing to it.
 	if (isTauri()) {
 		const unlisten = getCurrentWindow().onCloseRequested(async (e) => {
-			if (!(await mayLoseAll('Close the window?', 'Close'))) e.preventDefault();
+			if (!(await tabs.mayLoseAll('Close the window?', 'Close'))) e.preventDefault();
 		});
 		unlisten.catch((e) => manager.report(`asking before closing unavailable: ${e instanceof Error ? e.message : String(e)}`));
 		onDestroy(() => void unlisten.then((f) => f(), () => {}));
@@ -344,7 +219,7 @@
 	const unlistenTabs = onTabAsked((a) => {
 		switch (a) {
 			case 'close':
-				return closeActive();
+				return tabs.closeActive();
 			case 'prev':
 				return tabs.step(-1);
 			case 'next':
@@ -400,10 +275,8 @@
 		else if (isPrevTabShortcut(e)) tabs.step(-1);
 		else if (isNextTabShortcut(e)) tabs.step(1);
 		else if (n !== undefined) tabs.showAt(n);
-		else if (isSaveShortcut(e)) {
-			// By path, not through an editor, so a tab that shows no editor saves too.
-			if (tabs.active !== undefined) void documents.saveDocument(tabs.active, (m) => manager.report(m));
-		} else return;
+		else if (isSaveShortcut(e)) tabs.save();
+		else return;
 		e.preventDefault();
 		e.stopPropagation();
 	}
@@ -586,9 +459,9 @@
 				preview={tabs.previews[tabs.group]}
 				dirty={tabs.dirty}
 				onselect={(p) => void tabs.show(p)}
-				onclose={(ps) => void closeTabs(ps)}
-				onpin={(p) => (tabs.previews = unpreview(tabs.previews, p))}
-				onreorder={reorderTabs}
+				onclose={(ps) => void tabs.close(ps)}
+				onpin={(p) => tabs.pin(p)}
+				onreorder={tabs.reorder}
 				onnew={tabs.newSession}
 				report={(m) => manager.report(m)}
 			/>
@@ -617,7 +490,7 @@
 				{/key}
 			{:else if tabs.active !== undefined && !isSessionTab(tabs.active)}
 				{@const path = tabs.active}
-				<FilePane bind:this={tabs.filePane} {path} repo={tabs.root} {home} readOnly={updating} onclose={() => void closeTabs([path])} onopenfile={(p) => openFromTree(p)} report={(m) => manager.report(m)} />
+				<FilePane bind:this={tabs.filePane} {path} repo={tabs.root} {home} readOnly={updating} onclose={() => void tabs.close([path])} onopenfile={(p) => tabs.openFromTree(p)} report={(m) => manager.report(m)} />
 			{/if}
 			{#if tabs.group === undefined}
 				<AppWelcome bind:this={tabs.appWelcome} {version} addDisabled={$manager.status !== 'connected'} onaddrepo={() => void addRepo?.open()} onnewsession={tabs.newSession} />
@@ -637,8 +510,8 @@
 				sessions={$manager.sessions.map((r) => r.info)}
 				repos={$manager.repos}
 				highlight={tabs.active === undefined || tabs.active === WELCOME || isSessionTab(tabs.active) ? undefined : tabFile(tabs.active)}
-				onopen={openFromTree}
-				onopendiff={openDiff}
+				onopen={tabs.openFromTree}
+				onopendiff={tabs.openDiff}
 				onaddrepo={(f) => manager.addRepo(f)}
 				onresume={(cwd, cmd) => void manager.create(cwd, cmd, '')}
 				onselect={tabs.selectSession}
