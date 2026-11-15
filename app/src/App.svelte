@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
-	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import type { Terminal } from '@xterm/xterm';
 	import { onDestroy } from 'svelte';
 	import AddRepo from './lib/AddRepo.svelte';
@@ -13,7 +12,6 @@
 	import FilePane from './lib/FilePane.svelte';
 	import FilesPanel from './lib/FilesPanel.svelte';
 	import { onTabAsked } from './lib/files';
-	import { watchFocus } from './lib/focus';
 	import Icon from './lib/Icon.svelte';
 	import { isNewSessionShortcut, isNextTabShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut, tabNumber } from './lib/keys';
 	import { holdLayout } from './lib/layout-hold';
@@ -21,7 +19,7 @@
 	import { SessionManager } from './lib/manager';
 	import NewSessionDialog from './lib/NewSessionDialog.svelte';
 	import Notices from './lib/Notices.svelte';
-	import type { Notifier, Target } from './lib/notify';
+	import type { Notifier } from './lib/notify';
 	import RepoWelcome from './lib/RepoWelcome.svelte';
 	import { isSessionTab, sessionTab } from './lib/session-tabs';
 	import SessionList from './lib/SessionList.svelte';
@@ -34,7 +32,6 @@
 	import { shellQuoteAll } from './lib/shellquote';
 	import { Startup } from './lib/startup.svelte';
 	import { isTauri } from './lib/tauri';
-	import { createTauriNotifier } from './lib/tauri-notify';
 	import { createTerminal, TermView } from './lib/term-view';
 
 	// Replaced by the Tauri notifier once it is ready; the console one stays in
@@ -58,31 +55,9 @@
 	const tabs: Tabs<Terminal, TermView> = new Tabs({ manager });
 	onDestroy(() => tabs.stop());
 	const layout = new Layout(tabs);
-	const startup = new Startup({ manager, tabs });
+	const startup = new Startup({ manager, tabs, useNotifier: (n) => (notifier = n) });
 	onDestroy(() => startup.stop());
 	setApp({ manager, tabs, layout, startup });
-
-	// Every way of closing the window but ⌘Q comes here: its close button, ⌘W
-	// and the menu. With a listener, Tauri leaves the closing to it.
-	if (isTauri()) {
-		const unlisten = getCurrentWindow().onCloseRequested(async (e) => {
-			if (!(await tabs.mayLoseAll('Close the window?', 'Close'))) e.preventDefault();
-		});
-		unlisten.catch((e) => manager.report(`asking before closing unavailable: ${e instanceof Error ? e.message : String(e)}`));
-		onDestroy(() => void unlisten.then((f) => f(), () => {}));
-	}
-
-	let destroyed = false;
-	onDestroy(() => {
-		destroyed = true;
-		manager.stop();
-	});
-	onDestroy(
-		watchFocus(
-			(focused) => manager.setFocused(focused),
-			(e) => manager.report(`window focus unavailable: ${e instanceof Error ? e.message : String(e)}`),
-		),
-	);
 
 	const unlistenTabs = onTabAsked((a) => {
 		switch (a) {
@@ -98,36 +73,6 @@
 	});
 	unlistenTabs.catch((e) => manager.report(`tab shortcuts unavailable: ${e instanceof Error ? e.message : String(e)}`));
 	onDestroy(() => void unlistenTabs.then((f) => f(), () => {}));
-
-	// A click brings the window up whatever the notification was about.
-	function openNotified(target?: Target): void {
-		tabs.openNotified(target);
-		const win = getCurrentWindow();
-		win.show()
-			.then(() => win.unminimize())
-			.then(() => win.setFocus())
-			.catch((e) => manager.report(`bringing the window up failed: ${e instanceof Error ? e.message : String(e)}`));
-	}
-
-	// The manager starts once the notifier is set up, so the notifications it
-	// sends on connecting, such as the missed summary, do not go to the console.
-	const tauriNotifier = isTauri()
-		? createTauriNotifier(openNotified, (e) => manager.report(`notification failed: ${e instanceof Error ? e.message : String(e)}`))
-		: undefined;
-	onDestroy(() => void tauriNotifier?.then((n) => n.stop()).catch(() => {}));
-	void Promise.resolve(tauriNotifier)
-		.then(
-			(n) => {
-				if (n) notifier = n;
-				return n?.allowed === false ? 'notifications are turned off for vaquita in System Settings' : undefined;
-			},
-			(e) => `notifications unavailable: ${e instanceof Error ? e.message : String(e)}`,
-		)
-		.then((failure) => {
-			if (destroyed) return;
-			manager.start();
-			if (failure) manager.report(failure);
-		});
 
 	let aside = $state<HTMLElement>();
 	let addRepo = $state<ReturnType<typeof AddRepo>>();
