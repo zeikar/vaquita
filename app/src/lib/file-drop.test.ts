@@ -30,11 +30,13 @@ afterEach(() => {
 const base: ManagerState = { status: 'connected', sessions: [], repos: [], reposListed: true, creating: false, focused: true };
 
 // The sidebar is the box 0-200 by 0-600.
-function fakes(selected: number | undefined = 3, active: string | undefined = 'session:3') {
+// null stands for no selection: undefined would take the default.
+function fakes(sel: number | null = 3, active: string | null = 'session:3') {
+	const selected = sel ?? undefined;
 	const store = writable<ManagerState>({ ...base, selected });
 	const manager = { subscribe: store.subscribe, addRepo: vi.fn(), report: vi.fn() };
 	const view = { sendInput: vi.fn() };
-	const tabs = { active, selectedView: vi.fn(() => (selected === undefined ? undefined : view)), show: vi.fn(async () => {}) };
+	const tabs = { active: active ?? undefined, selectedView: vi.fn(() => (selected === undefined ? undefined : view)), show: vi.fn(async () => {}) };
 	const aside = { getBoundingClientRect: () => ({ left: 0, right: 200, top: 0, bottom: 600 }) } as HTMLElement;
 	const deps = { manager, tabs, sidebar: () => aside } as unknown as DropDeps;
 	return { manager, view, tabs, deps };
@@ -67,8 +69,9 @@ describe('dropped', () => {
 	});
 
 	it('does nothing with no session selected', () => {
-		const f = fakes(undefined, undefined);
+		const f = fakes(null, null);
 		dropped(['/tmp/c'], { x: 500, y: 300 }, f.deps);
+		expect(f.view.sendInput).not.toHaveBeenCalled();
 		expect(f.tabs.show).not.toHaveBeenCalled();
 		expect(f.manager.addRepo).not.toHaveBeenCalled();
 		expect(f.manager.report).not.toHaveBeenCalled();
