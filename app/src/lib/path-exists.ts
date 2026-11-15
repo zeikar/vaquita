@@ -33,7 +33,7 @@ export type PathChecker = {
 
 export function createPathChecker(invoker: ExistsInvoker = defaultInvoker, now: () => number = Date.now): PathChecker {
 	const cache = new Map<string, { exists: boolean; at: number }>();
-	// A text being asked, with the call that asks it, so a second ask waits on it.
+	// A text being asked, with its call's bounded wait, so a second ask waits on it.
 	const inFlight = new Map<string, Promise<void>>();
 	let warned = false;
 
@@ -85,24 +85,23 @@ export function createPathChecker(invoker: ExistsInvoker = defaultInvoker, now: 
 			if (asked.length > 0) {
 				// Its own handlers catch everything, so a call that lands after the wait
 				// cannot become an unhandled rejection.
-				const call = (async () => invoker(queries))()
-					.then(
-						(reply) => store(asked, reply),
-						(e) => warn(e),
-					)
-					.finally(() => {
-						for (const t of asked) inFlight.delete(t);
-					});
-				for (const t of asked) inFlight.set(t, call);
-				pending.add(call);
+				const call = (async () => invoker(queries))().then(
+					(reply) => store(asked, reply),
+					(e) => warn(e),
+				);
+				// One wait per call, shared by every ask that finds its texts in flight:
+				// asks past a hung stat then hold nothing on the call itself, which may
+				// never settle.
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				const bounded = Promise.race([call, new Promise<void>((resolve) => (timer = setTimeout(resolve, WAIT_MS)))]);
+				void call.finally(() => {
+					clearTimeout(timer);
+					for (const t of asked) inFlight.delete(t);
+				});
+				for (const t of asked) inFlight.set(t, bounded);
+				pending.add(bounded);
 			}
-			if (pending.size === 0) return;
-			let timer: ReturnType<typeof setTimeout> | undefined;
-			const wait = new Promise<void>((resolve) => {
-				timer = setTimeout(resolve, WAIT_MS);
-			});
-			await Promise.race([Promise.all(pending), wait]);
-			clearTimeout(timer);
+			await Promise.all(pending);
 		},
 		get size() {
 			return cache.size;
