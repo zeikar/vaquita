@@ -5,12 +5,9 @@
 	import { onDestroy } from 'svelte';
 	import AddRepo from './lib/AddRepo.svelte';
 	import { setApp } from './lib/app-context';
-	import AppUpdateBanner from './lib/AppUpdateBanner.svelte';
 	import AppWelcome from './lib/AppWelcome.svelte';
-	import { releaseUrl } from './lib/app-update';
 	import { tabFile } from './lib/changes';
 	import { DaemonConnection } from './lib/connection';
-	import { runningCount } from './lib/daemon-update';
 	import { appBuild, checkRestart, daemonOnDisk, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
 	import { clampPanelWidth, PANEL_DEFAULT_WIDTH } from './lib/file-panel';
 	import FilePane from './lib/FilePane.svelte';
@@ -21,9 +18,9 @@
 	import { isNewSessionShortcut, isNextTabShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut, tabNumber } from './lib/keys';
 	import { holdLayout } from './lib/layout-hold';
 	import { Layout } from './lib/layout.svelte';
-	import { openExternal } from './lib/links';
 	import { SessionManager } from './lib/manager';
 	import NewSessionDialog from './lib/NewSessionDialog.svelte';
+	import Notices from './lib/Notices.svelte';
 	import type { Notifier, Target } from './lib/notify';
 	import RepoWelcome from './lib/RepoWelcome.svelte';
 	import { isSessionTab, sessionTab } from './lib/session-tabs';
@@ -39,7 +36,6 @@
 	import { isTauri } from './lib/tauri';
 	import { createTauriNotifier } from './lib/tauri-notify';
 	import { createTerminal, TermView } from './lib/term-view';
-	import UpdateBanner from './lib/UpdateBanner.svelte';
 
 	// Replaced by the Tauri notifier once it is ready; the console one stays in
 	// a plain browser and when the Tauri one cannot be set up.
@@ -65,8 +61,6 @@
 	const startup = new Startup({ manager, tabs });
 	onDestroy(() => startup.stop());
 	setApp({ manager, tabs, layout, startup });
-	// For the notices' $appUpdater.
-	const appUpdater = startup.updater;
 
 	// Every way of closing the window but ⌘Q comes here: its close button, ⌘W
 	// and the menu. With a listener, Tauri leaves the closing to it.
@@ -89,9 +83,6 @@
 			(e) => manager.report(`window focus unavailable: ${e instanceof Error ? e.message : String(e)}`),
 		),
 	);
-
-	// Closed for this app run: the restart can wait, and the notice covers the terminal.
-	let daemonNoticeClosed = $state(false);
 
 	const unlistenTabs = onTabAsked((a) => {
 		switch (a) {
@@ -315,26 +306,6 @@
 			/>
 		</aside>
 	{/if}
-	<div class="notices">
-		{#if $appUpdater.version !== undefined}
-			{@const version = $appUpdater.version}
-			<AppUpdateBanner
-				{version}
-				installing={$appUpdater.installing}
-				error={$appUpdater.error}
-				oninstall={() => void startup.install()}
-				ondismiss={() => appUpdater.dismiss()}
-				onnotes={() => openExternal(releaseUrl(version), (e) => manager.report(`opening the release notes failed: ${e instanceof Error ? e.message : String(e)}`))}
-			/>
-		{/if}
-		{#if $manager.update && $manager.status === 'connected' && !daemonNoticeClosed}
-			<UpdateBanner
-				update={$manager.update}
-				running={runningCount($manager.sessions.map((r) => r.info))}
-				onrestart={() => manager.restartDaemon()}
-				ondismiss={() => (daemonNoticeClosed = true)}
-			/>
-		{/if}
-	</div>
+	<Notices />
 	<StatusBar />
 </main>
