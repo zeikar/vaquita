@@ -6,6 +6,7 @@
 	import type { Terminal } from '@xterm/xterm';
 	import { onDestroy } from 'svelte';
 	import AddRepo from './lib/AddRepo.svelte';
+	import { setApp } from './lib/app-context';
 	import AppUpdateBanner from './lib/AppUpdateBanner.svelte';
 	import AppWelcome from './lib/AppWelcome.svelte';
 	import { AppUpdater, releaseUrl } from './lib/app-update';
@@ -30,6 +31,7 @@
 	import { isSessionTab, sessionTab } from './lib/session-tabs';
 	import SessionList from './lib/SessionList.svelte';
 	import SidebarEdge from './lib/SidebarEdge.svelte';
+	import StatusBar from './lib/StatusBar.svelte';
 	import TabBar from './lib/TabBar.svelte';
 	import { OTHER, WELCOME } from './lib/tabs';
 	import { Tabs } from './lib/tabs.svelte';
@@ -61,6 +63,7 @@
 	const tabs: Tabs<Terminal, TermView> = new Tabs({ manager });
 	onDestroy(() => tabs.stop());
 	const layout = new Layout(tabs);
+	setApp({ manager, tabs, layout });
 
 	// The install ends in an exit, which no close request precedes. Editing is
 	// frozen before the question and until the install fails or is declined, so
@@ -219,37 +222,6 @@
 			(e) => manager.report(`app version unavailable: ${e instanceof Error ? e.message : String(e)}`),
 		);
 	}
-
-	const statusText = $derived.by(() => {
-		switch ($manager.status) {
-			case 'connected':
-				return 'connected';
-			case 'connecting':
-				return 'connecting…';
-			case 'starting':
-				return 'starting daemon…';
-			case 'restarting':
-				return 'restarting daemon…';
-			case 'not-running':
-				return 'daemon not running';
-			case 'version-mismatch':
-				return `daemon restart needed (daemon v${$manager.daemonV}, app v1)`;
-			case 'disconnected':
-				return 'disconnected, retrying…';
-		}
-	});
-	// The status line is grey; only its dot says how the daemon is.
-	const statusTone = $derived.by(() => {
-		switch ($manager.status) {
-			case 'connected':
-				return 'ok';
-			case 'not-running':
-			case 'version-mismatch':
-				return 'bad';
-			default:
-				return 'wait';
-		}
-	});
 </script>
 
 <svelte:window onkeydowncapture={shortcut} />
@@ -402,19 +374,5 @@
 			/>
 		{/if}
 	</div>
-	<footer>
-		<button class="icon-btn sidebar-toggle" title="{layout.sidebarHidden ? 'Show' : 'Hide'} sidebar (⌘B)" onclick={layout.toggleSidebar}>
-			<Icon name="sidebar" />
-		</button>
-		<span class="state"><span class="dot {statusTone}"></span>{statusText}</span>
-		<span>{$manager.sessions.length} sessions</span>
-		{#if $manager.message}<span class="message" title={$manager.message}>{$manager.message}</span>{/if}
-		{#if $manager.report}
-			{@const report = $manager.report}
-			<button class="report {report.tone}" title={report.text} onclick={() => manager.dismissReport()}>{report.text}</button>
-		{/if}
-		<button class="icon-btn files-toggle" title="{layout.panelHidden ? 'Show' : 'Hide'} files (⌥⌘B)" onclick={layout.togglePanel}>
-			<Icon name="sidebar-right" />
-		</button>
-	</footer>
+	<StatusBar />
 </main>
