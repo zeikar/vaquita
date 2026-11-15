@@ -49,7 +49,7 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// since nothing renders it.
 	private readonly recent = new Map<string, Recent>();
 	readonly dirty = new SvelteSet<string>();
-	// Bound by the markup; each is there only while its pane is mounted.
+	// Bound by the content's markup; each is there only while its pane is mounted.
 	filePane?: ReturnType<typeof FilePane>;
 	repoWelcome?: ReturnType<typeof RepoWelcome>;
 	appWelcome?: ReturnType<typeof AppWelcome>;
