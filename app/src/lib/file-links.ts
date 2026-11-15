@@ -13,7 +13,9 @@ export type PathHit = { start: number; end: number; target: string };
 
 // What a click on a link hands the gate: its text, or a path joined across a
 // line break (see path-link-provider) with a path it replaced, the one on the
-// clicked row, which opens instead when the joined path does not exist.
+// clicked row, which opens instead when the joined path does not exist. A join
+// the hover's check found missing is not given, so this is for one it could
+// not confirm (or one removed since).
 export type LinkText = string | readonly [path: string, fallback: string];
 
 const defaultInvoker: Invoker = async (path, host) => {

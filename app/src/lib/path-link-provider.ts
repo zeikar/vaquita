@@ -1,6 +1,7 @@
 import type { IBufferCell, IBufferLine, ILink, ILinkProvider } from '@xterm/xterm';
 import {
 	findPaths,
+	gateTarget,
 	hasExtension,
 	pathRun,
 	pathRunBefore,
@@ -9,6 +10,7 @@ import {
 	type Bounds,
 	type PathHit,
 } from './file-links';
+import type { PathChecker } from './path-exists';
 
 // Only getLine, so a headless terminal's buffer can stand in for xterm's.
 export interface BufferLike {
@@ -99,9 +101,11 @@ export function lineText(buffer: BufferLike, row: number): LineText {
 // followed by a word than broken inside its extension. A path is the lines
 // joined so from where it begins, up to MAX_LINES of them: a line that is not
 // itself the rest of the line above, or one that is, after that rest, as when
-// a list item names two long paths. A wrong guess still underlines too much,
-// so a click on it falls back, and says so, to the path that stood on its own
-// on the clicked row, or else to the first line's.
+// a list item names two long paths. A wrong guess the disk shows, a joined
+// path that is not there, gives way to the paths the lines have on their own.
+// One the disk could not confirm still underlines too much, so a click on it
+// falls back, and says so, to the path that stood on its own on the clicked
+// row, or else to the first line's.
 const EDGE_SLACK = 2;
 // The lines one path may take, which bounds how many more a hover reads.
 const MAX_LINES = 3;
@@ -272,51 +276,105 @@ function linesInto(buffer: BufferLike, here: LineText): LineText[] {
 	return lines;
 }
 
+// A path that may link on the hovered row, with the joined path that replaced
+// it, if any: it links only once the disk says that one is not there.
+type Entry = Found & { by?: Found };
+
+// The paths that reach 1-based row y: the joined ones that do and the row's own.
+function rowEntries(buffer: BufferLike, cwd: string, y: number): Entry[] {
+	const lines = linesInto(buffer, lineText(buffer, y - 1));
+	const here = lines[lines.length - 1];
+	const found: Entry[] = [];
+	// A joined path replaces the paths in the runs it took, up to its taken cell.
+	let taker: Found | undefined;
+	const free = (c: CellPos) => {
+		const t = taker?.taken;
+		return !t || c.row > t.row || (c.row === t.row && c.x > t.x);
+	};
+	// A path that reaches here starts at most MAX_LINES - 1 lines up.
+	for (let k = Math.max(0, lines.length - MAX_LINES); k < lines.length; k++) {
+		const f = join(buffer, lines[k], isRest(buffer, lines, k), cwd);
+		// here's paths link on their own but for those an earlier path took and
+		// the one here's own path starts from, which wait on that path's answer.
+		if (k === lines.length - 1) {
+			for (const hit of findPaths(here.text, colourBounds(here))) {
+				const c = here.cells[hit.start];
+				found.push({ ...span(here, hit, cwd), by: !free(c) ? taker : f?.first === c ? f : undefined });
+			}
+		}
+		if (f) {
+			found.push(f);
+			taker = f;
+		}
+	}
+	// xterm asks row by row; a link over several rows is given for each.
+	return found.filter(({ first, last }) => first.row <= y - 1 && y - 1 <= last.row);
+}
+
+// The links of row y by the disk's answers: true, false, or undefined when not
+// known, which links as without a check. A path that is not there is dropped,
+// and a path a join replaced links only when the join is not there.
+function rowLinks(
+	entries: Entry[],
+	y: number,
+	answer: (path: string) => boolean | undefined,
+	handlers: LinkHandlers,
+): ILink[] | undefined {
+	const links: ILink[] = [];
+	for (const { first, last, path, parts, lead, by } of entries) {
+		if (answer(path) === false || (by && answer(by.path) !== false)) continue;
+		const range = {
+			start: { x: first.x + 1, y: first.row + 1 },
+			end: { x: last.x + last.width, y: last.row + 1 },
+		};
+		// xterm asks again for each row the pointer moves to, so a click opens this row's fallback.
+		const part = parts?.find((p) => p.first.row <= y - 1 && y - 1 <= p.last.row) ?? lead;
+		const text: LinkText = !part || part.path === path ? path : [path, part.path];
+		links.push({
+			range,
+			text: path,
+			activate: (e) => handlers.activate(e, text),
+			hover: (e) => handlers.hover(e, path),
+			leave: (e) => handlers.leave(e, path),
+		});
+	}
+	return links.length > 0 ? links : undefined;
+}
+
 // Links for paths in plain terminal text. Ranges follow WebLinksAddon: 1-based,
-// end inclusive, and a wide last character ends on its right cell.
-export function pathLinkProvider(buffer: BufferLike, cwd: string, handlers: LinkHandlers): ILinkProvider {
+// end inclusive, and a wide last character ends on its right cell. With a
+// checker, a path the disk says is not there is not given.
+export function pathLinkProvider(
+	buffer: BufferLike,
+	cwd: string,
+	handlers: LinkHandlers,
+	checker?: PathChecker,
+): ILinkProvider {
+	const answer = (path: string) => checker?.known(path);
+	// Only the latest call replies: xterm's Linkifier puts a reply in the map of
+	// whichever row is active when it lands, so a late answer for one row would
+	// replace the links of the row the pointer has moved to.
+	let latest = 0;
 	return {
 		provideLinks(y, callback) {
-			const lines = linesInto(buffer, lineText(buffer, y - 1));
-			const here = lines[lines.length - 1];
-			const found: Found[] = [];
-			// A joined path replaces the paths in the runs it took, up to this cell.
-			let taken: CellPos | undefined;
-			const free = (c: CellPos) => !taken || c.row > taken.row || (c.row === taken.row && c.x > taken.x);
-			// A path that reaches here starts at most MAX_LINES - 1 lines up.
-			for (let k = Math.max(0, lines.length - MAX_LINES); k < lines.length; k++) {
-				const f = join(buffer, lines[k], isRest(buffer, lines, k), cwd);
-				// here's paths link on their own but for those an earlier path took and
-				// the one here's own path starts from.
-				if (k === lines.length - 1) {
-					const own = (hit: PathHit) => free(here.cells[hit.start]) && f?.first !== here.cells[hit.start];
-					found.push(...findPaths(here.text, colourBounds(here)).filter(own).map((hit) => span(here, hit, cwd)));
-				}
-				if (f) {
-					found.push(f);
-					taken = f.taken;
-				}
+			const call = ++latest;
+			const entries = rowEntries(buffer, cwd, y);
+			// A text that is no gate target has nothing to ask and reads as not known.
+			const asked = [...new Set(entries.flatMap((e) => (e.by ? [e.path, e.by.path] : [e.path])))].filter(
+				(p) => gateTarget(p) && answer(p) === undefined,
+			);
+			if (!checker || asked.length === 0) {
+				callback(rowLinks(entries, y, answer, handlers));
+				return;
 			}
-			const links: ILink[] = [];
-			for (const { first, last, path, parts, lead } of found) {
-				const range = {
-					start: { x: first.x + 1, y: first.row + 1 },
-					end: { x: last.x + last.width, y: last.row + 1 },
-				};
-				// xterm asks row by row; a link over several rows is given for each.
-				if (range.start.y > y || range.end.y < y) continue;
-				// xterm asks again for each row the pointer moves to, so a click opens this row's fallback.
-				const part = parts?.find((p) => p.first.row <= y - 1 && y - 1 <= p.last.row) ?? lead;
-				const text: LinkText = !part || part.path === path ? path : [path, part.path];
-				links.push({
-					range,
-					text: path,
-					activate: (e) => handlers.activate(e, text),
-					hover: (e) => handlers.hover(e, path),
-					leave: (e) => handlers.leave(e, path),
-				});
-			}
-			callback(links.length > 0 ? links : undefined);
+			void checker.ask(asked).then(() => {
+				if (call !== latest) return;
+				// Output may have rewritten the row during the wait, so links built
+				// before it could put the old path and its range on new text. They are
+				// worked out again from the buffer as it is now, and a path the new
+				// text brings that was not asked reads by the cache, else as not known.
+				callback(rowLinks(rowEntries(buffer, cwd, y), y, answer, handlers));
+			});
 		},
 	};
 }

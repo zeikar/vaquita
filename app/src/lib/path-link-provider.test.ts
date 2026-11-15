@@ -3,16 +3,19 @@ import { Terminal } from '@xterm/headless';
 import type { ILink } from '@xterm/xterm';
 import { describe, expect, it } from 'vitest';
 import { activateUri, type Invoker } from './file-links';
+import { createPathChecker, type ExistsInvoker } from './path-exists';
 import { lineText, pathLinkProvider, type LinkHandlers } from './path-link-provider';
 
 const noop: LinkHandlers = { activate() {}, hover() {}, leave() {} };
+
+const write = (t: Terminal, text: string) => new Promise<void>((r) => t.write(text, r));
 
 async function term(cols: number, text: string): Promise<Terminal> {
 	const t = new Terminal({ cols, rows: 24, allowProposedApi: true });
 	// The app's terminals use Unicode 11 widths (see session-core).
 	t.loadAddon(new Unicode11Addon());
 	t.unicode.activeVersion = '11';
-	await new Promise<void>((r) => t.write(text, r));
+	await write(t, text);
 	return t;
 }
 
@@ -471,6 +474,180 @@ describe('pathLinkProvider across a line break', () => {
 		const want = [{ start: { x: 5, y: 1 }, end: { x: 10, y: 2 }, text: '~/문서/보고서폴더/최종.md' }];
 		expect(spans(links(t, 1))).toEqual(want);
 		expect(spans(links(t, 2))).toEqual(want);
+	});
+});
+
+// A provider over a real checker whose disk has the paths in exists and cannot
+// tell about those in unsure. It records each batch the checker sends, each
+// run of the callback and what each click hands the gate; with hold, a batch
+// is answered only when its function in held is called.
+function checked(t: Terminal, cwd: string, disk: { exists?: string[]; unsure?: string[]; hold?: boolean } = {}) {
+	const batches: string[][] = [];
+	const held: (() => void)[] = [];
+	const replies: (ILink[] | undefined)[] = [];
+	const clicks: unknown[] = [];
+	const invoker: ExistsInvoker = (paths) => {
+		batches.push(paths.map((q) => q.path));
+		const answer = () => paths.map(({ path }) => (disk.unsure?.includes(path) ? null : !!disk.exists?.includes(path)));
+		if (!disk.hold) return Promise.resolve(answer());
+		return new Promise((resolve) => void held.push(() => resolve(answer())));
+	};
+	const handlers: LinkHandlers = { ...noop, activate: (_e, text) => void clicks.push(text) };
+	const provider = pathLinkProvider(t.buffer, cwd, handlers, createPathChecker(invoker));
+	return {
+		batches,
+		held,
+		replies,
+		provide: (y: number) => provider.provideLinks(y, (l) => void replies.push(l)),
+		// What a click on each link of the reply hands the gate.
+		click(reply: ILink[] | undefined) {
+			clicks.length = 0;
+			for (const l of reply ?? []) l.activate({} as MouseEvent, '');
+			return [...clicks];
+		},
+	};
+}
+
+// Lets an answer, and the callback that waits on it, run: all in microtasks,
+// well before the checker's 250 ms.
+const settle = () => new Promise((r) => setTimeout(r));
+
+describe('pathLinkProvider with an existence check', () => {
+	const montage = 'Bash(montage "$S/battle_b_frames.png" /tmp/repo/out.png)';
+	const frames = '/tmp/repo/$S/battle_b_frames.png';
+	const out = '/tmp/repo/out.png';
+	const outSpan = { start: { x: 39, y: 1 }, end: { x: 55, y: 1 }, text: out };
+
+	it('links only the paths that exist', async () => {
+		const c = checked(await term(80, montage), '/tmp/repo', { exists: [out] });
+		c.provide(1);
+		await settle();
+		expect(c.replies.map(spans)).toEqual([[outSpan]]);
+	});
+
+	it('gives undefined when no path on the row exists', async () => {
+		const c = checked(await term(80, montage), '/tmp/repo');
+		c.provide(1);
+		await settle();
+		expect(c.replies).toEqual([undefined]);
+	});
+
+	it('links a path the app could not tell about, as without the check', async () => {
+		const c = checked(await term(80, montage), '/tmp/repo', { unsure: [frames, out] });
+		c.provide(1);
+		await settle();
+		expect(c.replies.map((r) => spans(r)?.map((l) => l.text))).toEqual([[frames, out]]);
+	});
+
+	it('asks for all the row\'s candidates in one batch per call', async () => {
+		const c = checked(await term(80, montage), '/tmp/repo', { exists: [out] });
+		c.provide(1);
+		await settle();
+		expect(c.batches).toEqual([[frames, out]]);
+	});
+
+	it('answers before it returns, asking nothing, when every candidate is cached', async () => {
+		const c = checked(await term(80, montage), '/tmp/repo', { exists: [out] });
+		c.provide(1);
+		await settle();
+		c.provide(1);
+		expect(c.replies.map(spans)).toEqual([[outSpan], [outSpan]]);
+		expect(c.batches).toHaveLength(1);
+	});
+
+	it('answers once, after the disk does, when a candidate is not cached', async () => {
+		const c = checked(await term(80, montage), '/tmp/repo', { exists: [out], hold: true });
+		c.provide(1);
+		await settle();
+		expect(c.replies).toEqual([]);
+		c.held[0]();
+		await settle();
+		await settle();
+		expect(c.replies.map(spans)).toEqual([[outSpan]]);
+	});
+
+	it('drops the reply of a call a later one overtook', async () => {
+		const t = await term(80, 'cat /tmp/repo/a.ts\r\ncat /tmp/repo/b.ts');
+		const c = checked(t, '', { exists: ['/tmp/repo/a.ts', '/tmp/repo/b.ts'], hold: true });
+		c.provide(1);
+		c.provide(2);
+		await settle();
+		expect(c.held).toHaveLength(2);
+		c.held[1]();
+		await settle();
+		expect(c.replies.map(spans)).toEqual([[{ start: { x: 5, y: 2 }, end: { x: 18, y: 2 }, text: '/tmp/repo/b.ts' }]]);
+		c.held[0]();
+		await settle();
+		expect(c.replies).toHaveLength(1);
+	});
+
+	it('works the links out again from the row as output left it during the wait', async () => {
+		const t = await term(80, 'cat /tmp/repo/a.ts');
+		const c = checked(t, '', { exists: ['/tmp/repo/a.ts'], hold: true });
+		c.provide(1);
+		await write(t, '\r\x1b[2Kcat /tmp/repo/other.ts');
+		c.held[0]();
+		await settle();
+		await settle();
+		// other.ts was not asked, so it is not known and links as without the check.
+		expect(c.replies.map(spans)).toEqual([[{ start: { x: 5, y: 1 }, end: { x: 22, y: 1 }, text: '/tmp/repo/other.ts' }]]);
+		expect(c.click(c.replies[0])).toEqual(['/tmp/repo/other.ts']);
+		expect(c.batches).toEqual([['/tmp/repo/a.ts']]);
+	});
+
+	it('gives undefined when output left the row with no path during the wait', async () => {
+		const t = await term(80, 'cat /tmp/repo/a.ts');
+		const c = checked(t, '', { exists: ['/tmp/repo/a.ts'], hold: true });
+		c.provide(1);
+		await write(t, '\r\x1b[2Kdone');
+		c.held[0]();
+		await settle();
+		await settle();
+		expect(c.replies).toEqual([undefined]);
+		expect(c.batches).toHaveLength(1);
+	});
+
+	describe('across a line break', () => {
+		// The fixture of the joining tests above, 56 cells wide.
+		const item = '  - 고친 원본: /private/tmp/example/d1c67ac3/scratchpad/\r\n    icon/fixed-shadow.png';
+		const joined = '/private/tmp/example/d1c67ac3/scratchpad/icon/fixed-shadow.png';
+		const fragment = '/private/tmp/example/d1c67ac3/scratchpad/';
+		const own = '/tmp/repo/icon/fixed-shadow.png';
+		const whole = { start: { x: 16, y: 1 }, end: { x: 25, y: 2 }, text: joined };
+
+		async function row(y: number, disk: Parameters<typeof checked>[2]) {
+			const c = checked(await term(56, item), '/tmp/repo', disk);
+			c.provide(y);
+			await settle();
+			expect(c.replies, `row ${y}`).toHaveLength(1);
+			return { reply: spans(c.replies[0]), clicks: c.click(c.replies[0]), batches: c.batches };
+		}
+
+		it('links the joined path when it exists', async () => {
+			for (const y of [1, 2]) expect((await row(y, { exists: [joined] })).reply, `row ${y}`).toEqual([whole]);
+		});
+
+		it('links each line\'s own path, on its own cells, when the joined one is missing', async () => {
+			const disk = { exists: [fragment, own] };
+			const first = await row(1, disk);
+			expect(first.reply).toEqual([{ start: { x: 16, y: 1 }, end: { x: 56, y: 1 }, text: fragment }]);
+			expect(first.clicks).toEqual([fragment]);
+			const second = await row(2, disk);
+			expect(second.reply).toEqual([{ start: { x: 5, y: 2 }, end: { x: 25, y: 2 }, text: own }]);
+			expect(second.clicks).toEqual([own]);
+			// The line's own path is asked with the joined one.
+			expect(second.batches).toEqual([[joined, own]]);
+		});
+
+		it('links nothing when the joined path and the line\'s own are missing', async () => {
+			for (const y of [1, 2]) expect((await row(y, {})).reply, `row ${y}`).toBeUndefined();
+		});
+
+		it('links the joined path, falling back on a click as before, when the app could not tell', async () => {
+			const got = await row(2, { unsure: [joined], exists: [own] });
+			expect(got.reply).toEqual([whole]);
+			expect(got.clicks).toEqual([[joined, own]]);
+		});
 	});
 });
 

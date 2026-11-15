@@ -2,6 +2,11 @@
 
 Each release's notes open with its section here.
 
+## 0.1.31
+
+- A path in terminal output is a link only when the file exists, so text that merely looks like one, such as `"$DIR/shot.png"` in a command, is no longer underlined.
+- A path an agent wrapped over two lines links as a whole only when that file exists; otherwise each line's own path does.
+
 ## 0.1.30
 
 - A file double-clicked in the files tree is kept in its tab every time; now and then it used to open as a second tab beside the preview.
