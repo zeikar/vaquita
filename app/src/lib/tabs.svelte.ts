@@ -1,8 +1,15 @@
+import { tick } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
+import type AppWelcome from './AppWelcome.svelte';
 import { documents as appDocuments, type Documents } from './documents';
+import type FilePane from './FilePane.svelte';
 import type { ManagedTerm, ManagerState, SessionManager, ViewLike } from './manager';
-import { arrangeGroup, placement } from './session-tabs';
-import { loadTabs, OTHER, unpreview, type Previews, type Recent } from './tabs';
+import { LAST_CWD } from './NewSessionDialog.svelte';
+import type { Target } from './notify';
+import type RepoWelcome from './RepoWelcome.svelte';
+import { arrangeGroup, isSessionTab, placement, sessionTab, tabSid } from './session-tabs';
+import { load } from './storage';
+import { fallback, groupKey, loadTabs, neighbour, OTHER, touch, unpreview, WELCOME, type Previews, type Recent } from './tabs';
 import type { TermView } from './term-view';
 
 // What the tabs ask of a session's view beside what the manager does.
@@ -35,6 +42,12 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// since nothing renders it.
 	readonly recent = new Map<string, Recent>();
 	readonly dirty = new SvelteSet<string>();
+	// Bound by the markup; each is there only while its pane is mounted.
+	filePane?: ReturnType<typeof FilePane>;
+	repoWelcome?: ReturnType<typeof RepoWelcome>;
+	appWelcome?: ReturnType<typeof AppWelcome>;
+	dialogOpen = $state(false);
+	dialogCwd = $state('');
 
 	// The group whose bar shows: the selected session's, or the repo chosen
 	// by its name, for the app run only (a relaunch selects the stored
@@ -57,9 +70,11 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// is no repo.
 	readonly root = $derived(this.group !== OTHER ? this.group : undefined);
 
+	private readonly manager: SessionManager<T, V>;
 	private readonly stops: (() => void)[];
 
 	constructor({ manager, documents = appDocuments }: TabsDeps<T, V>) {
+		this.manager = manager;
 		this.stops = [
 			manager.subscribe((s) => (this.state = s)),
 			// An edit keeps a preview tab, in every group that has it.
@@ -86,4 +101,105 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 		const { sessions, selected } = this.state;
 		return sessions.find((r) => r.info.sid === selected)?.view;
 	}
+
+	// Where the shown group goes when what it showed is gone: the tab shown
+	// most recently, else its first, else the repo's welcome; Other, which
+	// has no welcome, is then no selection any more.
+	showFallback(): void {
+		const next = fallback((this.group !== undefined && this.recent.get(this.group)) || [], this.groupTabs) ?? (this.root !== undefined ? WELCOME : undefined);
+		if (next === undefined && this.group === OTHER) this.group = undefined;
+		void this.show(next);
+	}
+
+	// A repo's name in the sidebar shows its welcome. A session of that repo
+	// stays selected, its terminal covered as by a file; any other is
+	// deselected, so the repo is the selection. Not under the new-session
+	// dialog, which keeps what it opened over, as show does.
+	openWelcome(repo: string): void {
+		if (this.dialogOpen) return;
+		if (this.selectedRow === undefined || groupKey(this.selectedRow.info.cwd, this.state.repos) !== repo) this.manager.deselect();
+		this.group = repo;
+		void this.show(WELCOME);
+	}
+
+	// The Other group's name, shown while it holds file tabs, selects them:
+	// the way back to edits that moved there when their repo was removed. Its
+	// most recent tab shows, as closing one would go; no welcome, it is no repo.
+	openOther(): void {
+		if (this.dialogOpen) return;
+		if (this.selectedRow === undefined || groupKey(this.selectedRow.info.cwd, this.state.repos) !== OTHER) this.manager.deselect();
+		this.group = OTHER;
+		const next = fallback(this.recent.get(OTHER) ?? [], this.groupTabs);
+		if (next !== undefined) void this.show(next);
+	}
+
+	// What shows takes the focus, so that typing never reaches a terminal
+	// covered by a file or a welcome.
+	focusContent = (): void => {
+		if (this.active === WELCOME) this.repoWelcome?.focus();
+		else if (this.active === undefined) this.appWelcome?.focus();
+		else if (isSessionTab(this.active)) this.selectedView()?.focus();
+		else this.filePane?.focus();
+	};
+
+	// Under the new-session dialog the dialog keeps the focus.
+	refocus = (): void => {
+		if (!this.dialogOpen) this.focusContent();
+	};
+
+	// No file and no welcome under the new-session dialog: it gives the focus
+	// back to what had it when it opened, which may be the terminal they would
+	// cover. A session's tab can show, as when the session it creates is
+	// selected; the dialog keeps the focus then.
+	async show(path: string | undefined): Promise<void> {
+		if (this.dialogOpen && path !== undefined && !isSessionTab(path)) return;
+		this.active = path;
+		const sid = path === undefined ? undefined : tabSid(path);
+		if (sid !== undefined && sid !== this.state.selected) this.manager.select(sid);
+		// Every change of the shown tab ends here, so this one line keeps the
+		// list. The welcome is no tab that closing one could go back to.
+		if (this.group !== undefined && path !== undefined && path !== WELCOME) this.recent.set(this.group, touch(this.recent.get(this.group) ?? [], path));
+		// The file pane is there to take the focus only once it has rendered.
+		await tick();
+		this.refocus();
+	}
+
+	// A repo's welcome with no tabs has nothing to step to. Nothing switches
+	// under the new-session dialog, which keeps what it opened over.
+	step(by: number): void {
+		if (this.dialogOpen) return;
+		const next = neighbour(this.groupTabs, this.active, by);
+		if (next !== undefined) void this.show(next);
+	}
+
+	// ⌘1-9: the group's tab at that place, counted from 1.
+	showAt(n: number): void {
+		if (!this.dialogOpen && n <= this.groupTabs.length) void this.show(this.groupTabs[n - 1]);
+	}
+
+	// The manager selects a notification's session only if that very session
+	// is still there.
+	openNotified(target?: Target): void {
+		// The same session stays selected, so nothing else shows its tab.
+		const same = target !== undefined && this.selectedRow?.info.sid === target.sid && this.selectedRow.info.inc === target.inc;
+		this.manager.openNotified(target);
+		if (same) void this.show(sessionTab(target.sid));
+	}
+
+	// A session's row in the sidebar, or a past conversation's open row, asks
+	// for its tab: as openNotified, the same session staying selected, the
+	// file or its repo's welcome covering it goes.
+	selectSession = (sid: number): void => {
+		const same = sid === this.state.selected;
+		this.manager.select(sid);
+		if (same) void this.show(sessionTab(sid));
+	};
+
+	// The dialog starts in the shown repo, else in the folder it last created
+	// a session in, else in the home folder.
+	newSession = (): void => {
+		if (this.dialogOpen) return;
+		this.dialogCwd = (this.group !== OTHER ? this.group : undefined) ?? load(LAST_CWD) ?? '';
+		this.dialogOpen = true;
+	};
 }

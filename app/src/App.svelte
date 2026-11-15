@@ -4,7 +4,7 @@
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import type { Terminal } from '@xterm/xterm';
-	import { onDestroy, tick, untrack } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import AddRepo from './lib/AddRepo.svelte';
 	import AppUpdateBanner from './lib/AppUpdateBanner.svelte';
 	import AppWelcome from './lib/AppWelcome.svelte';
@@ -26,7 +26,7 @@
 	import { holdLayout } from './lib/layout-hold';
 	import { openExternal } from './lib/links';
 	import { SessionManager } from './lib/manager';
-	import NewSessionDialog, { LAST_CWD } from './lib/NewSessionDialog.svelte';
+	import NewSessionDialog from './lib/NewSessionDialog.svelte';
 	import { sessionTitle, type Notifier, type Target } from './lib/notify';
 	import RepoWelcome from './lib/RepoWelcome.svelte';
 	import { isSessionTab, needsAsk, reconcile, sessionTab, tabSid } from './lib/session-tabs';
@@ -35,7 +35,7 @@
 	import SidebarEdge from './lib/SidebarEdge.svelte';
 	import { load, save } from './lib/storage';
 	import TabBar from './lib/TabBar.svelte';
-	import { closeInGroup, fallback, fileName, groupKey, neighbour, openFileTab, OTHER, prune, saveTabs, setOrder, touch, unpreview, WELCOME } from './lib/tabs';
+	import { closeInGroup, fallback, fileName, groupKey, openFileTab, OTHER, prune, saveTabs, setOrder, touch, unpreview, WELCOME } from './lib/tabs';
 	import { Tabs } from './lib/tabs.svelte';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
@@ -65,9 +65,6 @@
 	// manager's would each wait on the other.
 	const tabs: Tabs<Terminal, TermView> = new Tabs({ manager });
 	onDestroy(() => tabs.stop());
-	let filePane = $state<ReturnType<typeof FilePane>>();
-	let repoWelcome = $state<ReturnType<typeof RepoWelcome>>();
-	let appWelcome = $state<ReturnType<typeof AppWelcome>>();
 
 	// Not before the daemon has sent its list: the empty one the app starts
 	// with would drop every repo's tabs. Those of a repo removed move to Other,
@@ -87,7 +84,7 @@
 		if (to === undefined) return;
 		tabs.group = to;
 		const moved = (kept[to] ?? []).filter((k) => !isSessionTab(k));
-		void showTab(tabs.active !== undefined && moved.includes(tabs.active) ? tabs.active : moved[0]);
+		void tabs.show(tabs.active !== undefined && moved.includes(tabs.active) ? tabs.active : moved[0]);
 	});
 	// The stored order follows the session list: a gone session's tab leaves
 	// it, a new one, or one a repo added or removed moved, joins its group.
@@ -113,7 +110,7 @@
 		const sid = $manager.selected;
 		if (sid === shownSid) return;
 		if (sid === undefined) {
-			if (shownSid === null) void showTab(undefined);
+			if (shownSid === null) void tabs.show(undefined);
 			shownSid = undefined;
 			return;
 		}
@@ -123,7 +120,7 @@
 		untrack(() => {
 			tabs.group = groupKey(row.info.cwd, $manager.repos);
 			// Shown already when its tab was what selected it.
-			if (tabs.active !== sessionTab(sid)) void showTab(sessionTab(sid));
+			if (tabs.active !== sessionTab(sid)) void tabs.show(sessionTab(sid));
 		});
 	});
 	// A repo added or removed can move the selected session to another group,
@@ -152,17 +149,8 @@
 	$effect(() => {
 		if (!tabs.listed) return;
 		const shows = tabs.active === undefined ? tabs.group === undefined : tabs.active === WELCOME ? tabs.root !== undefined : tabs.groupTabs.includes(tabs.active);
-		if (!shows) showFallback();
+		if (!shows) tabs.showFallback();
 	});
-
-	// Where the shown group goes when what it showed is gone: the tab shown
-	// most recently, else its first, else the repo's welcome; Other, which
-	// has no welcome, is then no selection any more.
-	function showFallback(): void {
-		const next = fallback((tabs.group !== undefined && tabs.recent.get(tabs.group)) || [], tabs.groupTabs) ?? (tabs.root !== undefined ? WELCOME : undefined);
-		if (next === undefined && tabs.group === OTHER) tabs.group = undefined;
-		void showTab(next);
-	}
 
 	// The daemon sends the whole repo list on every change and does not say
 	// which request it answers, so a repo new to the list is the sign that it
@@ -173,37 +161,15 @@
 	$effect(() => {
 		// Under the dialog nothing is consumed, so that its close, which reruns
 		// this, still finds the additions that came meanwhile.
-		if (!$manager.reposListed || dialogOpen) return;
+		if (!$manager.reposListed || tabs.dialogOpen) return;
 		const repos = $manager.repos;
 		if (repos === knownRepos) return;
 		const prev = knownRepos;
 		knownRepos = repos;
 		if (prev === undefined) return;
 		const added = newRepos(prev, repos).at(-1);
-		if (added !== undefined) untrack(() => openWelcome(added));
+		if (added !== undefined) untrack(() => tabs.openWelcome(added));
 	});
-
-	// A repo's name in the sidebar shows its welcome. A session of that repo
-	// stays selected, its terminal covered as by a file; any other is
-	// deselected, so the repo is the selection. Not under the new-session
-	// dialog, which keeps what it opened over, as showTab does.
-	function openWelcome(repo: string): void {
-		if (dialogOpen) return;
-		if (tabs.selectedRow === undefined || groupKey(tabs.selectedRow.info.cwd, $manager.repos) !== repo) manager.deselect();
-		tabs.group = repo;
-		void showTab(WELCOME);
-	}
-
-	// The Other group's name, shown while it holds file tabs, selects them:
-	// the way back to edits that moved there when their repo was removed. Its
-	// most recent tab shows, as closing one would go; no welcome, it is no repo.
-	function openOther(): void {
-		if (dialogOpen) return;
-		if (tabs.selectedRow === undefined || groupKey(tabs.selectedRow.info.cwd, $manager.repos) !== OTHER) manager.deselect();
-		tabs.group = OTHER;
-		const next = fallback(tabs.recent.get(OTHER) ?? [], tabs.groupTabs);
-		if (next !== undefined) void showTab(next);
-	}
 
 	// A ⌘-clicked file in a session's terminal; cwd is its starting folder.
 	// Unpinned, it opens as the group's preview. A dirty document opens pinned:
@@ -215,7 +181,7 @@
 		tabs.previews = r.previews;
 		if (r.drop !== undefined) documents.dropDocument(r.drop);
 		saveTabs(tabs.groups);
-		void showTab(path);
+		void tabs.show(path);
 	}
 
 	// A file's diff against HEAD, as a tab of the shown group: the repo the
@@ -228,7 +194,7 @@
 		// The preview it took the place of, a file tab's maybe.
 		if (r.drop !== undefined) documents.dropDocument(r.drop);
 		saveTabs(tabs.groups);
-		void showTab(diffTab(path));
+		void tabs.show(diffTab(path));
 	}
 
 	// The order a drag on the bar left the group's tabs in, kept across restarts.
@@ -245,32 +211,6 @@
 		const cwd = tabs.selectedRow?.info.cwd ?? tabs.root;
 		if (cwd === undefined) return;
 		void openPath(path, '', (m, tone) => manager.report(m, tone), (p) => openFile(cwd, p, pin));
-	}
-
-	// What shows takes the focus, so that typing never reaches a terminal
-	// covered by a file or a welcome.
-	function focusContent(): void {
-		if (tabs.active === WELCOME) repoWelcome?.focus();
-		else if (tabs.active === undefined) appWelcome?.focus();
-		else if (isSessionTab(tabs.active)) tabs.selectedView()?.focus();
-		else filePane?.focus();
-	}
-
-	// No file and no welcome under the new-session dialog: it gives the focus
-	// back to what had it when it opened, which may be the terminal they would
-	// cover. A session's tab can show, as when the session it creates is
-	// selected; the dialog keeps the focus then.
-	async function showTab(path: string | undefined): Promise<void> {
-		if (dialogOpen && path !== undefined && !isSessionTab(path)) return;
-		tabs.active = path;
-		const sid = path === undefined ? undefined : tabSid(path);
-		if (sid !== undefined && sid !== $manager.selected) manager.select(sid);
-		// Every change of the shown tab ends here, so this one line keeps the
-		// list. The welcome is no tab that closing one could go back to.
-		if (tabs.group !== undefined && path !== undefined && path !== WELCOME) tabs.recent.set(tabs.group, touch(tabs.recent.get(tabs.group) ?? [], path));
-		// The file pane is there to take the focus only once it has rendered.
-		await tick();
-		if (!dialogOpen) focusContent();
 	}
 
 	// Asked before unsaved edits or a working session are lost; false when the
@@ -333,7 +273,7 @@
 		tabs.groups = r.groups;
 		tabs.previews = r.previews;
 		saveTabs(tabs.groups);
-		if (tabs.active !== undefined && paths.includes(tabs.active) && tabs.group === key) showFallback();
+		if (tabs.active !== undefined && paths.includes(tabs.active) && tabs.group === key) tabs.showFallback();
 	}
 
 	// ⌘W: the tab shown; the welcome is set aside like a tab while the group
@@ -341,9 +281,9 @@
 	// key reaches the page under the new-session dialog too, where it closes
 	// the dialog, as Escape does, and nothing behind it.
 	function closeActive(): void {
-		if (dialogOpen) dialogOpen = false;
+		if (tabs.dialogOpen) tabs.dialogOpen = false;
 		else if (tabs.active !== undefined && tabs.active !== WELCOME) void closeTabs([tabs.active]);
-		else if (tabs.active === WELCOME && tabs.groupTabs.length > 0) void showTab(fallback((tabs.group !== undefined && tabs.recent.get(tabs.group)) || [], tabs.groupTabs));
+		else if (tabs.active === WELCOME && tabs.groupTabs.length > 0) void tabs.show(fallback((tabs.group !== undefined && tabs.recent.get(tabs.group)) || [], tabs.groupTabs));
 		else getCurrentWindow().close().catch((e) => manager.report(`closing the window failed: ${e instanceof Error ? e.message : String(e)}`));
 	}
 
@@ -375,13 +315,6 @@
 		onDestroy(() => void unlisten.then((f) => f(), () => {}));
 	}
 
-	// A repo's welcome with no tabs has nothing to step to. Nothing switches
-	// under the new-session dialog, which keeps what it opened over.
-	function stepTab(step: number): void {
-		if (dialogOpen) return;
-		const next = neighbour(tabs.groupTabs, tabs.active, step);
-		if (next !== undefined) void showTab(next);
-	}
 	let destroyed = false;
 	onDestroy(() => {
 		destroyed = true;
@@ -413,9 +346,9 @@
 			case 'close':
 				return closeActive();
 			case 'prev':
-				return stepTab(-1);
+				return tabs.step(-1);
 			case 'next':
-				return stepTab(1);
+				return tabs.step(1);
 			case 'files':
 				return togglePanel();
 		}
@@ -423,27 +356,14 @@
 	unlistenTabs.catch((e) => manager.report(`tab shortcuts unavailable: ${e instanceof Error ? e.message : String(e)}`));
 	onDestroy(() => void unlistenTabs.then((f) => f(), () => {}));
 
-	// A click brings the window up whatever the notification was about; the
-	// manager selects its session only if that very session is still there.
+	// A click brings the window up whatever the notification was about.
 	function openNotified(target?: Target): void {
-		// The same session stays selected, so nothing else shows its tab.
-		const same = target !== undefined && tabs.selectedRow?.info.sid === target.sid && tabs.selectedRow.info.inc === target.inc;
-		manager.openNotified(target);
-		if (same) void showTab(sessionTab(target.sid));
+		tabs.openNotified(target);
 		const win = getCurrentWindow();
 		win.show()
 			.then(() => win.unminimize())
 			.then(() => win.setFocus())
 			.catch((e) => manager.report(`bringing the window up failed: ${e instanceof Error ? e.message : String(e)}`));
-	}
-
-	// A session's row in the sidebar, or a past conversation's open row, asks
-	// for its tab: as openNotified, the same session staying selected, the
-	// file or its repo's welcome covering it goes.
-	function selectSession(sid: number): void {
-		const same = sid === $manager.selected;
-		manager.select(sid);
-		if (same) void showTab(sessionTab(sid));
 	}
 
 	// The manager starts once the notifier is set up, so the notifications it
@@ -469,30 +389,18 @@
 	let aside = $state<HTMLElement>();
 	let addRepo = $state<ReturnType<typeof AddRepo>>();
 
-	let dialogOpen = $state(false);
-	let dialogCwd = $state('');
-
-	// The dialog starts in the shown repo, else in the folder it last created
-	// a session in, else in the home folder.
-	function newSession() {
-		if (dialogOpen) return;
-		dialogCwd = (tabs.group !== OTHER ? tabs.group : undefined) ?? load(LAST_CWD) ?? '';
-		dialogOpen = true;
-	}
-
 	// On the window in the capture phase, so it runs before xterm's handler on
 	// its textarea and the terminal never sees the key. ⌃Tab and ⌃⇧Tab are
 	// here and not in the menu, as AppKit would run its key-view loop on them;
 	// ⌥⌘← and ⌥⌘→ are here beside them. The menu has ⌘⇧[ and ⌘⇧].
 	function shortcut(e: KeyboardEvent) {
 		const n = tabNumber(e);
-		if (isNewSessionShortcut(e)) newSession();
+		if (isNewSessionShortcut(e)) tabs.newSession();
 		else if (isSidebarShortcut(e)) toggleSidebar();
-		else if (isPrevTabShortcut(e)) stepTab(-1);
-		else if (isNextTabShortcut(e)) stepTab(1);
-		else if (n !== undefined) {
-			if (!dialogOpen && n <= tabs.groupTabs.length) void showTab(tabs.groupTabs[n - 1]);
-		} else if (isSaveShortcut(e)) {
+		else if (isPrevTabShortcut(e)) tabs.step(-1);
+		else if (isNextTabShortcut(e)) tabs.step(1);
+		else if (n !== undefined) tabs.showAt(n);
+		else if (isSaveShortcut(e)) {
 			// By path, not through an editor, so a tab that shows no editor saves too.
 			if (tabs.active !== undefined) void documents.saveDocument(tabs.active, (m) => manager.report(m));
 		} else return;
@@ -508,13 +416,13 @@
 	function toggleSidebar() {
 		sidebarHidden = !sidebarHidden;
 		save(SIDEBAR_HIDDEN, String(sidebarHidden));
-		if (!dialogOpen) focusContent();
+		tabs.refocus();
 	}
 
 	function sidebarResized() {
 		holdLayout(false);
 		tabs.selectedView()?.refit();
-		filePane?.relayout();
+		tabs.filePane?.relayout();
 		save(SIDEBAR_WIDTH, String(sidebarWidth));
 	}
 
@@ -528,7 +436,7 @@
 	function togglePanel() {
 		panelHidden = !panelHidden;
 		save(PANEL_HIDDEN, String(panelHidden));
-		if (!dialogOpen) focusContent();
+		tabs.refocus();
 	}
 
 	// The welcome's "All past conversations": the panel's Past view, shown.
@@ -540,7 +448,7 @@
 	function panelResized() {
 		holdLayout(false);
 		tabs.selectedView()?.refit();
-		filePane?.relayout();
+		tabs.filePane?.relayout();
 		save(PANEL_WIDTH, String(panelWidth));
 	}
 
@@ -560,7 +468,7 @@
 			const view = tabs.selectedView();
 			if (sid === undefined || !view) return;
 			// The paths go to the terminal, so its tab shows.
-			if (tabs.active !== sessionTab(sid)) void showTab(sessionTab(sid));
+			if (tabs.active !== sessionTab(sid)) void tabs.show(sessionTab(sid));
 			try {
 				view.sendInput(shellQuoteAll(e.payload.paths));
 			} catch (err) {
@@ -634,8 +542,8 @@
 			selected={$manager.selected}
 			selectedRepo={tabs.selectedRow ? undefined : tabs.group}
 			otherTabs={(tabs.groups[OTHER] ?? []).some((k) => !isSessionTab(k))}
-			onselect={selectSession}
-			onselectrepo={(r) => (r === OTHER ? openOther() : openWelcome(r))}
+			onselect={tabs.selectSession}
+			onselectrepo={(r) => (r === OTHER ? tabs.openOther() : tabs.openWelcome(r))}
 			onkill={(sid) => manager.kill(sid)}
 			repos={$manager.repos}
 			{home}
@@ -648,10 +556,10 @@
 			onreport={(m) => manager.report(m)}
 			addDisabled={$manager.status !== 'connected'}
 			onaddrepo={() => void addRepo?.open()}
-			onnewsession={newSession}
+			onnewsession={tabs.newSession}
 		/>
 		<div class="sidebar-footer">
-			<button class="new-session" title="New session (⌘T)" onclick={newSession}>
+			<button class="new-session" title="New session (⌘T)" onclick={tabs.newSession}>
 				<Icon name="plus" />
 				<span class="label">New session</span>
 				<kbd>⌘T</kbd>
@@ -660,13 +568,13 @@
 		<SidebarEdge width={sidebarWidth} onstart={() => holdLayout(true)} onresize={(w) => (sidebarWidth = w)} onend={sidebarResized} />
 	</aside>
 	<NewSessionDialog
-		open={dialogOpen}
+		open={tabs.dialogOpen}
 		repos={$manager.repos}
-		defaultCwd={dialogCwd}
+		defaultCwd={tabs.dialogCwd}
 		disabled={$manager.creating || $manager.status !== 'connected'}
 		oncreate={(cwd, cmd, name) => manager.create(cwd, cmd, name)}
-		onclose={() => (dialogOpen = false)}
-		fallbackFocus={focusContent}
+		onclose={() => (tabs.dialogOpen = false)}
+		fallbackFocus={tabs.focusContent}
 	/>
 	<section class="content">
 		<!-- No bar with nothing in it: a repo's welcome alone starts at the top, as the app welcome does. -->
@@ -677,11 +585,11 @@
 				active={tabs.active}
 				preview={tabs.previews[tabs.group]}
 				dirty={tabs.dirty}
-				onselect={(p) => void showTab(p)}
+				onselect={(p) => void tabs.show(p)}
 				onclose={(ps) => void closeTabs(ps)}
 				onpin={(p) => (tabs.previews = unpreview(tabs.previews, p))}
 				onreorder={reorderTabs}
-				onnew={newSession}
+				onnew={tabs.newSession}
 				report={(m) => manager.report(m)}
 			/>
 		{/if}
@@ -692,7 +600,7 @@
 				<!-- Keyed, so another repo's welcome reads its own changes and past conversations. -->
 				{#key repo}
 					<RepoWelcome
-						bind:this={repoWelcome}
+						bind:this={tabs.repoWelcome}
 						{repo}
 						{home}
 						sessions={$manager.sessions.map((r) => r.info)}
@@ -702,17 +610,17 @@
 						onstart={(cmd) => manager.create(repo, cmd, '')}
 						onallpast={showPast}
 						onresume={(cwd, cmd) => void manager.create(cwd, cmd, '')}
-						onselect={selectSession}
+						onselect={tabs.selectSession}
 						onreopen={(sid) => manager.reopen(sid)}
 						report={(m) => manager.report(m)}
 					/>
 				{/key}
 			{:else if tabs.active !== undefined && !isSessionTab(tabs.active)}
 				{@const path = tabs.active}
-				<FilePane bind:this={filePane} {path} repo={tabs.root} {home} readOnly={updating} onclose={() => void closeTabs([path])} onopenfile={(p) => openFromTree(p)} report={(m) => manager.report(m)} />
+				<FilePane bind:this={tabs.filePane} {path} repo={tabs.root} {home} readOnly={updating} onclose={() => void closeTabs([path])} onopenfile={(p) => openFromTree(p)} report={(m) => manager.report(m)} />
 			{/if}
 			{#if tabs.group === undefined}
-				<AppWelcome bind:this={appWelcome} {version} addDisabled={$manager.status !== 'connected'} onaddrepo={() => void addRepo?.open()} onnewsession={newSession} />
+				<AppWelcome bind:this={tabs.appWelcome} {version} addDisabled={$manager.status !== 'connected'} onaddrepo={() => void addRepo?.open()} onnewsession={tabs.newSession} />
 			{/if}
 		</div>
 	</section>
@@ -733,11 +641,9 @@
 				onopendiff={openDiff}
 				onaddrepo={(f) => manager.addRepo(f)}
 				onresume={(cwd, cmd) => void manager.create(cwd, cmd, '')}
-				onselect={selectSession}
+				onselect={tabs.selectSession}
 				onreopen={(sid) => manager.reopen(sid)}
-				onleave={() => {
-					if (!dialogOpen) focusContent();
-				}}
+				onleave={tabs.refocus}
 				report={(m) => manager.report(m)}
 			/>
 			<SidebarEdge
