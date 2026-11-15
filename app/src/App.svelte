@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { Terminal } from '@xterm/xterm';
 	import { onDestroy } from 'svelte';
-	import AddRepo from './lib/AddRepo.svelte';
 	import { setApp } from './lib/app-context';
 	import AppWelcome from './lib/AppWelcome.svelte';
 	import { DaemonConnection } from './lib/connection';
@@ -9,8 +8,6 @@
 	import { watchFileDrop } from './lib/file-drop';
 	import FilePane from './lib/FilePane.svelte';
 	import FilesAside from './lib/FilesAside.svelte';
-	import Icon from './lib/Icon.svelte';
-	import { holdLayout } from './lib/layout-hold';
 	import { Layout } from './lib/layout.svelte';
 	import { SessionManager } from './lib/manager';
 	import NewSessionDialog from './lib/NewSessionDialog.svelte';
@@ -18,11 +15,10 @@
 	import type { Notifier } from './lib/notify';
 	import RepoWelcome from './lib/RepoWelcome.svelte';
 	import { isSessionTab } from './lib/session-tabs';
-	import SessionList from './lib/SessionList.svelte';
-	import SidebarEdge from './lib/SidebarEdge.svelte';
+	import Sidebar from './lib/Sidebar.svelte';
 	import StatusBar from './lib/StatusBar.svelte';
 	import TabBar from './lib/TabBar.svelte';
-	import { OTHER, WELCOME } from './lib/tabs';
+	import { WELCOME } from './lib/tabs';
 	import { Tabs } from './lib/tabs.svelte';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { watchMenu, windowShortcut } from './lib/shortcuts';
@@ -55,51 +51,13 @@
 	setApp({ manager, tabs, layout, startup });
 	const shortcut = windowShortcut(tabs, layout);
 	onDestroy(watchMenu(tabs, layout, manager));
-
-	let aside = $state<HTMLElement>();
-	let addRepo = $state<ReturnType<typeof AddRepo>>();
-
-	onDestroy(watchFileDrop(manager, tabs, () => aside));
+	onDestroy(watchFileDrop(manager, tabs, () => layout.sidebar));
 </script>
 
 <svelte:window onkeydowncapture={shortcut} />
 
 <main class:sidebar-hidden={layout.sidebarHidden} class:files-hidden={!layout.panelShown} style:--sidebar-width="{layout.sidebarWidth}px" style:--panel-width="{layout.panelWidth}px">
-	<aside bind:this={aside}>
-		<header>
-			<span class="title">Repos</span>
-			<AddRepo bind:this={addRepo} disabled={$manager.status !== 'connected'} onadd={(p) => manager.addRepo(p)} />
-		</header>
-		<SessionList
-			sessions={$manager.sessions}
-			selected={$manager.selected}
-			selectedRepo={tabs.selectedRow ? undefined : tabs.group}
-			otherTabs={(tabs.groups[OTHER] ?? []).some((k) => !isSessionTab(k))}
-			onselect={tabs.selectSession}
-			onselectrepo={(r) => (r === OTHER ? tabs.openOther() : tabs.openWelcome(r))}
-			onkill={(sid) => manager.kill(sid)}
-			repos={$manager.repos}
-			home={startup.home}
-			disabled={$manager.creating || $manager.status !== 'connected'}
-			onreopen={(sid) => manager.reopen(sid)}
-			ondismiss={(sid) => manager.dismiss(sid)}
-			onstart={(repo, cmd) => manager.create(repo, cmd, '')}
-			onremoverepo={(p) => manager.removeRepo(p)}
-			onrename={(sid, name) => manager.rename(sid, name)}
-			onreport={(m) => manager.report(m)}
-			addDisabled={$manager.status !== 'connected'}
-			onaddrepo={() => void addRepo?.open()}
-			onnewsession={tabs.newSession}
-		/>
-		<div class="sidebar-footer">
-			<button class="new-session" title="New session (⌘T)" onclick={tabs.newSession}>
-				<Icon name="plus" />
-				<span class="label">New session</span>
-				<kbd>⌘T</kbd>
-			</button>
-		</div>
-		<SidebarEdge width={layout.sidebarWidth} onstart={() => holdLayout(true)} onresize={(w) => (layout.sidebarWidth = w)} onend={layout.sidebarResized} />
-	</aside>
+	<Sidebar />
 	<NewSessionDialog
 		open={tabs.dialogOpen}
 		repos={$manager.repos}
@@ -153,7 +111,7 @@
 				<FilePane bind:this={tabs.filePane} {path} repo={tabs.root} home={startup.home} readOnly={startup.updating} onclose={() => void tabs.close([path])} onopenfile={(p) => tabs.openFromTree(p)} report={(m) => manager.report(m)} />
 			{/if}
 			{#if tabs.group === undefined}
-				<AppWelcome bind:this={tabs.appWelcome} version={startup.version} addDisabled={$manager.status !== 'connected'} onaddrepo={() => void addRepo?.open()} onnewsession={tabs.newSession} />
+				<AppWelcome bind:this={tabs.appWelcome} version={startup.version} addDisabled={$manager.status !== 'connected'} onaddrepo={() => void layout.addRepo?.open()} onnewsession={tabs.newSession} />
 			{/if}
 		</div>
 	</section>

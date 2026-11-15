@@ -1,3 +1,4 @@
+import type AddRepo from './AddRepo.svelte';
 import { loadPanelWidth, PANEL_HIDDEN, PANEL_WIDTH } from './file-panel';
 import { showView } from './FilesPanel.svelte';
 import { holdLayout } from './layout-hold';
@@ -19,6 +20,10 @@ export class Layout {
 	// welcome is drawn without it; the stored choice is kept for later. A
 	// function, as the constructor sets tabs after the fields.
 	readonly panelShown = $derived.by(() => !this.panelHidden && this.tabs.group !== undefined);
+	// Bound by the sidebar's markup: the file drop measures the one, and the
+	// app welcome's Add a repo opens the other.
+	sidebar?: HTMLElement;
+	addRepo?: ReturnType<typeof AddRepo>;
 
 	constructor(tabs: LayoutTabs) {
 		this.tabs = tabs;
