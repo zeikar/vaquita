@@ -327,7 +327,13 @@ mod tests {
         let other = std::fs::File::open(&path).unwrap();
         assert!(other.try_lock().is_err());
         drop(held);
-        assert!(other.try_lock().is_ok());
+        // A child another test forks meanwhile shares the lock until its exec
+        // closes the file, so the release can show a moment late.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while other.try_lock().is_err() {
+            assert!(std::time::Instant::now() < deadline, "the lock stayed held after the drop");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         assert_eq!(std::fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
     }
 
