@@ -50,5 +50,6 @@ muda = { version = "0.20.0", default-features = false }
 codegen-units = 1
 lto = true
 opt-level = 3
-panic = "abort"
+# No panic = "abort", which the guide suggests: under it wry cannot catch
+# WebKit's exceptions (docs/decisions.md, "The app: Tauri on WKWebView").
 strip = true

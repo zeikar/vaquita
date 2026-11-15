@@ -5,6 +5,8 @@ Each release's notes open with its section here.
 ## 0.1.30
 
 - A file double-clicked in the files tree is kept in its tab every time; now and then it used to open as a second tab beside the preview.
+- Playing a video in a tab no longer crashes the app now and then.
+- `app-panic.log` names the app's version; it used to say 0.1.0.
 
 ## 0.1.29
 

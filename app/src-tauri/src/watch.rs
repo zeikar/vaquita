@@ -12,8 +12,10 @@
 //! the watcher's: notify's watch and unwatch join the thread the handler runs
 //! on, so a lock held across them that the handler also took would deadlock.
 //! notify panics on an FSEvents flag it does not know or a path that is not
-//! UTF-8, and a release build aborts on a panic, so when macOS adds flags the
-//! notify in use should be checked for them.
+//! UTF-8, which ends its event thread if not the app; the next watch change
+//! then hangs or panics with the lock held, and the tree stops updating until
+//! the app restarts. So when macOS adds flags the notify in use should be
+//! checked for them.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};

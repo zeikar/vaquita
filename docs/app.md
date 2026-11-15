@@ -60,7 +60,7 @@ Each of these was learned the hard way; a change to the app keeps all of them, a
 
 ## When the app crashes
 
-A release build aborts on a panic and ships without symbols, so macOS's crash report (`~/Library/Logs/DiagnosticReports/vaquita-*.ips`) shows only addresses. The app appends the panic's message and its `file.rs:line:col` to `app-panic.log` in the vaquita home (`~/Library/Application Support/vaquita`, or `$VAQUITA_HOME`) before it goes; that line names the code that failed.
+A release build ships without symbols, so macOS's crash report (`~/Library/Logs/DiagnosticReports/vaquita-*.ips`) shows only addresses. The app appends each panic's message and its `file.rs:line:col` to `app-panic.log` in the vaquita home (`~/Library/Application Support/vaquita`, or `$VAQUITA_HOME`), with the app's version; that line names the code that failed. Panics unwind ([why](decisions.md#the-app-tauri-on-wkwebview)): one on a background thread ends only the work it was doing, while one on the main thread ends the app, possibly without a crash report. A line that reads only `panic in a function that cannot unwind`, with no panic logged just before it, is an Objective-C exception that reached Rust; one that reached a background task leaves no line at all. The system log (`log show --predicate 'processID == <pid>'`, with the pid from the crash report) shows what the app was doing just before.
 
 ## Release build
 
