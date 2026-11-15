@@ -320,6 +320,18 @@ function pastConversations(root) {
 	return { entries };
 }
 
+// A rough copy of the Rust paths_exist: true, false, or null when the disk
+// could not say.
+function pathExists({ path: p, host }) {
+	if (host && host !== 'localhost') return false;
+	try {
+		fs.statSync(p === '~' || p.startsWith('~/') ? os.homedir() + p.slice(1) : p);
+		return true;
+	} catch (e) {
+		return e.code === 'ENOENT' || e.code === 'ENOTDIR' ? false : null;
+	}
+}
+
 const unknown = new Set();
 function run(cmd, args) {
 	switch (cmd) {
@@ -361,6 +373,8 @@ function run(cmd, args) {
 			} catch (e) {
 				throw ioError(e);
 			}
+		case 'paths_exist':
+			return args.paths.map(pathExists);
 		case 'read_text': {
 			const text = fs.readFileSync(args.path, 'utf8');
 			return { text, stamp: stamp(args.path) };
