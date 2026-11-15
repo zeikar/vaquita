@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import type { Terminal } from '@xterm/xterm';
 	import { onDestroy } from 'svelte';
 	import AddRepo from './lib/AddRepo.svelte';
@@ -9,6 +8,7 @@
 	import { DaemonConnection } from './lib/connection';
 	import { appBuild, checkRestart, daemonOnDisk, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
 	import { clampPanelWidth, PANEL_DEFAULT_WIDTH } from './lib/file-panel';
+	import { watchFileDrop } from './lib/file-drop';
 	import FilePane from './lib/FilePane.svelte';
 	import FilesPanel from './lib/FilesPanel.svelte';
 	import Icon from './lib/Icon.svelte';
@@ -19,7 +19,7 @@
 	import Notices from './lib/Notices.svelte';
 	import type { Notifier } from './lib/notify';
 	import RepoWelcome from './lib/RepoWelcome.svelte';
-	import { isSessionTab, sessionTab } from './lib/session-tabs';
+	import { isSessionTab } from './lib/session-tabs';
 	import SessionList from './lib/SessionList.svelte';
 	import SidebarEdge from './lib/SidebarEdge.svelte';
 	import StatusBar from './lib/StatusBar.svelte';
@@ -27,10 +27,8 @@
 	import { OTHER, WELCOME } from './lib/tabs';
 	import { Tabs } from './lib/tabs.svelte';
 	import TerminalPane from './lib/TerminalPane.svelte';
-	import { shellQuoteAll } from './lib/shellquote';
 	import { watchMenu, windowShortcut } from './lib/shortcuts';
 	import { Startup } from './lib/startup.svelte';
-	import { isTauri } from './lib/tauri';
 	import { createTerminal, TermView } from './lib/term-view';
 
 	// Replaced by the Tauri notifier once it is ready; the console one stays in
@@ -63,32 +61,7 @@
 	let aside = $state<HTMLElement>();
 	let addRepo = $state<ReturnType<typeof AddRepo>>();
 
-	// The OS file drop only exists inside Tauri. Paths dropped on the sidebar
-	// are added as repos; anywhere else they are typed into the selected session.
-	if (isTauri()) {
-		const unlisten = getCurrentWebview().onDragDropEvent((e) => {
-			if (e.payload.type !== 'drop') return;
-			// The position arrives in physical pixels.
-			const { x, y } = e.payload.position.toLogical(window.devicePixelRatio);
-			const box = aside?.getBoundingClientRect();
-			if (box && x >= box.left && x < box.right && y >= box.top && y < box.bottom) {
-				for (const p of e.payload.paths) manager.addRepo(p);
-				return;
-			}
-			const sid = $manager.selected;
-			const view = tabs.selectedView();
-			if (sid === undefined || !view) return;
-			// The paths go to the terminal, so its tab shows.
-			if (tabs.active !== sessionTab(sid)) void tabs.show(sessionTab(sid));
-			try {
-				view.sendInput(shellQuoteAll(e.payload.paths));
-			} catch (err) {
-				manager.report(`file drop refused: ${err instanceof Error ? err.message : String(err)}`);
-			}
-		});
-		unlisten.catch((e) => manager.report(`file drop unavailable: ${e instanceof Error ? e.message : String(e)}`));
-		onDestroy(() => void unlisten.then((f) => f(), () => {}));
-	}
+	onDestroy(watchFileDrop(manager, tabs, () => aside));
 </script>
 
 <svelte:window onkeydowncapture={shortcut} />
