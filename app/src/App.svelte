@@ -4,7 +4,7 @@
 	import { getCurrentWebview } from '@tauri-apps/api/webview';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import type { Terminal } from '@xterm/xterm';
-	import { onDestroy, untrack } from 'svelte';
+	import { onDestroy } from 'svelte';
 	import AddRepo from './lib/AddRepo.svelte';
 	import AppUpdateBanner from './lib/AppUpdateBanner.svelte';
 	import AppWelcome from './lib/AppWelcome.svelte';
@@ -26,13 +26,13 @@
 	import NewSessionDialog from './lib/NewSessionDialog.svelte';
 	import type { Notifier, Target } from './lib/notify';
 	import RepoWelcome from './lib/RepoWelcome.svelte';
-	import { isSessionTab, reconcile, sessionTab } from './lib/session-tabs';
+	import { isSessionTab, sessionTab } from './lib/session-tabs';
 	import SessionList from './lib/SessionList.svelte';
 	import { loadWidth, SIDEBAR_HIDDEN, SIDEBAR_WIDTH } from './lib/sidebar';
 	import SidebarEdge from './lib/SidebarEdge.svelte';
 	import { load, save } from './lib/storage';
 	import TabBar from './lib/TabBar.svelte';
-	import { groupKey, OTHER, prune, saveTabs, touch, WELCOME } from './lib/tabs';
+	import { OTHER, WELCOME } from './lib/tabs';
 	import { Tabs } from './lib/tabs.svelte';
 	import TerminalPane from './lib/TerminalPane.svelte';
 	import { shellQuoteAll } from './lib/shellquote';
@@ -40,7 +40,6 @@
 	import { createTauriNotifier } from './lib/tauri-notify';
 	import { createTerminal, TermView } from './lib/term-view';
 	import UpdateBanner from './lib/UpdateBanner.svelte';
-	import { newRepos, selectionAfterRemoval } from './lib/welcome';
 
 	// Replaced by the Tauri notifier once it is ready; the console one stays in
 	// a plain browser and when the Tauri one cannot be set up.
@@ -62,111 +61,6 @@
 	// manager's would each wait on the other.
 	const tabs: Tabs<Terminal, TermView> = new Tabs({ manager });
 	onDestroy(() => tabs.stop());
-
-	// Not before the daemon has sent its list: the empty one the app starts
-	// with would drop every repo's tabs. Those of a repo removed move to Other,
-	// so that no one is left without a way to save the edits they may hold.
-	$effect(() => {
-		if (!$manager.reposListed) return;
-		const before = tabs.groups;
-		const kept = prune(before, $manager.repos);
-		if (kept === before) return;
-		tabs.groups = kept;
-		saveTabs(kept);
-		// With no session the moved file tabs are reached only by selecting
-		// their group, which may be Other: tabs and no welcome, no tree. A
-		// selected session with a tab takes the group along itself, below.
-		if (tabs.selectedPlaced() || tabs.group === undefined || $manager.repos.includes(tabs.group)) return;
-		const to = selectionAfterRemoval(before, tabs.group, $manager.repos);
-		if (to === undefined) return;
-		tabs.group = to;
-		const moved = (kept[to] ?? []).filter((k) => !isSessionTab(k));
-		void tabs.show(tabs.active !== undefined && moved.includes(tabs.active) ? tabs.active : moved[0]);
-	});
-	// The stored order follows the session list: a gone session's tab leaves
-	// it, a new one, or one a repo added or removed moved, joins its group.
-	$effect(() => {
-		if (!tabs.listed) return;
-		const next = reconcile(tabs.groups, tabs.placed);
-		if (next === tabs.groups) return;
-		tabs.groups = next;
-		saveTabs(next);
-	});
-
-	// A file or a welcome covers the terminal, whose session is then not being looked at.
-	$effect(() => manager.setCovered(tabs.active !== undefined && !isSessionTab(tabs.active)));
-
-	// A session selected shows its tab, in its group: a click on its row, a
-	// notification, a created session's replay and the relaunch's stored
-	// selection all come here. A deselect does nothing, as whoever deselected
-	// has shown a welcome or an Other tab. Null at first, which no selection
-	// is, so the first run shows what there is (the app welcome before the
-	// daemon's list) and it takes the focus.
-	let shownSid: number | undefined | null = null;
-	$effect(() => {
-		const sid = $manager.selected;
-		if (sid === shownSid) return;
-		if (sid === undefined) {
-			if (shownSid === null) void tabs.show(undefined);
-			shownSid = undefined;
-			return;
-		}
-		const row = $manager.sessions.find((r) => r.info.sid === sid);
-		if (!row) return;
-		shownSid = sid;
-		untrack(() => {
-			tabs.group = groupKey(row.info.cwd, $manager.repos);
-			// Shown already when its tab was what selected it.
-			if (tabs.active !== sessionTab(sid)) void tabs.show(sessionTab(sid));
-		});
-	});
-	// A repo added or removed can move the selected session to another group,
-	// which then shows, as does the repo list that comes after the session
-	// list on a relaunch. Before the effects below, so that they see the group
-	// it went to. A record of an earlier run has no tab to follow, and the
-	// fallback below may leave its group. Its tab shown goes into the new
-	// group's recent list, for closing a tab opened after it to come back to.
-	$effect(() => {
-		if (!$manager.reposListed || tabs.selectedRow === undefined) return;
-		const sid = tabs.selectedRow.info.sid;
-		const to = tabs.placed.get(sid);
-		if (to === undefined || to === tabs.group) return;
-		tabs.group = to;
-		if (untrack(() => tabs.active) === sessionTab(sid)) tabs.recent.set(to, touch(tabs.recent.get(to) ?? [], sessionTab(sid)));
-	});
-	// A removed repo is no selection; the app welcome shows instead. Not before
-	// the daemon's list, as the one the app starts with is empty.
-	$effect(() => {
-		if ($manager.reposListed && !tabs.selectedPlaced() && tabs.group !== undefined && tabs.group !== OTHER && !$manager.repos.includes(tabs.group)) tabs.group = undefined;
-	});
-	// What shows that is not of the shown group goes: a closed or killed
-	// session's tab, a tab a repo added or removed moved away, the welcome of
-	// a repo that went. Not before the lists, which would make every stored
-	// session tab look gone.
-	$effect(() => {
-		if (!tabs.listed) return;
-		const shows = tabs.active === undefined ? tabs.group === undefined : tabs.active === WELCOME ? tabs.root !== undefined : tabs.groupTabs.includes(tabs.active);
-		if (!shows) tabs.showFallback();
-	});
-
-	// The daemon sends the whole repo list on every change and does not say
-	// which request it answers, so a repo new to the list is the sign that it
-	// was added, here or by anyone else. The first list is what was already
-	// there and opens nothing. Of several at once, as from a drop of many
-	// folders, the last in the list opens, so one welcome shows.
-	let knownRepos: string[] | undefined;
-	$effect(() => {
-		// Under the dialog nothing is consumed, so that its close, which reruns
-		// this, still finds the additions that came meanwhile.
-		if (!$manager.reposListed || tabs.dialogOpen) return;
-		const repos = $manager.repos;
-		if (repos === knownRepos) return;
-		const prev = knownRepos;
-		knownRepos = repos;
-		if (prev === undefined) return;
-		const added = newRepos(prev, repos).at(-1);
-		if (added !== undefined) untrack(() => tabs.openWelcome(added));
-	});
 
 	// The install ends in an exit, which no close request precedes. Editing is
 	// frozen before the question and until the install fails or is declined, so

@@ -1,5 +1,8 @@
-// Named .svelte.test.ts so that the store's runes compile.
-import { describe, expect, it, vi } from 'vitest';
+// @vitest-environment happy-dom
+// Named .svelte.test.ts so that the store's runes compile; in the client
+// build, as vitest makes the server one for node, where effects never run.
+import { flushSync } from 'svelte';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { answer, connected, fakeTimersAndStorage, info } from './manager-harness';
 import { LAST_CWD } from './NewSessionDialog.svelte';
 import type { SessionInfo } from './protocol';
@@ -35,14 +38,26 @@ function fakeDocuments(dirty: string[] = []) {
 	return { docs, calls, tell, listeners };
 }
 
+// The store's effects need an owner, as App's script is in the app.
+let cleanup: (() => void) | undefined;
+afterEach(() => {
+	cleanup?.();
+	cleanup = undefined;
+});
+
 // dirty is what isDirty answers; tell is what turns a document dirty for the store.
-async function make(list = [info(1), info(2)], dirty: string[] = []) {
-	const t = await connected(list);
+async function make(list = [info(1), info(2)], dirty: string[] = [], selected?: number) {
+	const t = await connected(list, selected);
 	const d = fakeDocuments(dirty);
 	const ask = vi.fn(async (_message: string, _okLabel: string) => false);
 	const closeWindow = vi.fn(async () => {});
-	const tabs = new Tabs({ manager: t.m, documents: d.docs, ask, closeWindow });
-	return { ...t, ...d, tabs, ask, closeWindow };
+	const build = () => new Tabs({ manager: t.m, documents: d.docs, ask, closeWindow });
+	let tabs: ReturnType<typeof build> | undefined;
+	cleanup = $effect.root(() => {
+		tabs = build();
+	});
+	flushSync();
+	return { ...t, ...d, tabs: tabs!, ask, closeWindow };
 }
 
 const stored = () => JSON.parse(localStorage.getItem(TABS_KEY) ?? '{}');
@@ -131,10 +146,13 @@ describe('Tabs', () => {
 			await tabs.show('session:2');
 			expect(tabs.active).toBe('session:2');
 			expect(state().selected).toBe(2);
-			await tabs.show(a);
-			expect(tabs.active).toBe(a);
+			await tabs.show(b);
+			expect(tabs.active).toBe(b);
 			expect(state().selected).toBe(2);
-			expect(tabs.recent.get(repo)).toEqual([a, 'session:2']);
+			// Closing it goes back to the tab recorded before it, not to the first.
+			tabs.closeActive();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(tabs.active).toBe('session:2');
 		});
 
 		it("shows no file and no welcome under the dialog, but a session's tab", async () => {
@@ -452,6 +470,168 @@ describe('Tabs', () => {
 			t.tell(a, true);
 			expect(await t.tabs.mayLoseAll('Close the window?', 'Close')).toBe(false);
 			expect(t.state().report?.text).toBe('asking about unsaved changes failed: no dialog');
+		});
+	});
+
+	describe('following the lists', () => {
+		const gone = '/tmp/gone';
+		const g = `${gone}/g.md`;
+		const r2 = '/tmp/repo2';
+
+		it("keeps an unlisted repo's tabs until the daemon's list, then moves them to Other, dropping nothing", async () => {
+			localStorage.setItem(TABS_KEY, JSON.stringify({ [gone]: [g] }));
+			const { tabs, c, calls } = await make([]);
+			expect(tabs.groups).toEqual({ [gone]: [g] });
+			c.emit.repos([repo]);
+			flushSync();
+			expect(tabs.groups).toEqual({ [OTHER]: [g] });
+			expect(stored()).toEqual({ [OTHER]: [g] });
+			expect(calls.dropped).toEqual([]);
+		});
+
+		it('shows a moved file in Other when its repo, shown with no session, goes', async () => {
+			localStorage.setItem(TABS_KEY, JSON.stringify({ [gone]: [g] }));
+			const { tabs, c } = await make([]);
+			tabs.group = gone;
+			flushSync();
+			c.emit.repos([repo]);
+			flushSync();
+			expect(tabs.group).toBe(OTHER);
+			expect(tabs.active).toBe(g);
+		});
+
+		it("adds a new session's tab last to its group and takes a gone one's out", async () => {
+			localStorage.setItem(TABS_KEY, JSON.stringify({ [repo]: [a] }));
+			const { tabs, c } = await make([info(1)]);
+			c.emit.repos([repo]);
+			flushSync();
+			expect(tabs.groups[repo]).toEqual([a, 'session:1']);
+			c.emit.sessions([info(1), info(2)]);
+			flushSync();
+			expect(tabs.groups[repo]).toEqual([a, 'session:1', 'session:2']);
+			c.emit.sessions([info(2)]);
+			flushSync();
+			expect(tabs.groups[repo]).toEqual([a, 'session:2']);
+			expect(stored()).toEqual({ [repo]: [a, 'session:2'] });
+		});
+
+		it('falls back from a shown tab that went to the one shown before', async () => {
+			localStorage.setItem(TABS_KEY, JSON.stringify({ [repo]: [a, b] }));
+			const { tabs, c } = await make();
+			c.emit.repos([repo]);
+			flushSync();
+			tabs.group = repo;
+			await tabs.show(b);
+			await tabs.show('session:2');
+			c.emit.sessions([info(1)]);
+			flushSync();
+			expect(tabs.active).toBe(b);
+		});
+
+		it("falls back to the repo's welcome when its group has no tabs", async () => {
+			localStorage.setItem(TABS_KEY, JSON.stringify({ [r2]: [`${r2}/x.md`] }));
+			const { tabs, c } = await make([]);
+			c.emit.repos([repo, r2]);
+			flushSync();
+			tabs.group = repo;
+			tabs.active = `${repo}/gone.md`;
+			flushSync();
+			expect(tabs.active).toBe(WELCOME);
+		});
+
+		it('falls back to the first tab when none was shown before', async () => {
+			localStorage.setItem(TABS_KEY, JSON.stringify({ [repo]: [a, b] }));
+			const { tabs, c } = await make([]);
+			c.emit.repos([repo]);
+			flushSync();
+			tabs.group = repo;
+			tabs.active = `${repo}/gone.md`;
+			flushSync();
+			expect(tabs.active).toBe(a);
+		});
+
+		it('leaves an Other left empty as no group', async () => {
+			const { tabs, c } = await make([]);
+			c.emit.repos([repo]);
+			flushSync();
+			tabs.group = OTHER;
+			tabs.active = '/tmp/x.md';
+			flushSync();
+			expect(tabs.group).toBeUndefined();
+			expect(tabs.active).toBeUndefined();
+		});
+
+		it("shows a stored selection's tab and group first, the stored order kept", async () => {
+			localStorage.setItem(TABS_KEY, JSON.stringify({ [repo]: ['session:2', a, 'session:1'] }));
+			const { tabs, c } = await make(undefined, [], 2);
+			expect(tabs.active).toBe('session:2');
+			c.emit.repos([repo]);
+			flushSync();
+			expect(tabs.group).toBe(repo);
+			expect(tabs.active).toBe('session:2');
+			expect(tabs.groupTabs).toEqual(['session:2', a, 'session:1']);
+		});
+
+		it("moves the selected session's group when a repo is added", async () => {
+			const { tabs, c, state } = await make([info(1)], [], 1);
+			c.emit.repos([]);
+			flushSync();
+			expect(tabs.group).toBe(OTHER);
+			c.emit.repos([repo]);
+			flushSync();
+			expect(tabs.group).toBe(repo);
+			expect(state().selected).toBe(1);
+		});
+
+		it('leaves no group when the selected repo with no file tabs is removed', async () => {
+			const { tabs, c } = await make([]);
+			c.emit.repos([repo, r2]);
+			flushSync();
+			tabs.openWelcome(r2);
+			flushSync();
+			expect(tabs.group).toBe(r2);
+			c.emit.repos([repo]);
+			flushSync();
+			expect(tabs.group).toBeUndefined();
+			expect(tabs.active).toBeUndefined();
+		});
+
+		it("opens a new repo's welcome: none for the first list, the last of several, and only once the dialog closes", async () => {
+			const { tabs, c } = await make([]);
+			c.emit.repos([repo]);
+			flushSync();
+			expect(tabs.group).toBeUndefined();
+			c.emit.repos([repo, r2]);
+			flushSync();
+			expect(tabs.group).toBe(r2);
+			expect(tabs.active).toBe(WELCOME);
+			c.emit.repos([repo, r2, '/tmp/r3', '/tmp/r4']);
+			flushSync();
+			expect(tabs.group).toBe('/tmp/r4');
+			tabs.dialogOpen = true;
+			c.emit.repos([repo, r2, '/tmp/r3', '/tmp/r4', '/tmp/r5']);
+			flushSync();
+			expect(tabs.group).toBe('/tmp/r4');
+			tabs.dialogOpen = false;
+			flushSync();
+			expect(tabs.group).toBe('/tmp/r5');
+		});
+
+		it('covers the terminal under a file or a welcome', async () => {
+			localStorage.setItem(TABS_KEY, JSON.stringify({ [repo]: [a] }));
+			const { tabs, c, m } = await make([info(1)], [], 1);
+			c.emit.repos([repo]);
+			flushSync();
+			const covered = vi.spyOn(m, 'setCovered');
+			tabs.active = a;
+			flushSync();
+			expect(covered).toHaveBeenLastCalledWith(true);
+			tabs.active = 'session:1';
+			flushSync();
+			expect(covered).toHaveBeenLastCalledWith(false);
+			tabs.active = WELCOME;
+			flushSync();
+			expect(covered).toHaveBeenLastCalledWith(true);
 		});
 	});
 });

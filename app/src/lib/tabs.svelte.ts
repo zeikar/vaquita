@@ -1,5 +1,5 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { tick } from 'svelte';
+import { tick, untrack } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import type AppWelcome from './AppWelcome.svelte';
 import { ask as askUser } from './ask';
@@ -11,9 +11,10 @@ import type { ManagedTerm, ManagerState, SessionManager, ViewLike } from './mana
 import { LAST_CWD } from './NewSessionDialog.svelte';
 import { sessionTitle, type Target } from './notify';
 import type RepoWelcome from './RepoWelcome.svelte';
-import { arrangeGroup, isSessionTab, needsAsk, placement, sessionTab, tabSid } from './session-tabs';
+import { arrangeGroup, isSessionTab, needsAsk, placement, reconcile, sessionTab, tabSid } from './session-tabs';
 import { load } from './storage';
-import { closeInGroup, fallback, fileName, groupKey, loadTabs, neighbour, openFileTab, OTHER, saveTabs, setOrder, touch, unpreview, WELCOME, type Previews, type Recent } from './tabs';
+import { closeInGroup, fallback, fileName, groupKey, loadTabs, neighbour, openFileTab, OTHER, prune, saveTabs, setOrder, touch, unpreview, WELCOME, type Previews, type Recent } from './tabs';
+import { newRepos, selectionAfterRemoval } from './welcome';
 import type { TermView } from './term-view';
 
 // What the tabs ask of a session's view beside what the manager does.
@@ -46,7 +47,7 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// What each group showed, most recent first, for where closing the shown
 	// tab goes. Per group, as the tabs are, and for the app run only; plain,
 	// since nothing renders it.
-	readonly recent = new Map<string, Recent>();
+	private readonly recent = new Map<string, Recent>();
 	readonly dirty = new SvelteSet<string>();
 	// Bound by the markup; each is there only while its pane is mounted.
 	filePane?: ReturnType<typeof FilePane>;
@@ -63,10 +64,10 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// Where each session's tab belongs. The repo list the app starts with is
 	// empty, so until the daemon's the stored keys alone show; a session list
 	// kept through a reconnect still shows its tabs.
-	readonly placed = $derived(placement(this.state.sessions.map((r) => r.info), this.state.repos));
+	private readonly placed = $derived(placement(this.state.sessions.map((r) => r.info), this.state.repos));
 	// Whether the lists are the daemon's current ones, for what drops or
 	// leaves a tab on their word.
-	readonly listed = $derived(this.state.status === 'connected' && this.state.reposListed);
+	private readonly listed = $derived(this.state.status === 'connected' && this.state.reposListed);
 	readonly groupTabs = $derived.by(() => {
 		if (this.group === undefined) return [];
 		const sids = this.state.reposListed ? [...this.placed].flatMap(([sid, key]) => (key === this.group ? [sid] : [])) : [];
@@ -81,6 +82,9 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	private readonly ask: (message: string, okLabel: string) => Promise<boolean>;
 	private readonly closeWindow: () => Promise<void>;
 	private readonly stops: (() => void)[];
+	// What the selection and repo-list effects in the constructor last acted on.
+	private shownSid: number | undefined | null = null;
+	private knownRepos: string[] | undefined;
 
 	constructor({ manager, documents = appDocuments, ask = askUser, closeWindow = () => getCurrentWindow().close() }: TabsDeps<T, V>) {
 		this.manager = manager;
@@ -97,6 +101,109 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 				} else this.dirty.delete(path);
 			}),
 		];
+
+		// Not before the daemon has sent its list: the empty one the app starts
+		// with would drop every repo's tabs. Those of a repo removed move to Other,
+		// so that no one is left without a way to save the edits they may hold.
+		$effect(() => {
+			if (!this.state.reposListed) return;
+			const before = this.groups;
+			const kept = prune(before, this.state.repos);
+			if (kept === before) return;
+			this.groups = kept;
+			saveTabs(kept);
+			// With no session the moved file tabs are reached only by selecting
+			// their group, which may be Other: tabs and no welcome, no tree. A
+			// selected session with a tab takes the group along itself, below.
+			if (this.selectedPlaced() || this.group === undefined || this.state.repos.includes(this.group)) return;
+			const to = selectionAfterRemoval(before, this.group, this.state.repos);
+			if (to === undefined) return;
+			this.group = to;
+			const moved = (kept[to] ?? []).filter((k) => !isSessionTab(k));
+			void this.show(this.active !== undefined && moved.includes(this.active) ? this.active : moved[0]);
+		});
+		// The stored order follows the session list: a gone session's tab leaves
+		// it, a new one, or one a repo added or removed moved, joins its group.
+		$effect(() => {
+			if (!this.listed) return;
+			const next = reconcile(this.groups, this.placed);
+			if (next === this.groups) return;
+			this.groups = next;
+			saveTabs(next);
+		});
+
+		// A file or a welcome covers the terminal, whose session is then not being looked at.
+		$effect(() => this.manager.setCovered(this.active !== undefined && !isSessionTab(this.active)));
+
+		// A session selected shows its tab, in its group: a click on its row, a
+		// notification, a created session's replay and the relaunch's stored
+		// selection all come here. A deselect does nothing, as whoever deselected
+		// has shown a welcome or an Other tab. Null at first, which no selection
+		// is, so the first run shows what there is (the app welcome before the
+		// daemon's list) and it takes the focus.
+		$effect(() => {
+			const sid = this.state.selected;
+			if (sid === this.shownSid) return;
+			if (sid === undefined) {
+				if (this.shownSid === null) void this.show(undefined);
+				this.shownSid = undefined;
+				return;
+			}
+			const row = this.state.sessions.find((r) => r.info.sid === sid);
+			if (!row) return;
+			this.shownSid = sid;
+			untrack(() => {
+				this.group = groupKey(row.info.cwd, this.state.repos);
+				// Shown already when its tab was what selected it.
+				if (this.active !== sessionTab(sid)) void this.show(sessionTab(sid));
+			});
+		});
+		// A repo added or removed can move the selected session to another group,
+		// which then shows, as does the repo list that comes after the session
+		// list on a relaunch. Before the effects below, so that they see the group
+		// it went to. A record of an earlier run has no tab to follow, and the
+		// fallback below may leave its group. Its tab shown goes into the new
+		// group's recent list, for closing a tab opened after it to come back to.
+		$effect(() => {
+			if (!this.state.reposListed || this.selectedRow === undefined) return;
+			const sid = this.selectedRow.info.sid;
+			const to = this.placed.get(sid);
+			if (to === undefined || to === this.group) return;
+			this.group = to;
+			if (untrack(() => this.active) === sessionTab(sid)) this.recent.set(to, touch(this.recent.get(to) ?? [], sessionTab(sid)));
+		});
+		// A removed repo is no selection; the app welcome shows instead. Not before
+		// the daemon's list, as the one the app starts with is empty.
+		$effect(() => {
+			if (this.state.reposListed && !this.selectedPlaced() && this.group !== undefined && this.group !== OTHER && !this.state.repos.includes(this.group)) this.group = undefined;
+		});
+		// What shows that is not of the shown group goes: a closed or killed
+		// session's tab, a tab a repo added or removed moved away, the welcome of
+		// a repo that went. Not before the lists, which would make every stored
+		// session tab look gone.
+		$effect(() => {
+			if (!this.listed) return;
+			const shows = this.active === undefined ? this.group === undefined : this.active === WELCOME ? this.root !== undefined : this.groupTabs.includes(this.active);
+			if (!shows) this.showFallback();
+		});
+
+		// The daemon sends the whole repo list on every change and does not say
+		// which request it answers, so a repo new to the list is the sign that it
+		// was added, here or by anyone else. The first list is what was already
+		// there and opens nothing. Of several at once, as from a drop of many
+		// folders, the last in the list opens, so one welcome shows.
+		$effect(() => {
+			// Under the dialog nothing is consumed, so that its close, which reruns
+			// this, still finds the additions that came meanwhile.
+			if (!this.state.reposListed || this.dialogOpen) return;
+			const repos = this.state.repos;
+			if (repos === this.knownRepos) return;
+			const prev = this.knownRepos;
+			this.knownRepos = repos;
+			if (prev === undefined) return;
+			const added = newRepos(prev, repos).at(-1);
+			if (added !== undefined) untrack(() => this.openWelcome(added));
+		});
 	}
 
 	stop(): void {
@@ -105,7 +212,7 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 
 	// A session of this run with a tab is selected: a record of an earlier
 	// run, selected through a daemon restart, holds no group.
-	selectedPlaced(): boolean {
+	private selectedPlaced(): boolean {
 		return this.state.selected !== undefined && this.placed.has(this.state.selected);
 	}
 
@@ -117,7 +224,7 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// Where the shown group goes when what it showed is gone: the tab shown
 	// most recently, else its first, else the repo's welcome; Other, which
 	// has no welcome, is then no selection any more.
-	showFallback(): void {
+	private showFallback(): void {
 		const next = fallback((this.group !== undefined && this.recent.get(this.group)) || [], this.groupTabs) ?? (this.root !== undefined ? WELCOME : undefined);
 		if (next === undefined && this.group === OTHER) this.group = undefined;
 		void this.show(next);
