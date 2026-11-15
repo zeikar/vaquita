@@ -13,14 +13,15 @@
 	import { DaemonConnection } from './lib/connection';
 	import { runningCount } from './lib/daemon-update';
 	import { appBuild, checkAppUpdate, checkRestart, daemonOnDisk, installAppUpdate, onUpdateCheckAsked, readEndpoint, restartDaemon, startDaemon } from './lib/endpoint';
-	import { clampPanelWidth, loadPanelWidth, PANEL_DEFAULT_WIDTH, PANEL_HIDDEN, PANEL_WIDTH } from './lib/file-panel';
+	import { clampPanelWidth, PANEL_DEFAULT_WIDTH } from './lib/file-panel';
 	import FilePane from './lib/FilePane.svelte';
-	import FilesPanel, { showView } from './lib/FilesPanel.svelte';
+	import FilesPanel from './lib/FilesPanel.svelte';
 	import { onTabAsked } from './lib/files';
 	import { watchFocus } from './lib/focus';
 	import Icon from './lib/Icon.svelte';
 	import { isNewSessionShortcut, isNextTabShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut, tabNumber } from './lib/keys';
 	import { holdLayout } from './lib/layout-hold';
+	import { Layout } from './lib/layout.svelte';
 	import { openExternal } from './lib/links';
 	import { SessionManager } from './lib/manager';
 	import NewSessionDialog from './lib/NewSessionDialog.svelte';
@@ -28,9 +29,7 @@
 	import RepoWelcome from './lib/RepoWelcome.svelte';
 	import { isSessionTab, sessionTab } from './lib/session-tabs';
 	import SessionList from './lib/SessionList.svelte';
-	import { loadWidth, SIDEBAR_HIDDEN, SIDEBAR_WIDTH } from './lib/sidebar';
 	import SidebarEdge from './lib/SidebarEdge.svelte';
-	import { load, save } from './lib/storage';
 	import TabBar from './lib/TabBar.svelte';
 	import { OTHER, WELCOME } from './lib/tabs';
 	import { Tabs } from './lib/tabs.svelte';
@@ -61,6 +60,7 @@
 	// manager's would each wait on the other.
 	const tabs: Tabs<Terminal, TermView> = new Tabs({ manager });
 	onDestroy(() => tabs.stop());
+	const layout = new Layout(tabs);
 
 	// The install ends in an exit, which no close request precedes. Editing is
 	// frozen before the question and until the install fails or is declined, so
@@ -119,7 +119,7 @@
 			case 'next':
 				return tabs.step(1);
 			case 'files':
-				return togglePanel();
+				return layout.togglePanel();
 		}
 	});
 	unlistenTabs.catch((e) => manager.report(`tab shortcuts unavailable: ${e instanceof Error ? e.message : String(e)}`));
@@ -165,7 +165,7 @@
 	function shortcut(e: KeyboardEvent) {
 		const n = tabNumber(e);
 		if (isNewSessionShortcut(e)) tabs.newSession();
-		else if (isSidebarShortcut(e)) toggleSidebar();
+		else if (isSidebarShortcut(e)) layout.toggleSidebar();
 		else if (isPrevTabShortcut(e)) tabs.step(-1);
 		else if (isNextTabShortcut(e)) tabs.step(1);
 		else if (n !== undefined) tabs.showAt(n);
@@ -173,50 +173,6 @@
 		else return;
 		e.preventDefault();
 		e.stopPropagation();
-	}
-
-	let sidebarWidth = $state(loadWidth());
-	let sidebarHidden = $state(load(SIDEBAR_HIDDEN) === 'true');
-
-	// The content takes the focus, which would otherwise be lost in a hidden
-	// sidebar or left on the status line's button.
-	function toggleSidebar() {
-		sidebarHidden = !sidebarHidden;
-		save(SIDEBAR_HIDDEN, String(sidebarHidden));
-		tabs.refocus();
-	}
-
-	function sidebarResized() {
-		holdLayout(false);
-		tabs.selectedView()?.refit();
-		tabs.filePane?.relayout();
-		save(SIDEBAR_WIDTH, String(sidebarWidth));
-	}
-
-	let panelWidth = $state(loadPanelWidth());
-	let panelHidden = $state(load(PANEL_HIDDEN) === 'true');
-	// With nothing selected the panel would have no repo to show, and the app
-	// welcome is drawn without it; the stored choice is kept for later.
-	const panelShown = $derived(!panelHidden && tabs.group !== undefined);
-
-	// As toggleSidebar: the focus may be in the tree, which goes.
-	function togglePanel() {
-		panelHidden = !panelHidden;
-		save(PANEL_HIDDEN, String(panelHidden));
-		tabs.refocus();
-	}
-
-	// The welcome's "All past conversations": the panel's Past view, shown.
-	function showPast(): void {
-		showView('past');
-		if (panelHidden) togglePanel();
-	}
-
-	function panelResized() {
-		holdLayout(false);
-		tabs.selectedView()?.refit();
-		tabs.filePane?.relayout();
-		save(PANEL_WIDTH, String(panelWidth));
 	}
 
 	// The OS file drop only exists inside Tauri. Paths dropped on the sidebar
@@ -298,7 +254,7 @@
 
 <svelte:window onkeydowncapture={shortcut} />
 
-<main class:sidebar-hidden={sidebarHidden} class:files-hidden={!panelShown} style:--sidebar-width="{sidebarWidth}px" style:--panel-width="{panelWidth}px">
+<main class:sidebar-hidden={layout.sidebarHidden} class:files-hidden={!layout.panelShown} style:--sidebar-width="{layout.sidebarWidth}px" style:--panel-width="{layout.panelWidth}px">
 	<aside bind:this={aside}>
 		<header>
 			<span class="title">Repos</span>
@@ -332,7 +288,7 @@
 				<kbd>⌘T</kbd>
 			</button>
 		</div>
-		<SidebarEdge width={sidebarWidth} onstart={() => holdLayout(true)} onresize={(w) => (sidebarWidth = w)} onend={sidebarResized} />
+		<SidebarEdge width={layout.sidebarWidth} onstart={() => holdLayout(true)} onresize={(w) => (layout.sidebarWidth = w)} onend={layout.sidebarResized} />
 	</aside>
 	<NewSessionDialog
 		open={tabs.dialogOpen}
@@ -375,7 +331,7 @@
 						connected={$manager.status === 'connected'}
 						creating={$manager.creating}
 						onstart={(cmd) => manager.create(repo, cmd, '')}
-						onallpast={showPast}
+						onallpast={layout.showPast}
 						onresume={(cwd, cmd) => void manager.create(cwd, cmd, '')}
 						onselect={tabs.selectSession}
 						onreopen={(sid) => manager.reopen(sid)}
@@ -393,7 +349,7 @@
 	</section>
 	<!-- Unmounted, not hidden, while it is off, so nothing of the tree or the
 	     changes runs and no folder is watched. -->
-	{#if panelShown}
+	{#if layout.panelShown}
 		<aside class="files">
 			<FilesPanel
 				root={tabs.root}
@@ -418,10 +374,10 @@
 				clamp={clampPanelWidth}
 				defaultWidth={PANEL_DEFAULT_WIDTH}
 				label="Resize files panel"
-				width={panelWidth}
+				width={layout.panelWidth}
 				onstart={() => holdLayout(true)}
-				onresize={(w) => (panelWidth = w)}
-				onend={panelResized}
+				onresize={(w) => (layout.panelWidth = w)}
+				onend={layout.panelResized}
 			/>
 		</aside>
 	{/if}
@@ -447,7 +403,7 @@
 		{/if}
 	</div>
 	<footer>
-		<button class="icon-btn sidebar-toggle" title="{sidebarHidden ? 'Show' : 'Hide'} sidebar (⌘B)" onclick={toggleSidebar}>
+		<button class="icon-btn sidebar-toggle" title="{layout.sidebarHidden ? 'Show' : 'Hide'} sidebar (⌘B)" onclick={layout.toggleSidebar}>
 			<Icon name="sidebar" />
 		</button>
 		<span class="state"><span class="dot {statusTone}"></span>{statusText}</span>
@@ -457,7 +413,7 @@
 			{@const report = $manager.report}
 			<button class="report {report.tone}" title={report.text} onclick={() => manager.dismissReport()}>{report.text}</button>
 		{/if}
-		<button class="icon-btn files-toggle" title="{panelHidden ? 'Show' : 'Hide'} files (⌥⌘B)" onclick={togglePanel}>
+		<button class="icon-btn files-toggle" title="{layout.panelHidden ? 'Show' : 'Hide'} files (⌥⌘B)" onclick={layout.togglePanel}>
 			<Icon name="sidebar-right" />
 		</button>
 	</footer>
