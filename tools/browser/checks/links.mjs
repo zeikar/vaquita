@@ -1,7 +1,8 @@
 // A path in the terminal's output is a link only when it is on the disk: it
 // shows its target on hover when it exists and nothing when it does not, a
-// shell variable is no path, the disk is asked once for a row and then not
-// again for a while, and a web link beside a path still links.
+// shell variable is a path only when its command assigns it and the expansion
+// exists, the disk is asked once for a row and then not again for a while, and
+// a web link beside a path still links.
 // node checks/links.mjs <dir>, after run.sh up <dir>; see check.sh.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -108,7 +109,7 @@ await step('an existing path links, a missing one does not', async () => {
 	say('hovering the missing one shows nothing', m === '', m);
 });
 
-await step('a shell variable is no path', async () => {
+await step('a shell variable nothing assigns is no path', async () => {
 	await type(`echo '"$S/battle_b_frames.png"'`);
 	const out = '"$S/battle_b_frames.png"';
 	const i = await until(() => outputRow(out), (n) => n >= 0);
@@ -117,6 +118,23 @@ await step('a shell variable is no path', async () => {
 	await sleep(600);
 	const t = await title();
 	say('hovering it shows nothing', t === '', t);
+});
+
+await step('a shell variable its command assigns links as its expansion', async () => {
+	await type(`echo 'S=./docs && cat "$S/guide.md" "$S/missing.md"'`);
+	const out = 'S=./docs && cat "$S/guide.md" "$S/missing.md"';
+	const i = await until(() => outputRow(out), (n) => n >= 0);
+	say('the output row is there', i >= 0, i);
+	await hover(i, '$S/guide.md');
+	const t = await until(title, Boolean, 3000);
+	// Not path.join: the expansion keeps the ./ of the value, as the app hands it on.
+	say('hovering it shows the expanded file', t === `${repo}/./docs/guide.md`, t);
+	await shot(page, '02-variable');
+	await leaveRow(i);
+	await hover(i, '$S/missing.md');
+	await sleep(600);
+	const m = await title();
+	say('hovering a missing expansion shows nothing', m === '', m);
 });
 
 // Paths of their own: the first step left docs/guide.md cached.
@@ -162,7 +180,7 @@ await step('a web link beside a path still links', async () => {
 	say('the URL shows as the title', t === 'https://example.com/a', t);
 	const c = calls(off);
 	say('the row asked the disk once', c.length === 1, c);
-	await shot(page, '02-url-and-path');
+	await shot(page, '03-url-and-path');
 });
 
 await browser.close();
