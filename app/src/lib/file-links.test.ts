@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { activateUri, fileUrlToPath, gateTarget, findPaths, openPath, resolvePath, type Invoker } from './file-links';
+import {
+	activateUri,
+	fileUrlToPath,
+	findAssignments,
+	gateTarget,
+	findPaths,
+	openPath,
+	resolvePath,
+	varPath,
+	wholeValue,
+	type Invoker,
+} from './file-links';
 
 describe('fileUrlToPath', () => {
 	it('splits host and path', () => {
@@ -143,6 +154,100 @@ describe('findPaths', () => {
 
 	it('finds several paths in order', () => {
 		expect(findPaths('cp /tmp/a.txt ./b.txt').map((h) => h.target)).toEqual(['/tmp/a.txt', './b.txt']);
+	});
+
+	it('finds a path that begins with a shell variable, with no extension needed', () => {
+		expect(findPaths('ls $S/party-battle')).toEqual([{ start: 3, end: 18, target: '$S/party-battle' }]);
+		expect(findPaths('ls ${S}/a/b.png')).toEqual([{ start: 3, end: 15, target: '${S}/a/b.png' }]);
+		expect(findPaths('cat "$S/x.png"')).toEqual([{ start: 5, end: 13, target: '$S/x.png' }]);
+		expect(findPaths('S=$B/party-battle')).toEqual([{ start: 2, end: 17, target: '$B/party-battle' }]);
+		expect(findPaths('at $S/a.ts:12')).toEqual([{ start: 3, end: 13, target: '$S/a.ts' }]);
+		for (const l of ['$S', '$S/', '${S}', '$5/month', '${S:-x}/a.png', '$(pwd)/a.png']) {
+			expect(findPaths(`ls ${l}`), l).toEqual([]);
+		}
+	});
+});
+
+describe('varPath', () => {
+	it('splits a variable path into the name and the rest from the slash on', () => {
+		expect(varPath('$S/a.png')).toEqual({ name: 'S', rest: '/a.png' });
+		expect(varPath('${S}/a.png')).toEqual({ name: 'S', rest: '/a.png' });
+	});
+
+	it('gives nothing for any other target', () => {
+		for (const t of ['/tmp/a', '~/a', 'S/a.png']) expect(varPath(t), t).toBeUndefined();
+	});
+});
+
+describe('findAssignments', () => {
+	it('stays fast on a line of the length the provider sees', () => {
+		for (const line of ['a'.repeat(4300), 'a='.repeat(2150)]) {
+			const t0 = performance.now();
+			findAssignments(line);
+			expect(performance.now() - t0, line.slice(0, 2)).toBeLessThan(20);
+		}
+	});
+
+	it('finds a NAME= at a token start, with where its value begins', () => {
+		const b = (value: number) => [{ name: 'B', value, quoted: false, append: false }];
+		expect(findAssignments('B=/x')).toEqual(b(2));
+		expect(findAssignments('export B=/x')).toEqual(b(9));
+		expect(findAssignments('Bash(B=/x')).toEqual(b(7));
+		expect(findAssignments('a && B=/x')).toEqual(b(7));
+		expect(findAssignments('a;B=/x')).toEqual(b(4));
+	});
+
+	it('marks a quoted value, which begins past the quote, and +=', () => {
+		expect(findAssignments('B="/x"')).toEqual([{ name: 'B', value: 3, quoted: true, append: false }]);
+		expect(findAssignments('B+=/x')).toEqual([{ name: 'B', value: 3, quoted: false, append: true }]);
+	});
+
+	it('takes the whole name before =', () => {
+		expect(findAssignments('aB=/x').map((a) => a.name)).toEqual(['aB']);
+	});
+
+	it('finds none anywhere else', () => {
+		for (const l of ['--B=/x', "'B=/x", '"B=/x', '$B=/x', 'a.B=/x', '=x', 'a == b']) {
+			expect(findAssignments(l), l).toEqual([]);
+		}
+	});
+
+	it('gives several in order', () => {
+		expect(findAssignments('A=/x && B="/y"')).toEqual([
+			{ name: 'A', value: 2, quoted: false, append: false },
+			{ name: 'B', value: 11, quoted: true, append: false },
+		]);
+	});
+});
+
+describe('wholeValue', () => {
+	const whole = (target: string, after: string, quoted = false) => wholeValue(target, target, after, quoted);
+
+	it('holds for a plain path before the end of a value', () => {
+		for (const after of ['', ' ls', ';ls', '&& ls', '| ls', ')']) expect(whole('/tmp/a', after), after).toBe(true);
+		for (const t of ['$B/c', '${B}/c', '~/a', './out']) expect(whole(t, ''), t).toBe(true);
+		expect(whole('/tmp/a', '"', true)).toBe(true);
+		expect(whole('/tmp/a', '" ls', true)).toBe(true);
+	});
+
+	it('fails for a target shorter than its range', () => {
+		expect(wholeValue('/tmp/a', '/tmp/a:12', '', false)).toBe(false);
+	});
+
+	it('fails for a path with a second variable, an operator, a glob or a scheme', () => {
+		for (const t of ['/tmp/$X/a', '/tmp/a&&ls', '/tmp/a*', 'file:///tmp/a']) expect(whole(t, ''), t).toBe(false);
+	});
+
+	it('fails when the value goes on past the path', () => {
+		for (const after of [',b', '.', ']']) expect(whole('/tmp/a', after), after).toBe(false);
+		expect(whole('/tmp/a', ' ', true)).toBe(false);
+		expect(whole('/tmp/a', '"/b', true)).toBe(false);
+		expect(whole('/tmp/a', '"')).toBe(false);
+	});
+
+	it('fails for a quoted ~, which a shell leaves as it is', () => {
+		expect(whole('~/a', '"', true)).toBe(false);
+		expect(whole('~', '"', true)).toBe(false);
 	});
 });
 

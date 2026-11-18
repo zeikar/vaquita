@@ -49,9 +49,13 @@ export function resolvePath(target: string, cwd: string): string {
 	return cwd.replace(/\/+$/, '') + '/' + target;
 }
 
-const SEG_CHARS = String.raw`\p{L}\p{N}\p{M}_.\-+@%#$`;
+// A segment's characters but $, which in a shell value starts another variable.
+const PLAIN_CHARS = String.raw`\p{L}\p{N}\p{M}_.\-+@%#`;
+const SEG_CHARS = PLAIN_CHARS + '$';
 const SEG = `[${SEG_CHARS}]`;
-const ANCHOR = /^(\/|~\/|\.\/|\.\.\/)([^/][\s\S]*)$/;
+const NAME = '[A-Za-z_][A-Za-z0-9_]*';
+const ANCHOR = new RegExp(String.raw`^(\/|~\/|\.\/|\.\.\/|\$${NAME}\/|\$\{${NAME}\}\/)([^/][\s\S]*)$`);
+const VAR_PATH = new RegExp(String.raw`^\$(?:(${NAME})|\{(${NAME})\})(\/[\s\S]*)$`);
 const RELATIVE = new RegExp(String.raw`^${SEG}+(?:\/${SEG}+)+$`, 'u');
 const EXTENSION = /\.\p{L}[\p{L}\p{N}]*$/u;
 const TOKEN_START = /[\s(["'`=,]/u;
@@ -70,6 +74,8 @@ function isPath(text: string): boolean {
 	if (m) {
 		// A lone /word (/help, /model) is a slash command far more often than a file,
 		// and // starts a comment; neither should be underlined all over the screen.
+		// A $NAME/ path asks for no extension either: the provider links it only
+		// once its command's own assignment expands it and the disk has the result.
 		return m[1] !== '/' || m[2].includes('/') || EXTENSION.test(m[2]);
 	}
 	// Without an extension, and/or, 2026/10/24 and TCP/IP would all look like paths.
@@ -149,6 +155,54 @@ export function pathRunBefore(text: string, end: number): number {
 // Whether a path ends in a file name with an extension.
 export function hasExtension(path: string): boolean {
 	return EXTENSION.test(path);
+}
+
+// The variable a $NAME/ or ${NAME}/ target begins with, and the rest of it
+// from the slash on.
+export function varPath(target: string): { name: string; rest: string } | undefined {
+	const m = VAR_PATH.exec(target);
+	return m ? { name: m[1] ?? m[2], rest: m[3] } : undefined;
+}
+
+// A NAME= or NAME+= in a line: value is where its value begins, past an opening
+// " when quoted.
+export type Assignment = { name: string; value: number; quoted: boolean; append: boolean };
+
+// A token start is where a shell begins a word that may assign, so export, local
+// and env need no rule of their own and Bash(B=… counts, while --B=/x is an
+// option, not B. A name can only be entered from the character before it, so
+// this stays linear on untrusted output.
+const ASSIGNMENT = new RegExp(String.raw`(?<=^|[\s;&|(])(${NAME})(\+?)=("?)`, 'g');
+
+// Every assignment in text, in order.
+export function findAssignments(text: string): Assignment[] {
+	return [...text.matchAll(ASSIGNMENT)].map((m) => ({
+		name: m[1],
+		value: m.index + m[0].length,
+		quoted: m[3] === '"',
+		append: m[2] === '+',
+	}));
+}
+
+const LEAD_VAR = new RegExp(String.raw`^\$(?:${NAME}|\{${NAME}\})`);
+const PLAIN_VALUE = new RegExp(`^[${PLAIN_CHARS}/]*$`, 'u');
+const VALUE_END = /^(?:$|[\s;&|)])/;
+
+// Whether a path found where a value begins is all of the value: no line
+// suffix cut off (target is all of covered, the text of its range); nothing a
+// shell would expand or split past a leading variable, or a leading ~ when
+// unquoted (a shell leaves a quoted ~ as it is); and the value ends where the
+// path does, at the closing " when quoted. Anything less may name another path
+// than the one the command meant, and the disk cannot tell.
+export function wholeValue(target: string, covered: string, after: string, quoted: boolean): boolean {
+	if (target !== covered) return false;
+	const lead = LEAD_VAR.exec(target)?.[0] ?? (!quoted && target.startsWith('~') ? '~' : '');
+	if (!PLAIN_VALUE.test(target.slice(lead.length))) return false;
+	if (quoted) {
+		if (after[0] !== '"') return false;
+		after = after.slice(1);
+	}
+	return VALUE_END.test(after);
 }
 
 export async function openPath(
