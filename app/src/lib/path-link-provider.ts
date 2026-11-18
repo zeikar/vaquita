@@ -312,12 +312,31 @@ function linesInto(buffer: BufferLike, here: LineText): LineText[] {
 // A $NAME/ path is expanded from the command it stands in, as the app knows no
 // shell's variables, only the text on the screen. The command is the hovered
 // line and the lines above it while each is the rest of the one above: its
-// first row is soft-wrapped, or it begins after an indent, as a TUI wraps a
-// long command. There is no marker for where a command begins (a prompt, a
-// Bash( call), so the first line that is neither is its first line. Lines past
-// COMMAND_LINES above the hovered one are not read, and what they assign stays
-// unknown.
+// first row is soft-wrapped, or it begins after an indent and the line above
+// is full, as a TUI wraps a long command. There is no marker for where a
+// command begins (a prompt, a Bash( call), so the first line that is neither
+// is its first line. Lines past COMMAND_LINES above the hovered one are not
+// read, and what they assign stays unknown.
 const COMMAND_LINES = 8;
+
+// Whether top can be the rest of the line above: a TUI wraps a line where its
+// next word would not fit, so the first word of top could not have followed
+// above on its last row. A short line above, such as another call, ends the
+// command.
+function wrapsInto(buffer: BufferLike, above: LineText, top: LineText): boolean {
+	const end = above.text.trimEnd().length;
+	const start = top.text.search(/\S/);
+	if (end === 0 || start < 0) return false;
+	const last = above.cells[end - 1];
+	const width = buffer.active.getLine(last.row)?.length ?? 0;
+	let stop = top.text.slice(start).search(/\s/);
+	stop = stop < 0 ? top.text.length : start + stop;
+	const a = top.cells[start];
+	const b = top.cells[stop - 1];
+	// A first word that runs over a row would not fit anywhere.
+	if (a.row !== b.row) return true;
+	return last.x + last.width + 1 + (b.x + b.width - a.x) > width;
+}
 
 // The command's lines, top to bottom, the last being here. A line whose first
 // row is soft-wrapped is joined with the rows above it, read only once each,
@@ -332,6 +351,7 @@ function commandLines(buffer: BufferLike, here: LineText): LineText[] {
 		if (!wrapped && top.text.search(/\S/) <= 0) break;
 		const above = lineText(buffer, first - 1);
 		if (!wrapped) {
+			if (!wrapsInto(buffer, above, top)) break;
 			lines.unshift(above);
 			continue;
 		}
@@ -348,20 +368,6 @@ type Listed = { at: Pick<CellPos, 'row' | 'x'>; path?: string };
 
 function before(a: Pick<CellPos, 'row' | 'x'>, b: Pick<CellPos, 'row' | 'x'>): boolean {
 	return a.row < b.row || (a.row === b.row && a.x < b.x);
-}
-
-// The latest of a name's assignments, listed in the order they stand, whose
-// value begins before at.
-function latest(list: Listed[] | undefined, at: CellPos): Listed | undefined {
-	if (!list) return undefined;
-	let lo = 0;
-	let hi = list.length;
-	while (lo < hi) {
-		const mid = (lo + hi) >> 1;
-		if (before(list[mid].at, at)) lo = mid + 1;
-		else hi = mid;
-	}
-	return lo > 0 ? list[lo - 1] : undefined;
 }
 
 // Every NAME= in the command, by name, in the order they stand. A value is
@@ -399,24 +405,38 @@ function listAssignments(buffer: BufferLike, lines: LineText[], resolve: Resolve
 	});
 }
 
+// Text that makes a command's assignments uncertain: a substitution, whose own
+// quotes are not followed, a backtick, or a single quote, in which $ is
+// literal. A command with any of them fills in no variable.
+const UNSURE = /\$\(|`|'/;
+
 // The resolver of a hovered line: a plain target from the starting folder, a
-// $NAME/ one from the latest assignment of NAME in its command before it.
-// HOME with none is ~; no environment variable is read. The command is read
-// the first time a variable needs it, so a row with none costs nothing more.
+// $NAME/ one from its command when that is sure. A guess is only made where
+// there is no doubt, as the disk cannot tell a stale or cut value from the
+// right one: no UNSURE text in the command, and NAME= written once in all of
+// it, quoted, in an option or anywhere, as a plain assignment before the use
+// whose value was read in full. HOME written nowhere is ~; no environment
+// variable is read. The command is read the first time a variable needs it,
+// so a row with none costs nothing more.
 function resolver(buffer: BufferLike, cwd: string, here: LineText): Resolve {
-	let listed: Map<string, Listed[]> | undefined;
+	let command: { text: string; listed: Map<string, Listed[]> } | undefined;
 	const resolve: Resolve = (target, at) => {
 		const v = varPath(target);
 		if (!v) return resolvePath(target, cwd);
-		if (!listed) {
+		if (!command) {
+			const lines = commandLines(buffer, here);
 			// Set first: the walk resolves its own values through this, against
 			// what it has listed so far.
-			listed = new Map();
-			listAssignments(buffer, commandLines(buffer, here), resolve, listed);
+			command = { text: lines.map((l) => l.text).join('\n'), listed: new Map() };
+			listAssignments(buffer, lines, resolve, command.listed);
 		}
-		const a = latest(listed.get(v.name), at);
-		if (!a) return v.name === 'HOME' ? '~' + v.rest : undefined;
-		return a.path === undefined ? undefined : a.path.replace(/\/+$/, '') + v.rest;
+		if (UNSURE.test(command.text)) return undefined;
+		const written = command.text.match(new RegExp(`(?<![A-Za-z0-9_])${v.name}\\+?=`, 'g'))?.length ?? 0;
+		if (written === 0) return v.name === 'HOME' ? '~' + v.rest : undefined;
+		const list = command.listed.get(v.name);
+		const a = list?.length === 1 ? list[0] : undefined;
+		if (written !== 1 || !a || !before(a.at, at) || a.path === undefined) return undefined;
+		return a.path.replace(/\/+$/, '') + v.rest;
 	};
 	return resolve;
 }

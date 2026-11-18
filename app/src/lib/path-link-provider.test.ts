@@ -716,10 +716,11 @@ describe('pathLinkProvider with shell variables', () => {
 			expect(await linked('export S="/tmp/a" && cat ${S}/x.png', ['/tmp/a/x.png'])).toEqual(['/tmp/a/x.png']);
 		});
 
-		it('takes the latest assignment before the use', async () => {
+		it('leaves a name written twice unknown, and one written after the use', async () => {
 			const both = ['/tmp/a/x.png', '/tmp/b/x.png'];
-			expect(await linked('S=/tmp/a && S=/tmp/b && cat "$S/x.png"', both)).toEqual(['/tmp/b/x.png']);
-			expect(await linked('S=/tmp/a && cat "$S/x.png" && S=/tmp/b', both)).toEqual(['/tmp/a/x.png']);
+			expect(await linked('S=/tmp/a && S=/tmp/b && cat "$S/x.png"', both)).toBeUndefined();
+			expect(await linked('S=/tmp/a && cat "$S/x.png" && S=/tmp/b', both)).toBeUndefined();
+			expect(await linked('cat "$S/x.png" && S=/tmp/a', both)).toBeUndefined();
 		});
 
 		it('expands a value that is itself a variable path', async () => {
@@ -736,9 +737,24 @@ describe('pathLinkProvider with shell variables', () => {
 			expect(await linked('S=~/out && cat "$S/x.png"', ['~/out/x.png'])).toEqual(['~/out/x.png']);
 		});
 
-		it('leaves a value alone for an option that only looks like an assignment', async () => {
+		it('leaves a name unknown when it is written again anywhere, in quotes or an option', async () => {
 			const both = ['/tmp/a/x.png', '/tmp/b/x.png'];
-			expect(await linked('S=/tmp/a && tool --S=/tmp/b && cat "$S/x.png"', both)).toEqual(['/tmp/a/x.png']);
+			expect(await linked('S=/tmp/a && tool --S=/tmp/b && cat "$S/x.png"', both)).toBeUndefined();
+			expect(await linked('S=/tmp/a && echo "hello S=/tmp/b" && cat "$S/x.png"', both)).toBeUndefined();
+			// Another name that ends in it is not it.
+			expect(await linked('S=/tmp/a && XS=/tmp/b && cat "$S/x.png"', both)).toEqual(['/tmp/a/x.png']);
+		});
+
+		it('fills in nothing in a command with a substitution, a backtick or a single quote', async () => {
+			const exists = ['/tmp/a/x.png', '/tmp/b/x.png'];
+			for (const c of [
+				'S=/tmp/a && T="$(echo "S=/tmp/b")" && cat "$S/x.png"',
+				'S=/tmp/a && T=`pwd` && cat "$S/x.png"',
+				"S=/tmp/a && echo 'x' && cat \"$S/x.png\"",
+				'S=/tmp/a && cat "$S/x.png" && T=$(pwd)',
+			]) {
+				expect(await linked(c, exists), c).toBeUndefined();
+			}
 		});
 	});
 
@@ -799,7 +815,16 @@ describe('pathLinkProvider with shell variables', () => {
 		});
 
 		it('takes the indented lines of the running view', async () => {
-			expect(await linked('  ⎿  $ B=/tmp/a &&\r\n     ls "$B/x.png"', exists, 2)).toEqual(['/tmp/a/x.png']);
+			// 20 columns, so ls would not have fit after the && above.
+			expect(await linked('  ⎿  $ B=/tmp/a &&\r\n     ls "$B/x.png"', exists, 2, 20)).toEqual(['/tmp/a/x.png']);
+		});
+
+		it('does not take a line above that the line could have followed', async () => {
+			// At 80 columns ls would have fit after the &&, so this is no wrap.
+			expect(await linked('  ⎿  $ B=/tmp/a &&\r\n     ls "$B/x.png"', exists, 2)).toBeUndefined();
+			// Two calls one under the other, each of its own.
+			expect(await linked('  ⏺ Bash(S=/tmp/a && echo ready)\r\n  ⏺ Bash(ls "$S/x.png")', exists, 2)).toBeUndefined();
+			expect(await linked('Previous output\r\n  ⏺ Bash(S=/tmp/a && echo ready)\r\n  ⏺ Bash(ls "$S/x.png")', exists, 3)).toBeUndefined();
 		});
 
 		it('stays fast on a command of long lines full of assignments', async () => {
@@ -814,9 +839,10 @@ describe('pathLinkProvider with shell variables', () => {
 		});
 
 		it(`reads up to ${8} lines above the hovered one`, async () => {
-			const command = (between: number) => ['S=/tmp/a &&', ...Array(between).fill('     echo x &&'), '     ls "$S/x.png"'];
-			expect(await linked(command(7).join('\r\n'), exists, 9)).toEqual(['/tmp/a/x.png']);
-			expect(await linked(command(8).join('\r\n'), exists, 10)).toBeUndefined();
+			// 15 columns, so each line is full for the first word of the next.
+			const command = (between: number) => ['S=/tmp/a &&', ...Array(between).fill('     echo x &&'), '     ls $S/x'];
+			expect(await linked(command(7).join('\r\n'), ['/tmp/a/x'], 9, 15)).toEqual(['/tmp/a/x']);
+			expect(await linked(command(8).join('\r\n'), ['/tmp/a/x'], 10, 15)).toBeUndefined();
 		});
 	});
 
