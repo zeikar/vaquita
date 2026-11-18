@@ -479,20 +479,25 @@ describe('pathLinkProvider across a line break', () => {
 
 // A provider over a real checker whose disk has the paths in exists and cannot
 // tell about those in unsure. It records each batch the checker sends, each
-// run of the callback and what each click hands the gate; with hold, a batch
-// is answered only when its function in held is called.
+// run of the callback and what each hover and click hands on; with hold, a
+// batch is answered only when its function in held is called.
 function checked(t: Terminal, cwd: string, disk: { exists?: string[]; unsure?: string[]; hold?: boolean } = {}) {
 	const batches: string[][] = [];
 	const held: (() => void)[] = [];
 	const replies: (ILink[] | undefined)[] = [];
 	const clicks: unknown[] = [];
+	const hovers: string[] = [];
 	const invoker: ExistsInvoker = (paths) => {
 		batches.push(paths.map((q) => q.path));
 		const answer = () => paths.map(({ path }) => (disk.unsure?.includes(path) ? null : !!disk.exists?.includes(path)));
 		if (!disk.hold) return Promise.resolve(answer());
 		return new Promise((resolve) => void held.push(() => resolve(answer())));
 	};
-	const handlers: LinkHandlers = { ...noop, activate: (_e, text) => void clicks.push(text) };
+	const handlers: LinkHandlers = {
+		...noop,
+		activate: (_e, text) => void clicks.push(text),
+		hover: (_e, text) => void hovers.push(text),
+	};
 	const provider = pathLinkProvider(t.buffer, cwd, handlers, createPathChecker(invoker));
 	return {
 		batches,
@@ -505,6 +510,12 @@ function checked(t: Terminal, cwd: string, disk: { exists?: string[]; unsure?: s
 			for (const l of reply ?? []) l.activate({} as MouseEvent, '');
 			return [...clicks];
 		},
+		// What a hover on each link of the reply hands the hover handler.
+		hover(reply: ILink[] | undefined) {
+			hovers.length = 0;
+			for (const l of reply ?? []) l.hover!({} as MouseEvent, '');
+			return [...hovers];
+		},
 	};
 }
 
@@ -513,8 +524,8 @@ function checked(t: Terminal, cwd: string, disk: { exists?: string[]; unsure?: s
 const settle = () => new Promise((r) => setTimeout(r));
 
 describe('pathLinkProvider with an existence check', () => {
-	const montage = 'Bash(montage "$S/battle_b_frames.png" /tmp/repo/out.png)';
-	const frames = '/tmp/repo/$S/battle_b_frames.png';
+	const montage = 'Bash(montage "in/battle_b_frames.png" /tmp/repo/out.png)';
+	const frames = '/tmp/repo/in/battle_b_frames.png';
 	const out = '/tmp/repo/out.png';
 	const outSpan = { start: { x: 39, y: 1 }, end: { x: 55, y: 1 }, text: out };
 
@@ -648,6 +659,212 @@ describe('pathLinkProvider with an existence check', () => {
 			expect(got.reply).toEqual([whole]);
 			expect(got.clicks).toEqual([[joined, own]]);
 		});
+	});
+});
+
+describe('pathLinkProvider with shell variables', () => {
+	// A Bash call as Claude Code shows it, 100 cells wide: it wraps B's value
+	// itself, at the edge of row 1, and indents what it carries over.
+	const call = [
+		'⏺ Bash(B=/private/tmp/claude-501/-Users-example-Developer-Projects-example-guild/90c8101a-f0ca-43dd-',
+		'      83df-d0a61ff61c10/scratchpad && S=$B/party-battle && R=/tmp/repo/Assets/_Game/Art && ls -la',
+		'      "$S/battle_b_frames.png" "$B/web-screens-1/1920x1080_07_panel_forest_road.png"',
+		'      "$R/Sprites/Battle/C002/C002_zoom.png" "$S/p_battle_b.txt")',
+	].join('\r\n');
+	const B = '/private/tmp/claude-501/-Users-example-Developer-Projects-example-guild/90c8101a-f0ca-43dd-83df-d0a61ff61c10/scratchpad';
+	const S = `${B}/party-battle`;
+	const frames = { start: { x: 8, y: 3 }, end: { x: 29, y: 3 }, text: `${S}/battle_b_frames.png` };
+	const road = { start: { x: 33, y: 3 }, end: { x: 83, y: 3 }, text: `${B}/web-screens-1/1920x1080_07_panel_forest_road.png` };
+	const zoom = { start: { x: 8, y: 4 }, end: { x: 43, y: 4 }, text: '/tmp/repo/Assets/_Game/Art/Sprites/Battle/C002/C002_zoom.png' };
+	const txt = { start: { x: 47, y: 4 }, end: { x: 63, y: 4 }, text: `${S}/p_battle_b.txt` };
+	const all = [frames, road, zoom, txt].map((l) => l.text);
+
+	it('links each variable path as its expansion, through the assignments of its own command', async () => {
+		for (const [y, want] of [
+			[3, [frames, road]],
+			[4, [zoom, txt]],
+		] as const) {
+			const c = checked(await term(100, call), '/tmp/repo', { exists: all });
+			c.provide(y);
+			await settle();
+			expect(c.replies.map(spans), `row ${y}`).toEqual([want]);
+			expect(c.batches, `row ${y}`).toEqual([want.map((l) => l.text)]);
+			expect(c.hover(c.replies[0]), `row ${y}`).toEqual(want.map((l) => l.text));
+			expect(c.click(c.replies[0]), `row ${y}`).toEqual(want.map((l) => l.text));
+		}
+	});
+
+	it('links only the expansions the disk has', async () => {
+		const c = checked(await term(100, call), '/tmp/repo', { exists: [road.text] });
+		c.provide(3);
+		await settle();
+		expect(c.replies.map(spans)).toEqual([[road]]);
+	});
+
+	// What row y of text links once the disk answered, and every path it was asked.
+	async function at(text: string, disk: Parameters<typeof checked>[2] = {}, y = 1, cols = 80) {
+		const c = checked(await term(cols, text), '/tmp/repo', disk);
+		c.provide(y);
+		await settle();
+		expect(c.replies).toHaveLength(1);
+		return { links: spans(c.replies[0])?.map((l) => l.text), batch: c.batches.flat() };
+	}
+	const linked = async (text: string, exists: string[], y = 1, cols = 80) => (await at(text, { exists }, y, cols)).links;
+
+	describe('assignments', () => {
+		it('takes a double-quoted value of an export for ${NAME}', async () => {
+			expect(await linked('export S="/tmp/a" && cat ${S}/x.png', ['/tmp/a/x.png'])).toEqual(['/tmp/a/x.png']);
+		});
+
+		it('takes the latest assignment before the use', async () => {
+			const both = ['/tmp/a/x.png', '/tmp/b/x.png'];
+			expect(await linked('S=/tmp/a && S=/tmp/b && cat "$S/x.png"', both)).toEqual(['/tmp/b/x.png']);
+			expect(await linked('S=/tmp/a && cat "$S/x.png" && S=/tmp/b', both)).toEqual(['/tmp/a/x.png']);
+		});
+
+		it('expands a value that is itself a variable path', async () => {
+			expect(await linked('B=/tmp/a && S=$B/c && cat "$S/x.png"', ['/tmp/a/c/x.png'])).toEqual(['/tmp/a/c/x.png']);
+		});
+
+		it('takes $HOME as ~ unless the command assigns it', async () => {
+			expect(await linked('cat "$HOME/x.png"', ['~/x.png'])).toEqual(['~/x.png']);
+			expect(await linked('HOME=/tmp/h && cat "$HOME/x.png"', ['~/x.png', '/tmp/h/x.png'])).toEqual(['/tmp/h/x.png']);
+		});
+
+		it('takes a relative value from the starting folder, and a ~ one from home', async () => {
+			expect(await linked('S=./out && cat "$S/x.png"', ['/tmp/repo/./out/x.png'])).toEqual(['/tmp/repo/./out/x.png']);
+			expect(await linked('S=~/out && cat "$S/x.png"', ['~/out/x.png'])).toEqual(['~/out/x.png']);
+		});
+
+		it('leaves a value alone for an option that only looks like an assignment', async () => {
+			const both = ['/tmp/a/x.png', '/tmp/b/x.png'];
+			expect(await linked('S=/tmp/a && tool --S=/tmp/b && cat "$S/x.png"', both)).toEqual(['/tmp/a/x.png']);
+		});
+	});
+
+	describe('a value not fully read', () => {
+		const disk = { exists: ['/tmp/a/x.png'] };
+
+		it('hides an earlier value of its name', async () => {
+			for (const v of ["S='/tmp/b'", 'S=$(pwd)', 'S=foo', 'S=$X/b', 'S+=/b']) {
+				const got = await at(`S=/tmp/a && ${v} && cat "$S/x.png"`, disk);
+				expect(got.links, v).toBeUndefined();
+				expect(got.batch, v).not.toContain('/tmp/a/x.png');
+			}
+		});
+
+		it('gives its name no value', async () => {
+			for (const v of ['S="/tmp/a,b" && ', 'S="/tmp/a b" && ', 'S=/tmp/a:12 && ', 'S=/tmp/a&&']) {
+				const got = await at(`${v}cat "$S/x.png"`, disk);
+				expect(got.links, v).toBeUndefined();
+				expect(got.batch, v).not.toContain('/tmp/a/x.png');
+			}
+		});
+
+		it('leaves a quoted ~ as it is, and a single-quoted HOME unknown', async () => {
+			const quoted = await at('S="~/out" && cat "$S/x.png"', { exists: ['~/out/x.png'] });
+			expect(quoted.links).toBeUndefined();
+			expect(quoted.batch).not.toContain('~/out/x.png');
+			const home = await at('HOME=\'/tmp/h\' && cat "$HOME/x.png"', { exists: ['~/x.png'] });
+			expect(home.links).toBeUndefined();
+			expect(home.batch).not.toContain('~/x.png');
+		});
+
+		it('gives a value wrapped onto the next line only when it ends there', async () => {
+			// B's value fills its row of 30 cells and goes on, indented, on the next.
+			const full = '/tmp/example/aaaaaaaaaaaaaaabbb/x.png';
+			const cut = '/tmp/example/aaaaaaaaaaaaaaa/x.png';
+			const row = (next: string) => `B=/tmp/example/aaaaaaaaaaaaaaa\r\n    ${next} && cat "$B/x.png"`;
+			expect(await linked(row('bbb'), [full, cut], 2, 30)).toEqual([full]);
+			const got = await at(row('bbb,b'), { exists: [full, cut] }, 2, 30);
+			expect(got.links).toBeUndefined();
+			expect(got.batch).not.toContain(full);
+			expect(got.batch).not.toContain(cut);
+		});
+	});
+
+	describe('the command', () => {
+		const exists = ['/tmp/a/x.png'];
+
+		it('does not reach an assignment on a line of its own above', async () => {
+			const got = await at('export S=/tmp/a\r\nls "$S/x.png"', { exists }, 2);
+			expect(got.links).toBeUndefined();
+			expect(got.batch).not.toContain('/tmp/a/x.png');
+		});
+
+		it('takes the rows a command soft-wraps over', async () => {
+			expect(await linked('S=/tmp/a && cat "$S/x.png"', exists, 2, 16)).toEqual(['/tmp/a/x.png']);
+			// Three rows, each with a space, which lineText stops after.
+			for (const y of [2, 3]) expect(await linked('S=/tmp/a && cat "$S/x.png"', exists, y, 10), `row ${y}`).toEqual(['/tmp/a/x.png']);
+		});
+
+		it('takes the indented lines of the running view', async () => {
+			expect(await linked('  ⎿  $ B=/tmp/a &&\r\n     ls "$B/x.png"', exists, 2)).toEqual(['/tmp/a/x.png']);
+		});
+
+		it('stays fast on a command of long lines full of assignments', async () => {
+			// Each line wraps over 42 rows with no whitespace past its indent.
+			const long = `  ${'a=$a/b|'.repeat(600)}`;
+			const t = await term(100, [...Array(9).fill(long), '  cat "$a/x.png"'].join('\r\n'));
+			const y = t.buffer.active.baseY + t.buffer.active.cursorY + 1;
+			expect(t.buffer.active.getLine(y - 1)?.translateToString(true)).toBe('  cat "$a/x.png"');
+			const t0 = performance.now();
+			links(t, y);
+			expect(performance.now() - t0).toBeLessThan(50);
+		});
+
+		it(`reads up to ${8} lines above the hovered one`, async () => {
+			const command = (between: number) => ['S=/tmp/a &&', ...Array(between).fill('     echo x &&'), '     ls "$S/x.png"'];
+			expect(await linked(command(7).join('\r\n'), exists, 9)).toEqual(['/tmp/a/x.png']);
+			expect(await linked(command(8).join('\r\n'), exists, 10)).toBeUndefined();
+		});
+	});
+
+	describe('the disk answer', () => {
+		const line = 'S=/tmp/a && cat "$S/x.png" /tmp/b.txt';
+
+		it('does not link an expansion the disk could not tell about', async () => {
+			expect((await at(line, { unsure: ['/tmp/a/x.png', '/tmp/b.txt'] })).links).toEqual(['/tmp/b.txt']);
+		});
+
+		it('links only plain paths with no checker', async () => {
+			expect(spans(links(await term(80, line), 1))?.map((l) => l.text)).toEqual(['/tmp/a', '/tmp/b.txt']);
+		});
+
+		it('asks nothing for a variable nothing assigns', async () => {
+			expect((await at('cat "$S/x.png" /tmp/b.txt')).batch).toEqual(['/tmp/b.txt']);
+		});
+
+		it('does not link a missing expansion', async () => {
+			const got = await at('S=/tmp/a && cat "$S/x.png"', { exists: ['/tmp/a'] });
+			expect(got.links).toEqual(['/tmp/a']);
+			expect(got.batch).toContain('/tmp/a/x.png');
+		});
+	});
+
+	it('joins a variable path across a line break, its parts expanded for a click to fall back to', async () => {
+		// $S/aaaaaaa/ fills its row of 26 cells and goes on, indented, on the next.
+		const t = await term(26, 'S=/tmp/a && ls $S/aaaaaaa/\r\n    b/c.png');
+		const joined = '/tmp/a/aaaaaaa/b/c.png';
+		const want = [{ start: { x: 16, y: 1 }, end: { x: 11, y: 2 }, text: joined }];
+		for (const [y, part] of [
+			[1, '/tmp/a/aaaaaaa/'],
+			[2, '/tmp/repo/b/c.png'],
+		] as const) {
+			const c = checked(t, '/tmp/repo', { exists: [joined] });
+			c.provide(y);
+			await settle();
+			expect(c.replies.map(spans), `row ${y}`).toEqual([want]);
+			expect(c.click(c.replies[0]), `row ${y}`).toEqual([[joined, part]]);
+		}
+	});
+
+	it('ends a variable path where its colour ends', async () => {
+		const code = (s: string) => `\x1b[38;2;177;185;249m${s}\x1b[39m`;
+		const c = checked(await term(80, `S=/tmp/a && cat ${code('$S/x.png')}을`), '/tmp/repo', { exists: ['/tmp/a/x.png'] });
+		c.provide(1);
+		await settle();
+		expect(c.replies.map(spans)).toEqual([[{ start: { x: 17, y: 1 }, end: { x: 24, y: 1 }, text: '/tmp/a/x.png' }]]);
 	});
 });
 

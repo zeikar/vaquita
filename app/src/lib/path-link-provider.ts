@@ -1,11 +1,14 @@
 import type { IBufferCell, IBufferLine, ILink, ILinkProvider } from '@xterm/xterm';
 import {
+	findAssignments,
 	findPaths,
 	gateTarget,
 	hasExtension,
 	pathRun,
 	pathRunBefore,
 	resolvePath,
+	varPath,
+	wholeValue,
 	type LinkText,
 	type Bounds,
 	type PathHit,
@@ -117,13 +120,23 @@ type Piece = { line: LineText; start: number; end: number };
 // it is a path by itself.
 type Opening = { start: number; end: number; target?: string };
 
-// A path to link, by its first and last cells.
-type Span = { first: CellPos; last: CellPos; path: string };
+// A path to link, by its first and last cells; expanded when its text began
+// with a shell variable the path stands for.
+type Span = { first: CellPos; last: CellPos; path: string; expanded?: boolean };
+
+// What a path is resolved by: a target and its first cell, which says which of
+// its command's assignments came before it, to a path, or to nothing when the
+// target names a variable that is not known there.
+type Resolve = (target: string, at: CellPos) => string | undefined;
+
+// What of a joined path wholeValue reads: its target, the joined text of its
+// range, and the text after its last cell on the line it ends on.
+type Raw = { target: string; covered: string; after: string };
 
 // A joined path also has the paths it replaces, for a click to fall back to, and
 // lead among them when the first line's part is one; taken is its last cell,
 // after which the lines' own paths link.
-type Found = Span & { parts?: Span[]; lead?: Span; taken?: CellPos };
+type Found = Span & { parts?: Span[]; lead?: Span; taken?: CellPos; raw?: Raw };
 
 // Claude Code draws inline code, such as a path in backticks, in a colour of
 // its own. Where a colour ends, a path ends (~/.zshrc을 links ~/.zshrc), and
@@ -147,8 +160,14 @@ function colourBreak(a: LineText, i: number, b: LineText, j: number): boolean {
 	return bounds.endsAt(1) || bounds.startsAt(1);
 }
 
-function span(line: LineText, hit: PathHit, cwd: string): Span {
-	return { first: line.cells[hit.start], last: line.cells[hit.end - 1], path: resolvePath(hit.target, cwd) };
+function located(first: CellPos, last: CellPos, target: string, resolve: Resolve): Span | undefined {
+	const path = resolve(target, first);
+	if (path === undefined) return undefined;
+	return varPath(target) ? { first, last, path, expanded: true } : { first, last, path };
+}
+
+function span(line: LineText, hit: PathHit, resolve: Resolve): Span | undefined {
+	return located(line.cells[hit.start], line.cells[hit.end - 1], hit.target, resolve);
 }
 
 // Whether a piece ends its line at the right edge, before a hard break.
@@ -232,7 +251,8 @@ function isRest(buffer: BufferLike, lines: LineText[], k: number): boolean {
 // The path a line starts, with the runs that continue it on the next lines.
 // rest says whether the line is itself the rest of the line above; going on
 // by the run it begins with, it goes on with the path joined from above.
-function join(buffer: BufferLike, line: LineText, rest: boolean, cwd: string): Found | undefined {
+// Nothing when the joined path names a variable not known there.
+function join(buffer: BufferLike, line: LineText, rest: boolean, resolve: Resolve): Found | undefined {
 	let on = runsOn(buffer, line, rest);
 	if (!on || (rest && on[0].start === leadingRun(line)?.start)) return undefined;
 	const { start, end, target } = on[0];
@@ -250,16 +270,29 @@ function join(buffer: BufferLike, line: LineText, rest: boolean, cwd: string): F
 	};
 	const got = findPaths(joined.text, colourBounds(joined))[0];
 	if (got?.start !== 0) return undefined;
-	const lead = target === undefined ? undefined : span(line, { start, end, target }, cwd);
+	const last = joined.cells[got.end - 1];
+	const whole = located(line.cells[start], last, got.target, resolve);
+	if (!whole) return undefined;
+	const lead = target === undefined ? undefined : span(line, { start, end, target }, resolve);
 	const parts = lead ? [lead] : [];
 	for (const p of pieces.slice(1)) {
 		for (const h of findPaths(p.line.text, colourBounds(p.line))) {
 			if (h.start >= p.end) break;
-			parts.push(span(p.line, h, cwd));
+			const s = span(p.line, h, resolve);
+			if (s) parts.push(s);
 		}
 	}
-	const last = joined.cells[got.end - 1];
-	return { first: line.cells[start], last, path: resolvePath(got.target, cwd), parts, lead, taken: last };
+	// The piece the path ends in, for the text after it on that piece's line.
+	let after = '';
+	for (let i = 0, off = 0; i < pieces.length; off += pieces[i].end - pieces[i].start, i++) {
+		const p = pieces[i];
+		if (got.end <= off + p.end - p.start) {
+			after = p.line.text.slice(p.start + got.end - off);
+			break;
+		}
+	}
+	const raw = { target: got.target, covered: joined.text.slice(0, got.end), after };
+	return { ...whole, parts, lead, taken: last, raw };
 }
 
 // here and the lines above it, in order, while each begins with a run after an
@@ -276,6 +309,118 @@ function linesInto(buffer: BufferLike, here: LineText): LineText[] {
 	return lines;
 }
 
+// A $NAME/ path is expanded from the command it stands in, as the app knows no
+// shell's variables, only the text on the screen. The command is the hovered
+// line and the lines above it while each is the rest of the one above: its
+// first row is soft-wrapped, or it begins after an indent, as a TUI wraps a
+// long command. There is no marker for where a command begins (a prompt, a
+// Bash( call), so the first line that is neither is its first line. Lines past
+// COMMAND_LINES above the hovered one are not read, and what they assign stays
+// unknown.
+const COMMAND_LINES = 8;
+
+// The command's lines, top to bottom, the last being here. A line whose first
+// row is soft-wrapped is joined with the rows above it, read only once each,
+// so that a value is never cut where lineText stopped.
+function commandLines(buffer: BufferLike, here: LineText): LineText[] {
+	const lines = [here];
+	for (let n = 0; n < COMMAND_LINES; n++) {
+		const top = lines[0];
+		const first = top.cells[0]?.row;
+		if (first === undefined || first === 0) break;
+		const wrapped = buffer.active.getLine(first)?.isWrapped;
+		if (!wrapped && top.text.search(/\S/) <= 0) break;
+		const above = lineText(buffer, first - 1);
+		if (!wrapped) {
+			lines.unshift(above);
+			continue;
+		}
+		let cut = above.cells.findIndex((c) => c.row >= first);
+		if (cut < 0) cut = above.cells.length;
+		lines[0] = { text: above.text.slice(0, cut) + top.text, cells: [...above.cells.slice(0, cut), ...top.cells] };
+	}
+	return lines;
+}
+
+// An assignment in a command: where its value begins, and the path it gives,
+// none when the app did not read all of the value.
+type Listed = { at: Pick<CellPos, 'row' | 'x'>; path?: string };
+
+function before(a: Pick<CellPos, 'row' | 'x'>, b: Pick<CellPos, 'row' | 'x'>): boolean {
+	return a.row < b.row || (a.row === b.row && a.x < b.x);
+}
+
+// The latest of a name's assignments, listed in the order they stand, whose
+// value begins before at.
+function latest(list: Listed[] | undefined, at: CellPos): Listed | undefined {
+	if (!list) return undefined;
+	let lo = 0;
+	let hi = list.length;
+	while (lo < hi) {
+		const mid = (lo + hi) >> 1;
+		if (before(list[mid].at, at)) lo = mid + 1;
+		else hi = mid;
+	}
+	return lo > 0 ? list[lo - 1] : undefined;
+}
+
+// Every NAME= in the command, by name, in the order they stand. A value is
+// taken only when the provider already finds a path where it begins that is
+// all of it (wholeValue), through a plain =; the disk cannot tell a cut or
+// stale value from the right one, so anything else, a single-quoted value
+// included, leaves the name unknown from there on. A line's join is made after
+// its own assignments, as the variable it begins with may be one of them, and
+// when it begins at a value it is that value, wrapped onto the next lines.
+function listAssignments(buffer: BufferLike, lines: LineText[], resolve: Resolve, listed: Map<string, Listed[]>) {
+	lines.forEach((line, k) => {
+		const hits = new Map(findPaths(line.text, colourBounds(line)).map((h) => [h.start, h]));
+		const atValue = new Map<CellPos, { entry: Listed; quoted: boolean; plain: boolean }>();
+		for (const a of findAssignments(line.text)) {
+			const cell = line.cells[a.value];
+			// A value that ends the line's text has no cell; it begins just past the =.
+			const eq = line.cells[a.value - (a.quoted ? 2 : 1)];
+			const entry: Listed = { at: cell ?? { row: eq.row, x: eq.x + eq.width } };
+			const hit = hits.get(a.value);
+			const covered = hit ? line.text.slice(hit.start, hit.end) : '';
+			if (!a.append && hit && wholeValue(hit.target, covered, line.text.slice(hit.end), a.quoted)) {
+				entry.path = resolve(hit.target, cell);
+			}
+			const list = listed.get(a.name);
+			if (list) list.push(entry);
+			else listed.set(a.name, [entry]);
+			if (cell) atValue.set(cell, { entry, quoted: a.quoted, plain: !a.append });
+		}
+		const f = join(buffer, line, isRest(buffer, lines, k), resolve);
+		const v = f && atValue.get(f.first);
+		if (v) {
+			const { target, covered, after } = f.raw!;
+			v.entry.path = v.plain && wholeValue(target, covered, after, v.quoted) ? f.path : undefined;
+		}
+	});
+}
+
+// The resolver of a hovered line: a plain target from the starting folder, a
+// $NAME/ one from the latest assignment of NAME in its command before it.
+// HOME with none is ~; no environment variable is read. The command is read
+// the first time a variable needs it, so a row with none costs nothing more.
+function resolver(buffer: BufferLike, cwd: string, here: LineText): Resolve {
+	let listed: Map<string, Listed[]> | undefined;
+	const resolve: Resolve = (target, at) => {
+		const v = varPath(target);
+		if (!v) return resolvePath(target, cwd);
+		if (!listed) {
+			// Set first: the walk resolves its own values through this, against
+			// what it has listed so far.
+			listed = new Map();
+			listAssignments(buffer, commandLines(buffer, here), resolve, listed);
+		}
+		const a = latest(listed.get(v.name), at);
+		if (!a) return v.name === 'HOME' ? '~' + v.rest : undefined;
+		return a.path === undefined ? undefined : a.path.replace(/\/+$/, '') + v.rest;
+	};
+	return resolve;
+}
+
 // A path that may link on the hovered row, with the joined path that replaced
 // it, if any: it links only once the disk says that one is not there.
 type Entry = Found & { by?: Found };
@@ -284,6 +429,7 @@ type Entry = Found & { by?: Found };
 function rowEntries(buffer: BufferLike, cwd: string, y: number): Entry[] {
 	const lines = linesInto(buffer, lineText(buffer, y - 1));
 	const here = lines[lines.length - 1];
+	const resolve = resolver(buffer, cwd, here);
 	const found: Entry[] = [];
 	// A joined path replaces the paths in the runs it took, up to its taken cell.
 	let taker: Found | undefined;
@@ -293,13 +439,14 @@ function rowEntries(buffer: BufferLike, cwd: string, y: number): Entry[] {
 	};
 	// A path that reaches here starts at most MAX_LINES - 1 lines up.
 	for (let k = Math.max(0, lines.length - MAX_LINES); k < lines.length; k++) {
-		const f = join(buffer, lines[k], isRest(buffer, lines, k), cwd);
+		const f = join(buffer, lines[k], isRest(buffer, lines, k), resolve);
 		// here's paths link on their own but for those an earlier path took and
 		// the one here's own path starts from, which wait on that path's answer.
 		if (k === lines.length - 1) {
 			for (const hit of findPaths(here.text, colourBounds(here))) {
-				const c = here.cells[hit.start];
-				found.push({ ...span(here, hit, cwd), by: !free(c) ? taker : f?.first === c ? f : undefined });
+				const s = span(here, hit, resolve);
+				if (!s) continue;
+				found.push({ ...s, by: !free(s.first) ? taker : f?.first === s.first ? f : undefined });
 			}
 		}
 		if (f) {
@@ -313,7 +460,11 @@ function rowEntries(buffer: BufferLike, cwd: string, y: number): Entry[] {
 
 // The links of row y by the disk's answers: true, false, or undefined when not
 // known, which links as without a check. A path that is not there is dropped,
-// and a path a join replaced links only when the join is not there.
+// and a path a join replaced links only when the join is not there. An
+// expanded path links only on a true: it is a guess that stands nowhere on the
+// screen, so unconfirmed it would underline, and report missing on a click, a
+// file the user never read. Its answer is kept when it lands late, and the
+// next hover links it.
 function rowLinks(
 	entries: Entry[],
 	y: number,
@@ -321,8 +472,9 @@ function rowLinks(
 	handlers: LinkHandlers,
 ): ILink[] | undefined {
 	const links: ILink[] = [];
-	for (const { first, last, path, parts, lead, by } of entries) {
-		if (answer(path) === false || (by && answer(by.path) !== false)) continue;
+	for (const { first, last, path, parts, lead, by, expanded } of entries) {
+		const known = answer(path);
+		if (known === false || (expanded && known !== true) || (by && answer(by.path) !== false)) continue;
 		const range = {
 			start: { x: first.x + 1, y: first.row + 1 },
 			end: { x: last.x + last.width, y: last.row + 1 },
