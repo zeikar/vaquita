@@ -4,7 +4,7 @@ Each release's notes open with its section here.
 
 ## 0.1.31
 
-- A path in terminal output is a link only when the file exists, so text that merely looks like one, such as `"$DIR/shot.png"` in a command, is no longer underlined.
+- A path in terminal output is a link only when the file exists, so text that merely looks like one, such as a misspelt path, is no longer underlined.
 - A path an agent wrapped over two lines links as a whole only when that file exists; otherwise each line's own path does.
 - A path that starts with a shell variable, such as `"$DIR/shot.png"`, links when the same command sets the variable, as in an agent's expanded Bash call, and the file exists.
 - A file's name alone in terminal output, such as `term-view.ts` or `a.ts:12`, links when exactly one file of that name is in the session's repo or its starting folder.
