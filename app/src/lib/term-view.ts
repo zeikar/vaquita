@@ -9,7 +9,7 @@ import { keyHandler } from './keys';
 import { layoutHeld } from './layout-hold';
 import { activateUri, type LinkText } from './file-links';
 import type { Tone, ViewLike } from './manager';
-import { pathChecker } from './path-exists';
+import { createNameFinder, pathChecker } from './path-exists';
 import { pathLinkProvider } from './path-link-provider';
 import type { SessionCore, Size } from './session-core';
 import { MONO_FONT, theme } from './theme';
@@ -72,8 +72,10 @@ export class TermView implements ViewLike {
 		// hyperlinks xterm passes the link's URI to linkHandler, not the visible text.
 		// Without allowNonHttpProtocols xterm would drop file: links; activateUri is
 		// the one gate that decides what a click opens. The path provider asks the
-		// disk on hover and drops a path that is not there, which only filters what
-		// is underlined: a click still goes through activateUri.
+		// disk on hover and drops a path that is not there, and looks up which file
+		// a bare file name names, from the starting folder's repo, linking it only
+		// when there is one. Both only filter what is underlined: a click still
+		// goes through activateUri.
 		const activate = (e: MouseEvent, uri: LinkText) => activateUri(e, uri, this.report, this.onView);
 		const hover = (_e: MouseEvent, uri: string) => {
 			container.title = uri;
@@ -83,7 +85,7 @@ export class TermView implements ViewLike {
 		};
 		this.term.options.linkHandler = { activate, hover, leave, allowNonHttpProtocols: true };
 		this.term.loadAddon(new WebLinksAddon(activate, { hover, leave }));
-		this.term.registerLinkProvider(pathLinkProvider(this.term.buffer, this.cwd, { activate, hover, leave }, pathChecker));
+		this.term.registerLinkProvider(pathLinkProvider(this.term.buffer, this.cwd, { activate, hover, leave }, pathChecker, createNameFinder(this.cwd)));
 		this.term.loadAddon(new ClipboardAddon(undefined, clipboardProvider(() => this.core.pendingReplay > 0, this.report)));
 		this.term.attachCustomKeyEventHandler(
 			keyHandler(

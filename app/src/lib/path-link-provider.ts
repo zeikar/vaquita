@@ -13,7 +13,7 @@ import {
 	type Bounds,
 	type PathHit,
 } from './file-links';
-import type { PathChecker } from './path-exists';
+import type { NameFinder, PathChecker } from './path-exists';
 
 // Only getLine, so a headless terminal's buffer can stand in for xterm's.
 export interface BufferLike {
@@ -121,8 +121,9 @@ type Piece = { line: LineText; start: number; end: number };
 type Opening = { start: number; end: number; target?: string };
 
 // A path to link, by its first and last cells; expanded when its text began
-// with a shell variable the path stands for.
-type Span = { first: CellPos; last: CellPos; path: string; expanded?: boolean };
+// with a shell variable the path stands for. A named one is a bare file name,
+// path being the name as it stands: which file it is the finder says.
+type Span = { first: CellPos; last: CellPos; path: string; expanded?: boolean; named?: boolean };
 
 // What a path is resolved by: a target and its first cell, which says which of
 // its command's assignments came before it, to a path, or to nothing when the
@@ -442,7 +443,8 @@ function resolver(buffer: BufferLike, cwd: string, here: LineText): Resolve {
 }
 
 // A path that may link on the hovered row, with the joined path that replaced
-// it, if any: it links only once the disk says that one is not there.
+// it, if any: it links only once the disk says that one is not there. A named
+// entry's path is the name, never resolved against the starting folder.
 type Entry = Found & { by?: Found };
 
 // The paths that reach 1-based row y: the joined ones that do and the row's own.
@@ -463,8 +465,10 @@ function rowEntries(buffer: BufferLike, cwd: string, y: number): Entry[] {
 		// here's paths link on their own but for those an earlier path took and
 		// the one here's own path starts from, which wait on that path's answer.
 		if (k === lines.length - 1) {
-			for (const hit of findPaths(here.text, colourBounds(here))) {
-				const s = span(here, hit, resolve);
+			for (const hit of findPaths(here.text, colourBounds(here), true)) {
+				const s = hit.name
+					? { first: here.cells[hit.start], last: here.cells[hit.end - 1], path: hit.target, named: true }
+					: span(here, hit, resolve);
 				if (!s) continue;
 				found.push({ ...s, by: !free(s.first) ? taker : f?.first === s.first ? f : undefined });
 			}
@@ -484,17 +488,28 @@ function rowEntries(buffer: BufferLike, cwd: string, y: number): Entry[] {
 // expanded path links only on a true: it is a guess that stands nowhere on the
 // screen, so unconfirmed it would underline, and report missing on a click, a
 // file the user never read. Its answer is kept when it lands late, and the
-// next hover links it.
+// next hover links it. A name links the same way, only on the finder's path,
+// which is then its text, its hover and its click, as the full path stands
+// nowhere on the screen either.
 function rowLinks(
 	entries: Entry[],
 	y: number,
 	answer: (path: string) => boolean | undefined,
+	find: (name: string) => string | false | undefined,
 	handlers: LinkHandlers,
 ): ILink[] | undefined {
 	const links: ILink[] = [];
-	for (const { first, last, path, parts, lead, by, expanded } of entries) {
-		const known = answer(path);
-		if (known === false || (expanded && known !== true) || (by && answer(by.path) !== false)) continue;
+	for (const entry of entries) {
+		const { first, last, parts, lead, by, expanded, named } = entry;
+		let path = entry.path;
+		if (named) {
+			const found = find(path);
+			if (typeof found !== 'string' || (by && answer(by.path) !== false)) continue;
+			path = found;
+		} else {
+			const known = answer(path);
+			if (known === false || (expanded && known !== true) || (by && answer(by.path) !== false)) continue;
+		}
 		const range = {
 			start: { x: first.x + 1, y: first.row + 1 },
 			end: { x: last.x + last.width, y: last.row + 1 },
@@ -515,14 +530,17 @@ function rowLinks(
 
 // Links for paths in plain terminal text. Ranges follow WebLinksAddon: 1-based,
 // end inclusive, and a wide last character ends on its right cell. With a
-// checker, a path the disk says is not there is not given.
+// checker, a path the disk says is not there is not given; with a finder, a
+// bare file name links to the one file it names.
 export function pathLinkProvider(
 	buffer: BufferLike,
 	cwd: string,
 	handlers: LinkHandlers,
 	checker?: PathChecker,
+	finder?: NameFinder,
 ): ILinkProvider {
 	const answer = (path: string) => checker?.known(path);
+	const find = (name: string) => finder?.known(name);
 	// Only the latest call replies: xterm's Linkifier puts a reply in the map of
 	// whichever row is active when it lands, so a late answer for one row would
 	// replace the links of the row the pointer has moved to.
@@ -531,21 +549,26 @@ export function pathLinkProvider(
 		provideLinks(y, callback) {
 			const call = ++latest;
 			const entries = rowEntries(buffer, cwd, y);
-			// A text that is no gate target has nothing to ask and reads as not known.
-			const asked = [...new Set(entries.flatMap((e) => (e.by ? [e.path, e.by.path] : [e.path])))].filter(
+			// A text that is no gate target has nothing to ask and reads as not known;
+			// a name goes to the finder only.
+			const asked = [...new Set(entries.flatMap((e) => [...(e.named ? [] : [e.path]), ...(e.by ? [e.by.path] : [])]))].filter(
 				(p) => gateTarget(p) && answer(p) === undefined,
 			);
-			if (!checker || asked.length === 0) {
-				callback(rowLinks(entries, y, answer, handlers));
+			const names = [...new Set(entries.filter((e) => e.named && find(e.path) === undefined).map((e) => e.path))];
+			const waits: Promise<void>[] = [];
+			if (checker && asked.length > 0) waits.push(checker.ask(asked));
+			if (finder && names.length > 0) waits.push(finder.ask(names));
+			if (waits.length === 0) {
+				callback(rowLinks(entries, y, answer, find, handlers));
 				return;
 			}
-			void checker.ask(asked).then(() => {
+			void Promise.all(waits).then(() => {
 				if (call !== latest) return;
 				// Output may have rewritten the row during the wait, so links built
 				// before it could put the old path and its range on new text. They are
 				// worked out again from the buffer as it is now, and a path the new
 				// text brings that was not asked reads by the cache, else as not known.
-				callback(rowLinks(rowEntries(buffer, cwd, y), y, answer, handlers));
+				callback(rowLinks(rowEntries(buffer, cwd, y), y, answer, find, handlers));
 			});
 		},
 	};

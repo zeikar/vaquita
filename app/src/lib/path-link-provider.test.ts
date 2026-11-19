@@ -1,9 +1,9 @@
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { Terminal } from '@xterm/headless';
 import type { ILink } from '@xterm/xterm';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { activateUri, type Invoker } from './file-links';
-import { createPathChecker, type ExistsInvoker } from './path-exists';
+import { createNameFinder, createPathChecker, type ExistsInvoker, type NamesInvoker } from './path-exists';
 import { lineText, pathLinkProvider, type LinkHandlers } from './path-link-provider';
 
 const noop: LinkHandlers = { activate() {}, hover() {}, leave() {} };
@@ -478,12 +478,26 @@ describe('pathLinkProvider across a line break', () => {
 });
 
 // A provider over a real checker whose disk has the paths in exists and cannot
-// tell about those in unsure. It records each batch the checker sends, each
-// run of the callback and what each hover and click hands on; with hold, a
-// batch is answered only when its function in held is called.
-function checked(t: Terminal, cwd: string, disk: { exists?: string[]; unsure?: string[]; hold?: boolean } = {}) {
+// tell about those in unsure, and, given names, a real finder that answers a
+// name by it (false for one it does not hold). It records each batch the
+// checker and the finder send, each run of the callback and what each hover
+// and click hands on; with hold, a batch is answered only when its function in
+// held (nameHeld for the finder) is called.
+type Disk = { exists?: string[]; unsure?: string[]; names?: Record<string, string | false | null>; hold?: boolean };
+
+function checked(t: Terminal, cwd: string, disk: Disk = {}) {
 	const batches: string[][] = [];
 	const held: (() => void)[] = [];
+	const nameBatches: string[][] = [];
+	const nameHeld: (() => void)[] = [];
+	const names = disk.names;
+	const nameInvoker: NamesInvoker = (folder, asked) => {
+		expect(folder).toBe(cwd || '~');
+		nameBatches.push(asked);
+		const answer = () => asked.map((n) => (names && Object.hasOwn(names, n) ? names[n] : false));
+		if (!disk.hold) return Promise.resolve(answer());
+		return new Promise((resolve) => void nameHeld.push(() => resolve(answer())));
+	};
 	const replies: (ILink[] | undefined)[] = [];
 	const clicks: unknown[] = [];
 	const hovers: string[] = [];
@@ -498,10 +512,13 @@ function checked(t: Terminal, cwd: string, disk: { exists?: string[]; unsure?: s
 		activate: (_e, text) => void clicks.push(text),
 		hover: (_e, text) => void hovers.push(text),
 	};
-	const provider = pathLinkProvider(t.buffer, cwd, handlers, createPathChecker(invoker));
+	const finder = names ? createNameFinder(cwd, nameInvoker) : undefined;
+	const provider = pathLinkProvider(t.buffer, cwd, handlers, createPathChecker(invoker), finder);
 	return {
 		batches,
 		held,
+		nameBatches,
+		nameHeld,
 		replies,
 		provide: (y: number) => provider.provideLinks(y, (l) => void replies.push(l)),
 		// What a click on each link of the reply hands the gate.
@@ -626,7 +643,7 @@ describe('pathLinkProvider with an existence check', () => {
 		const own = '/tmp/repo/icon/fixed-shadow.png';
 		const whole = { start: { x: 16, y: 1 }, end: { x: 25, y: 2 }, text: joined };
 
-		async function row(y: number, disk: Parameters<typeof checked>[2]) {
+		async function row(y: number, disk: Disk) {
 			const c = checked(await term(56, item), '/tmp/repo', disk);
 			c.provide(y);
 			await settle();
@@ -891,6 +908,159 @@ describe('pathLinkProvider with shell variables', () => {
 		c.provide(1);
 		await settle();
 		expect(c.replies.map(spans)).toEqual([[{ start: { x: 17, y: 1 }, end: { x: 24, y: 1 }, text: '/tmp/a/x.png' }]]);
+	});
+});
+
+describe('pathLinkProvider with file names', () => {
+	afterEach(() => void vi.useRealTimers());
+
+	const cwd = '/tmp/repo';
+	const termView = '/tmp/repo/src/lib/term-view.ts';
+	const aTs = '/tmp/repo/a.ts';
+	const named = { 'term-view.ts': termView, 'a.ts': aTs };
+	const updated = 'Updated term-view.ts and a.ts:12.';
+	const updatedSpans = [
+		{ start: { x: 9, y: 1 }, end: { x: 20, y: 1 }, text: termView },
+		{ start: { x: 26, y: 1 }, end: { x: 32, y: 1 }, text: aTs },
+	];
+
+	it('links each name the finder knows on its own cells, by the full path', async () => {
+		const c = checked(await term(80, updated), cwd, { names: named });
+		c.provide(1);
+		await settle();
+		expect(c.replies.map(spans)).toEqual([updatedSpans]);
+		expect(c.hover(c.replies[0])).toEqual([termView, aTs]);
+		expect(c.click(c.replies[0])).toEqual([termView, aTs]);
+		expect(c.nameBatches).toEqual([['term-view.ts', 'a.ts']]);
+		expect(c.batches).toEqual([]);
+	});
+
+	it('links no name and asks nothing with no finder', async () => {
+		const t = await term(80, updated);
+		expect(links(t, 1, cwd)).toBeUndefined();
+		const c = checked(t, cwd);
+		c.provide(1);
+		expect(c.replies).toEqual([undefined]);
+		expect(c.batches).toEqual([]);
+	});
+
+	it('links no name the finder says no to or could not tell, and asks the latter again', async () => {
+		const c = checked(await term(80, 'see a.ts b.ts'), cwd, { names: { 'a.ts': false, 'b.ts': null } });
+		c.provide(1);
+		await settle();
+		expect(c.replies).toEqual([undefined]);
+		c.provide(1);
+		await settle();
+		expect(c.nameBatches).toEqual([['a.ts', 'b.ts'], ['b.ts']]);
+	});
+
+	it('asks the checker and the finder once each and replies once, after both', async () => {
+		const c = checked(await term(80, 'cat /tmp/repo/b.ts a.ts'), cwd, { exists: ['/tmp/repo/b.ts'], names: named, hold: true });
+		c.provide(1);
+		await settle();
+		expect(c.batches).toEqual([['/tmp/repo/b.ts']]);
+		expect(c.nameBatches).toEqual([['a.ts']]);
+		c.held[0]();
+		await settle();
+		expect(c.replies).toEqual([]);
+		c.nameHeld[0]();
+		await settle();
+		expect(c.replies.map((r) => spans(r)?.map((l) => l.text))).toEqual([['/tmp/repo/b.ts', aTs]]);
+	});
+
+	it('answers before it returns, asking nothing, when every answer is cached', async () => {
+		const want = [
+			{ start: { x: 5, y: 1 }, end: { x: 18, y: 1 }, text: '/tmp/repo/b.ts' },
+			{ start: { x: 20, y: 1 }, end: { x: 23, y: 1 }, text: aTs },
+		];
+		const c = checked(await term(80, 'cat /tmp/repo/b.ts a.ts'), cwd, { exists: ['/tmp/repo/b.ts'], names: named });
+		c.provide(1);
+		await settle();
+		c.provide(1);
+		expect(c.replies.map(spans)).toEqual([want, want]);
+		expect(c.batches).toHaveLength(1);
+		expect(c.nameBatches).toHaveLength(1);
+	});
+
+	it('drops the reply of a call a later one overtook', async () => {
+		const c = checked(await term(80, 'see a.ts\r\nsee term-view.ts'), cwd, { names: named, hold: true });
+		c.provide(1);
+		c.provide(2);
+		await settle();
+		expect(c.nameHeld).toHaveLength(2);
+		c.nameHeld[1]();
+		await settle();
+		expect(c.replies.map(spans)).toEqual([[{ start: { x: 5, y: 2 }, end: { x: 16, y: 2 }, text: termView }]]);
+		c.nameHeld[0]();
+		await settle();
+		expect(c.replies).toHaveLength(1);
+	});
+
+	it('links no name the finder has not answered within the wait, and links it from the cache next time', async () => {
+		const t = await term(80, 'see a.ts');
+		vi.useFakeTimers();
+		const c = checked(t, cwd, { names: named, hold: true });
+		c.provide(1);
+		await vi.advanceTimersByTimeAsync(250);
+		expect(c.replies).toEqual([undefined]);
+		c.nameHeld[0]();
+		await vi.advanceTimersByTimeAsync(0);
+		c.provide(1);
+		expect(c.replies.map(spans)).toEqual([undefined, [{ start: { x: 5, y: 1 }, end: { x: 8, y: 1 }, text: aTs }]]);
+		expect(c.nameBatches).toHaveLength(1);
+	});
+
+	describe('after a path a TUI wrapped onto the next line', () => {
+		const head = 'ls /tmp/repo/src/components/';
+		const text = `${head}\r\n    file.ts`;
+		const joined = '/tmp/repo/src/components/file.ts';
+		const found = '/tmp/repo/docs/file.ts';
+
+		async function row2(exists: string[]) {
+			const c = checked(await term(head.length, text), cwd, { exists, names: { 'file.ts': found } });
+			c.provide(2);
+			await settle();
+			return { reply: spans(c.replies[0]), clicks: c.click(c.replies[0]) };
+		}
+
+		it('links the joined path alone when it exists', async () => {
+			const got = await row2([joined]);
+			expect(got.reply).toEqual([{ start: { x: 4, y: 1 }, end: { x: 11, y: 2 }, text: joined }]);
+		});
+
+		it('links the name by the finder on its own cells when the joined path is missing', async () => {
+			const got = await row2([]);
+			expect(got.reply).toEqual([{ start: { x: 5, y: 2 }, end: { x: 11, y: 2 }, text: found }]);
+			expect(got.clicks).toEqual([found]);
+		});
+	});
+
+	it('gives a name xterm soft-wrapped over two rows for each row', async () => {
+		const t = await term(10, 'see term-view.ts');
+		const want = [{ start: { x: 5, y: 1 }, end: { x: 6, y: 2 }, text: termView }];
+		for (const y of [1, 2]) {
+			const c = checked(t, cwd, { names: named });
+			c.provide(y);
+			await settle();
+			expect(c.replies.map(spans), `row ${y}`).toEqual([want]);
+		}
+	});
+
+	it('ends a name where its colour ends', async () => {
+		const code = (s: string) => `\x1b[38;2;177;185;249m${s}\x1b[39m`;
+		const c = checked(await term(80, `see ${code('term-view.ts')}을`), cwd, { names: named });
+		c.provide(1);
+		await settle();
+		expect(c.nameBatches).toEqual([['term-view.ts']]);
+		expect(c.replies.map(spans)).toEqual([[{ start: { x: 5, y: 1 }, end: { x: 16, y: 1 }, text: termView }]]);
+	});
+
+	it('gives a variable no value from a name', async () => {
+		const c = checked(await term(80, 'S=out.d && cat $S/a.png'), cwd, { exists: ['/tmp/repo/out.d/a.png'], names: { 'out.d': '/tmp/repo/out.d' } });
+		c.provide(1);
+		await settle();
+		expect(c.replies.map((r) => spans(r)?.map((l) => l.text))).toEqual([['/tmp/repo/out.d']]);
+		expect(c.batches).toEqual([]);
 	});
 });
 

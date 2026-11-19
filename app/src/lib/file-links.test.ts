@@ -76,14 +76,12 @@ describe('findPaths', () => {
 			expect(performance.now() - t0, unit).toBeLessThan(20);
 		}
 		expect(findPaths('('.repeat(4300) + ' ls /tmp/a.txt')).toEqual([{ start: 4304, end: 4314, target: '/tmp/a.txt' }]);
-	});
-
-	it('stays fast with names asked for', () => {
+		// With names asked for, on the same lines and on one of dotted words.
 		for (const unit of ['(', '=', '.(', '[a', '=.', 'a(', 'a.b ']) {
 			const line = unit.repeat(Math.ceil(4300 / unit.length));
 			const t0 = performance.now();
 			findPaths(line, undefined, true);
-			expect(performance.now() - t0, unit).toBeLessThan(20);
+			expect(performance.now() - t0, `${unit} with names`).toBeLessThan(20);
 		}
 	});
 
