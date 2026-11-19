@@ -8,6 +8,7 @@ Each release's notes open with its section here.
 - A path an agent wrapped over two lines links as a whole only when that file exists; otherwise each line's own path does.
 - A path that starts with a shell variable, such as `"$DIR/shot.png"`, links when the same command sets the variable, as in an agent's expanded Bash call, and the file exists.
 - A file's name alone in terminal output, such as `term-view.ts` or `a.ts:12`, links when exactly one file of that name is in the session's repo or its starting folder.
+- ⌘-clicking a path that ends in a line number, such as `a.ts:40` or `a.ts:40:5`, opens the file in the editor at that line and column.
 
 ## 0.1.30
 
