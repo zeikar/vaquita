@@ -13,11 +13,11 @@
 //! the last read of that folder ended STALE ago; a watch would be one
 //! more thing running while nothing is hovered. Each git run is bounded by
 //! LIST_MAX bytes of output and READ_MAX of time, past which it is killed and
-//! reaped, and a read that fails publishes nothing: the ask that made it
-//! answers not known, a list held from before stays, and the next read waits
-//! for STALE like any other. A failure says nothing about how many files share
-//! a name, so it is never a no. At most LISTS folders' lists are held, and one
-//! read of a folder runs at a time.
+//! reaped. A read that fails drops the list held, which may miss a second
+//! file of a name since: until a read succeeds, names are not known, and the
+//! next read waits for STALE like any other. A failure says nothing about how
+//! many files share a name, so it is never a no. At most LISTS folders' lists
+//! are held, and one read of a folder runs at a time.
 //!
 //! A name comes from the terminal, so it is checked here (no `/`, no NUL, not
 //! `.` or `..`) and then is only a key into git's list and one component joined
@@ -25,7 +25,8 @@
 //! or a glob. Git runs through changes::git, so no command a repository
 //! configures runs, and `rev-parse` and `ls-files` enter no submodule.
 
-use std::collections::HashMap;
+use std::cell::OnceCell;
+use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry;
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
@@ -216,8 +217,8 @@ fn read(folder: &Path, cap: usize, deadline: Duration) -> Result<Known, String> 
 /// LIST_MAX of paths.
 const LISTS: usize = 4;
 
-/// Per starting folder, the last list read successfully, when its last read
-/// ended and whether one is in flight.
+/// Per starting folder, the list its last read gave when that succeeded, when
+/// its last read ended and whether one is in flight.
 #[derive(Default, Clone)]
 pub struct Lists(Arc<Mutex<HashMap<PathBuf, Held>>>);
 
@@ -257,8 +258,13 @@ impl Lists {
                 }
                 Some(known)
             }
+            // The list held may miss a second file of a name since, so it goes
+            // too: until a read succeeds, names are not known.
             Err(e) => {
                 eprintln!("vaquita: list the files of {}: {e}", folder.display());
+                if let Some(h) = self.0.lock().unwrap().get_mut(folder) {
+                    h.known = None;
+                }
                 None
             }
         }
@@ -279,19 +285,40 @@ impl Drop for Ending<'_> {
 /// Each name's answer, in order, reading the folder's list when it is due.
 fn find(lists: &Lists, folder: &Path, names: &[String], stale: Duration, cap: usize, deadline: Duration) -> Vec<Answer> {
     let known = lists.get(folder, stale, || read(folder, cap, deadline));
+    let own = Own { folder, entries: OnceCell::new() };
     names
         .iter()
         .map(|name| match &known {
             _ if !plain(name) => Answer::No,
             None => Answer::Unknown,
-            Some(known) => answer(folder, name, known),
+            Some(known) => answer(&own, name, known),
         })
         .collect()
 }
 
+/// The starting folder's own files. A stat follows the disk's case rule, so
+/// readme.md finds README.md, where git's list matches names exactly; the
+/// folder's entries tell, read once per ask and only once a stat found one.
+struct Own<'a> {
+    folder: &'a Path,
+    entries: OnceCell<Option<HashSet<OsString>>>,
+}
+
+impl Own<'_> {
+    /// Whether the folder has a file of exactly this name, by on_disk's rules.
+    fn has(&self, name: &str) -> Option<bool> {
+        match open_path::on_disk(&self.folder.join(name)) {
+            Some(true) => {}
+            other => return other,
+        }
+        let entries = self.entries.get_or_init(|| std::fs::read_dir(self.folder).ok()?.map(|e| e.map(|e| e.file_name())).collect::<Result<_, _>>().ok());
+        entries.as_ref().map(|e| e.contains(OsStr::new(name)))
+    }
+}
+
 /// The one file a plain name names, by a list read successfully.
-fn answer(folder: &Path, name: &str, known: &Known) -> Answer {
-    let own = folder.join(name);
+fn answer(own_files: &Own, name: &str, known: &Known) -> Answer {
+    let own = own_files.folder.join(name);
     let listed = match known {
         Known::NoRepo => None,
         Known::List(l) => match l.files.get(OsStr::new(name)) {
@@ -302,10 +329,10 @@ fn answer(folder: &Path, name: &str, known: &Known) -> Answer {
             Some(Files::One(p)) => Some(l.top.join(p)),
         },
     };
-    match (listed, open_path::on_disk(&own)) {
+    match (listed, own_files.has(name)) {
         (_, None) => Answer::Unknown,
-        (None, Some(_)) => on_disk(own),
-        (Some(_), Some(true)) => Answer::No,
+        (None, Some(true)) => on_disk(own),
+        (None, Some(false)) | (Some(_), Some(true)) => Answer::No,
         (Some(p), Some(false)) => on_disk(p),
     }
 }
@@ -525,11 +552,12 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_read_keeps_the_list_held_and_answers_not_known() {
+    fn a_failed_read_drops_the_list_held_until_a_read_succeeds() {
         let lists = Lists::default();
         assert!(lists.get(&folder(1), Duration::ZERO, || Ok(Known::NoRepo)).is_some());
         assert!(lists.get(&folder(1), Duration::ZERO, || Err("no".to_string())).is_none());
-        assert!(matches!(lists.get(&folder(1), LONG, || panic!("read again")).as_deref(), Some(Known::NoRepo)));
+        assert!(lists.get(&folder(1), LONG, || panic!("read again")).is_none());
+        assert!(lists.get(&folder(1), Duration::ZERO, || Ok(Known::NoRepo)).is_some());
     }
 
     #[test]
@@ -623,7 +651,25 @@ mod tests {
         let lists = Lists::default();
         assert_eq!(ask_with(&lists, &d, &["a.ts"], LONG, 4, TIME), [Answer::Unknown]);
         assert_eq!(ask_with(&lists, &d, &["a.ts"], Duration::ZERO, CAP, TIME), [path(top(&d).join("sub/a.ts"))]);
+        // A second a.ts the failed read may have missed: no answer until a read sees it.
+        std::fs::create_dir(d.join("other")).unwrap();
+        file(&d.join("other"), "a.ts", 0o644);
         assert_eq!(ask_with(&lists, &d, &["a.ts"], Duration::ZERO, CAP, Duration::ZERO), [Answer::Unknown]);
-        assert_eq!(ask(&lists, &d, &["a.ts"]), [path(top(&d).join("sub/a.ts"))]);
+        assert_eq!(ask(&lists, &d, &["a.ts"]), [Answer::Unknown]);
+        assert_eq!(ask_with(&lists, &d, &["a.ts"], Duration::ZERO, CAP, TIME), [Answer::No]);
+    }
+
+    #[test]
+    fn the_starting_folders_file_matches_its_name_exactly() {
+        let d = repo("case", "", &["README.md", "other/readme.md"], &[]);
+        if !d.join("readme.MD").exists() {
+            eprintln!("skipped: the temp folder's volume is case-sensitive");
+            return;
+        }
+        let lists = Lists::default();
+        assert_eq!(ask(&lists, &d, &["readme.md", "Readme.md"]), [path(top(&d).join("other/readme.md")), Answer::No]);
+        let plain = dir("names-case-plain");
+        file(&plain, "README.md", 0o644);
+        assert_eq!(ask(&lists, &plain, &["readme.md", "README.md"]), [Answer::No, path(plain.join("README.md"))]);
     }
 }
