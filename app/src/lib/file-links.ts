@@ -8,8 +8,9 @@ export type OpenResult = { action: 'opened' } | { action: 'revealed'; why: strin
 export type Invoker = (path: string, host: string) => Promise<OpenResult>;
 
 // start and end are string indices into the line; the link provider maps them to
-// terminal cells, where a wide character takes two.
-export type PathHit = { start: number; end: number; target: string };
+// terminal cells, where a wide character takes two. name marks a bare file name,
+// which names no place by itself: the app looks up which file it is.
+export type PathHit = { start: number; end: number; target: string; name?: true };
 
 // What a click on a link hands the gate: its text, or a path joined across a
 // line break (see path-link-provider) with a path it replaced, the one on the
@@ -58,6 +59,8 @@ const ANCHOR = new RegExp(String.raw`^(\/|~\/|\.\/|\.\.\/|\$${NAME}\/|\$\{${NAME
 const VAR_PATH = new RegExp(String.raw`^\$(?:(${NAME})|\{(${NAME})\})(\/[\s\S]*)$`);
 const RELATIVE = new RegExp(String.raw`^${SEG}+(?:\/${SEG}+)+$`, 'u');
 const EXTENSION = /\.\p{L}[\p{L}\p{N}]*$/u;
+// A bare name has no $, which a shell would expand, so $X.ts is no file's name.
+const PLAIN_NAME = new RegExp(`^[${PLAIN_CHARS}]+$`, 'u');
 const TOKEN_START = /[\s(["'`=,]/u;
 const TOKEN_END = /[\s"'`)\]<>,]/u;
 // The first character of every shape isPath accepts, and of a file:// URL.
@@ -87,7 +90,10 @@ function isPath(text: string): boolean {
 export type Bounds = { endsAt(i: number): boolean; startsAt(i: number): boolean };
 const NO_BOUNDS: Bounds = { endsAt: () => false, startsAt: () => false };
 
-export function findPaths(line: string, bounds: Bounds = NO_BOUNDS): PathHit[] {
+// With names, a token that is no path but a bare file name is found too: only
+// plain segment characters, so no / and no ://, and an extension, without which
+// Makefile-like words and v0.1.30 would be asked about all over the screen.
+export function findPaths(line: string, bounds: Bounds = NO_BOUNDS, names = false): PathHit[] {
 	const hits: PathHit[] = [];
 	// Every start inside one run of non-TOKEN_END characters shares the run's end,
 	// its trimmed stop and its line suffix, so they are found once per run: terminal
@@ -118,13 +124,17 @@ export function findPaths(line: string, bounds: Bounds = NO_BOUNDS): PathHit[] {
 		// A suffix that begins before this start is not this token's: it finds its own.
 		const bare = suffixAt >= i ? line.slice(i, suffixAt) : token.replace(LINE_SUFFIX, '');
 		let target: string | undefined;
+		let name = false;
 		if (token.startsWith('file://')) {
 			if (fileUrlToPath(bare)) target = bare;
 		} else if (!token.includes('://') && isPath(bare)) {
 			target = bare;
+		} else if (names && PLAIN_NAME.test(bare) && EXTENSION.test(bare)) {
+			target = bare;
+			name = true;
 		}
 		if (target !== undefined) {
-			hits.push({ start: i, end: stopRun, target });
+			hits.push(name ? { start: i, end: stopRun, target, name: true } : { start: i, end: stopRun, target });
 			i = runEnd;
 		} else {
 			i++;

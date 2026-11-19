@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPathChecker, type PathQuery } from './path-exists';
+import { createNameFinder, createPathChecker, type PathQuery } from './path-exists';
 
 type Call = { paths: PathQuery[]; resolve: (r: unknown) => void; reject: (e: unknown) => void };
 
@@ -197,5 +197,120 @@ describe('createPathChecker', () => {
 		await vi.advanceTimersByTimeAsync(0);
 		expect(checker.known('/tmp/a.ts')).toBeUndefined();
 		expect(warn).toHaveBeenCalledTimes(1);
+	});
+});
+
+type NameCall = { folder: string; names: string[]; resolve: (r: unknown) => void; reject: (e: unknown) => void };
+
+function setupFinder(cwd = '/tmp/repo') {
+	const calls: NameCall[] = [];
+	let t = 1_000;
+	const clock = { advance: (ms: number) => void (t += ms) };
+	const finder = createNameFinder(
+		cwd,
+		(folder, names) => new Promise((resolve, reject) => void calls.push({ folder, names, resolve: resolve as NameCall['resolve'], reject })),
+		() => t,
+	);
+	return { calls, clock, finder };
+}
+
+describe('createNameFinder', () => {
+	let warn: ReturnType<typeof vi.spyOn>;
+	beforeEach(() => {
+		warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+	});
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.useRealTimers();
+	});
+
+	it('makes one call per ask, with the folder and the names', async () => {
+		const { calls, finder } = setupFinder();
+		const p = finder.ask(['a.ts', 'b.ts', 'a.ts']);
+		await flush();
+		expect(calls.map((c) => [c.folder, c.names])).toEqual([['/tmp/repo', ['a.ts', 'b.ts']]]);
+		calls[0].resolve(['/tmp/repo/src/a.ts', false]);
+		await p;
+	});
+
+	it('sends ~ for an empty cwd', async () => {
+		const { calls, finder } = setupFinder('');
+		const p = finder.ask(['a.ts']);
+		await flush();
+		expect(calls[0].folder).toBe('~');
+		calls[0].resolve([false]);
+		await p;
+	});
+
+	it('reads back a path, false and null as the path, false and nothing, and asks the null again', async () => {
+		const { calls, finder } = setupFinder();
+		expect(finder.known('a.ts')).toBeUndefined();
+		const p = finder.ask(['a.ts', 'b.ts', 'c.ts']);
+		await flush();
+		calls[0].resolve(['/tmp/repo/src/a.ts', false, null]);
+		await p;
+		expect(['a.ts', 'b.ts', 'c.ts'].map((n) => finder.known(n))).toEqual(['/tmp/repo/src/a.ts', false, undefined]);
+		const q = finder.ask(['a.ts', 'b.ts', 'c.ts']);
+		await flush();
+		expect(calls[1].names).toEqual(['c.ts']);
+		calls[1].resolve(['/tmp/repo/c.ts']);
+		await q;
+		expect(finder.known('c.ts')).toBe('/tmp/repo/c.ts');
+	});
+
+	it('keeps a path for 60 s and a false for 5 s', async () => {
+		const { calls, clock, finder } = setupFinder();
+		const p = finder.ask(['a.ts', 'b.ts']);
+		await flush();
+		calls[0].resolve(['/tmp/repo/a.ts', false]);
+		await p;
+		clock.advance(4_999);
+		expect(finder.known('b.ts')).toBe(false);
+		clock.advance(1);
+		expect(finder.known('b.ts')).toBeUndefined();
+		expect(finder.known('a.ts')).toBe('/tmp/repo/a.ts');
+		clock.advance(55_000);
+		expect(finder.known('a.ts')).toBeUndefined();
+	});
+
+	it('does not ask a name in flight a second time', async () => {
+		const { calls, finder } = setupFinder();
+		const p = finder.ask(['a.ts']);
+		await flush();
+		const q = finder.ask(['a.ts']);
+		await flush();
+		expect(calls).toHaveLength(1);
+		calls[0].resolve(['/tmp/repo/a.ts']);
+		await Promise.all([p, q]);
+		expect(finder.known('a.ts')).toBe('/tmp/repo/a.ts');
+	});
+
+	it('leaves the names unknown on a reply of another shape, and warns once over several', async () => {
+		const { calls, finder } = setupFinder();
+		const replies = [['/tmp/repo/a.ts'], ['/tmp/repo/a.ts', true], [3, false]];
+		for (const [i, reply] of replies.entries()) {
+			const names = [`a${i}.ts`, `b${i}.ts`];
+			const p = finder.ask(names);
+			await flush();
+			calls[i].resolve(reply);
+			await p;
+			expect(names.map((n) => finder.known(n))).toEqual([undefined, undefined]);
+		}
+		expect(warn).toHaveBeenCalledTimes(1);
+	});
+
+	it('resolves after 250 ms for a call that never settles, and keeps its late answer', async () => {
+		vi.useFakeTimers();
+		const { calls, finder } = setupFinder();
+		let done = false;
+		const p = finder.ask(['a.ts']).then(() => (done = true));
+		await vi.advanceTimersByTimeAsync(249);
+		expect(done).toBe(false);
+		await vi.advanceTimersByTimeAsync(1);
+		await p;
+		expect(finder.known('a.ts')).toBeUndefined();
+		calls[0].resolve(['/tmp/repo/a.ts']);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(finder.known('a.ts')).toBe('/tmp/repo/a.ts');
 	});
 });

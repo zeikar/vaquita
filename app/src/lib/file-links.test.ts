@@ -78,6 +78,15 @@ describe('findPaths', () => {
 		expect(findPaths('('.repeat(4300) + ' ls /tmp/a.txt')).toEqual([{ start: 4304, end: 4314, target: '/tmp/a.txt' }]);
 	});
 
+	it('stays fast with names asked for', () => {
+		for (const unit of ['(', '=', '.(', '[a', '=.', 'a(', 'a.b ']) {
+			const line = unit.repeat(Math.ceil(4300 / unit.length));
+			const t0 = performance.now();
+			findPaths(line, undefined, true);
+			expect(performance.now() - t0, unit).toBeLessThan(20);
+		}
+	});
+
 	it('finds an absolute path with offsets', () => {
 		expect(findPaths('ls /tmp/a.txt')).toEqual([{ start: 3, end: 13, target: '/tmp/a.txt' }]);
 	});
@@ -165,6 +174,50 @@ describe('findPaths', () => {
 		for (const l of ['$S', '$S/', '${S}', '$5/month', '${S:-x}/a.png', '$(pwd)/a.png']) {
 			expect(findPaths(`ls ${l}`), l).toEqual([]);
 		}
+	});
+});
+
+describe('findPaths with names', () => {
+	const names = (line: string) => findPaths(line, undefined, true);
+
+	it('finds a bare file name, marked as a name, with its offsets', () => {
+		expect(names('Updated term-view.ts and path-link-provider.test.ts')).toEqual([
+			{ start: 8, end: 20, target: 'term-view.ts', name: true },
+			{ start: 25, end: 51, target: 'path-link-provider.test.ts', name: true },
+		]);
+		expect(names('cat .env')).toEqual([{ start: 4, end: 8, target: '.env', name: true }]);
+	});
+
+	it('keeps a line suffix in the range but not the target', () => {
+		expect(names('at a.ts:12')).toEqual([{ start: 3, end: 10, target: 'a.ts', name: true }]);
+		expect(names('at a.ts:12:3')).toEqual([{ start: 3, end: 12, target: 'a.ts', name: true }]);
+	});
+
+	it('leaves wrapping, a full stop and an option outside the range', () => {
+		expect(names('(util.ts)')).toEqual([{ start: 1, end: 8, target: 'util.ts', name: true }]);
+		expect(names('"util.ts"')).toEqual([{ start: 1, end: 8, target: 'util.ts', name: true }]);
+		expect(names('see a.ts.')).toEqual([{ start: 4, end: 8, target: 'a.ts', name: true }]);
+		expect(names('--file=a.ts')).toEqual([{ start: 7, end: 11, target: 'a.ts', name: true }]);
+	});
+
+	it('finds no name without an extension, with a $ or in a URL', () => {
+		for (const l of ['Makefile', 'v0.1.30', '1.5', '$X.ts', 'https://example.com']) {
+			expect(names(l), l).toEqual([]);
+		}
+	});
+
+	it('leaves a path beside a name a path, with no mark', () => {
+		expect(names('src/a.ts b.ts')).toEqual([
+			{ start: 0, end: 8, target: 'src/a.ts' },
+			{ start: 9, end: 13, target: 'b.ts', name: true },
+		]);
+	});
+
+	it('finds only what it finds today when names are not asked for', () => {
+		for (const l of ['Updated term-view.ts and a.ts:12.', 'cat .env', '--file=a.ts', '(util.ts)']) {
+			expect(findPaths(l), l).toEqual([]);
+		}
+		expect(findPaths('src/a.ts b.ts')).toEqual([{ start: 0, end: 8, target: 'src/a.ts' }]);
 	});
 });
 
