@@ -5,7 +5,9 @@
 // a web link beside a path still links. A bare file name links to the one file
 // of that name in the repo, asked once for a row and then cached, and not when
 // two files share it or only an ignored folder has it; the starting folder's
-// own file counts with the repo's, an ignored one too.
+// own file counts with the repo's, an ignored one too. A ⌘-click on a path
+// with :line:col opens the editor with the cursor there, also on a tab that
+// is open already, a column past the line's end at its end.
 // node checks/links.mjs <dir>, after run.sh up <dir>; see check.sh.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -237,6 +239,49 @@ await step("the starting folder's own file counts with the repo's", async () => 
 	await hover(i, '.env');
 	const t = await until(title, Boolean, 3000);
 	say('.env, ignored and only in the starting folder, shows its file', t === path.join(repo, '.env'), t);
+});
+
+// The shown editor's lines, top to bottom (Monaco does not keep its line
+// elements in order), and whether it has the focus.
+const editor = () =>
+	page.evaluate(() => {
+		const ed = document.querySelector('.file .text:not([hidden]) .monaco-editor');
+		if (!ed) return null;
+		const lines = [...ed.querySelectorAll('.view-lines .view-line')]
+			.sort((a, b) => parseFloat(a.style.top) - parseFloat(b.style.top))
+			.map((l) => l.textContent.replace(/\u00a0/g, ' '));
+		return { lines, focused: ed.contains(document.activeElement) };
+	});
+// Cmd+clicks `text` in row `index` once its link is up, then types a mark at
+// the editor's cursor, which shows where the cursor went.
+async function openAt(text, index, mark) {
+	await leaveRow(index);
+	await hover(index, text);
+	const t = await until(title, Boolean, 3000);
+	await page.keyboard.down('Meta');
+	await page.mouse.down();
+	await page.mouse.up();
+	await page.keyboard.up('Meta');
+	await until(editor, (e) => e?.focused && e.lines.length > 0, 15000);
+	await page.keyboard.type(mark);
+	return { title: t, lines: (await until(editor, (e) => e?.lines.join('\n').includes(mark), 3000))?.lines };
+}
+
+await step('a path with :line:col opens the editor there', async () => {
+	fs.writeFileSync(path.join(repo, 'src/lib/lines.txt'), 'first\nsecond\nthird line\nfourth\n');
+	const out = 'src/lib/lines.txt:3:2 src/lib/lines.txt:2:99';
+	await type(`echo ${out}`);
+	const i = await until(() => outputRow(out), (n) => n >= 0);
+	say('the output row is there', i >= 0, i);
+	const first = await openAt('src/lib/lines.txt:3:2', i, 'X');
+	say('the hover shows the file without the line', first.title === path.join(repo, 'src/lib/lines.txt'), first.title);
+	say('the cursor is on line 3, column 2', first.lines?.[2] === 'tXhird line', first.lines);
+	await shot(page, '05-line-col');
+	// Back to the terminal; the file's tab stays open, edited.
+	await sidebar.locator('li > button.row', { hasText: 'repo shell' }).click();
+	await until(terminalFocused, Boolean);
+	const again = await openAt('src/lib/lines.txt:2:99', i, 'Y');
+	say('on the open tab, a column past the end is the end of line 2', again.lines?.[1] === 'secondY', again.lines);
 });
 
 await browser.close();
