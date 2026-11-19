@@ -6,7 +6,7 @@ import { ask as askUser } from './ask';
 import { diffTab } from './changes';
 import { documents as appDocuments, type Documents } from './documents';
 import type FilePane from './FilePane.svelte';
-import { openPath } from './file-links';
+import { openPath, type LineCol } from './file-links';
 import type { ManagedTerm, ManagerState, SessionManager, ViewLike } from './manager';
 import { LAST_CWD } from './NewSessionDialog.svelte';
 import { sessionTitle, type Target } from './notify';
@@ -20,6 +20,9 @@ import type { TermView } from './term-view';
 // What the tabs ask of a session's view beside what the manager does.
 export type TabView = ViewLike & Pick<TermView, 'focus' | 'refit' | 'sendInput'>;
 export type TabDocuments = Pick<Documents, 'isDirty' | 'dropDocument' | 'onDirtyChange' | 'saveDocument'>;
+
+// Where in a file a ⌘-clicked link's line suffix asked the editor to go.
+export type Reveal = LineCol & { path: string };
 
 export type TabsDeps<T extends ManagedTerm, V extends TabView> = {
 	manager: SessionManager<T, V>;
@@ -56,6 +59,11 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	appWelcome?: ReturnType<typeof AppWelcome>;
 	dialogOpen = $state(false);
 	dialogCwd = $state('');
+	// Set by each open from a link with a line, a new object each time, so a
+	// click on the tab already showing goes there again. One shot: the editor
+	// takes it once it holds the file, and it is dropped when the file shows
+	// no editor or another tab shows, so it never moves the cursor later.
+	reveal = $state.raw<Reveal>();
 
 	// The group whose bar shows: the selected session's, or the repo chosen
 	// by its name, for the app run only (a relaunch selects the stored
@@ -278,6 +286,7 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// selected; the dialog keeps the focus then.
 	async show(path: string | undefined): Promise<void> {
 		if (this.dialogOpen && path !== undefined && !isSessionTab(path)) return;
+		if (this.reveal?.path !== path) this.reveal = undefined;
 		this.active = path;
 		const sid = path === undefined ? undefined : tabSid(path);
 		if (sid !== undefined && sid !== this.state.selected) this.manager.select(sid);
@@ -332,14 +341,21 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// Unpinned, it opens as the group's preview. A dirty document opens pinned:
 	// documents are shared by path across groups, so it may hold another
 	// group's edits, and a preview, which the next file replaces, holds none.
-	openFile(cwd: string, path: string, pin = false): void {
+	// at is the link's line suffix, for the editor to go to.
+	openFile(cwd: string, path: string, pin = false, at?: LineCol): void {
 		const r = openFileTab(this.groups, this.previews, groupKey(cwd, this.state.repos), path, pin || this.documents.isDirty(path));
 		this.groups = r.groups;
 		this.previews = r.previews;
 		if (r.drop !== undefined) this.documents.dropDocument(r.drop);
 		saveTabs(this.groups);
+		this.reveal = at && { path, ...at };
 		void this.show(path);
 	}
+
+	// The editor went to it, or the file shows none: either way it is done.
+	revealed = (r: Reveal): void => {
+		if (this.reveal === r) this.reveal = undefined;
+	};
 
 	// A file's diff against HEAD, as a tab of the shown group: the repo the
 	// changes were listed for, which Other is not.

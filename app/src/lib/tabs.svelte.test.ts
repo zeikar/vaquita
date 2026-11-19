@@ -299,6 +299,29 @@ describe('Tabs', () => {
 			expect(stored()).toEqual({ [repo]: [b, c] });
 		});
 
+		it('records where a file opened at a line is to go, anew for each click, until taken or another tab shows', async () => {
+			const t = await make();
+			t.c.emit.repos([repo]);
+			t.tabs.openFile(repo, a, false, { line: 3, col: 2 });
+			const first = t.tabs.reveal;
+			expect(first).toEqual({ path: a, line: 3, col: 2 });
+			// Taken by the editor; one taken already is not taken again.
+			t.tabs.revealed(first!);
+			expect(t.tabs.reveal).toBeUndefined();
+			// The tab already shows: a second click still goes there.
+			t.tabs.openFile(repo, a, false, { line: 3, col: 2 });
+			expect(t.tabs.reveal).toEqual({ path: a, line: 3, col: 2 });
+			expect(t.tabs.reveal).not.toBe(first);
+			t.tabs.revealed(first!);
+			expect(t.tabs.reveal).toBeDefined();
+			// Another tab shown drops it, as does an open with no line.
+			await t.tabs.show(b);
+			expect(t.tabs.reveal).toBeUndefined();
+			t.tabs.openFile(repo, a, false, { line: 5 });
+			t.tabs.openFile(repo, a);
+			expect(t.tabs.reveal).toBeUndefined();
+		});
+
 		it("opens a diff in the shown repo's group, and none with no repo shown", async () => {
 			const { tabs } = await make();
 			tabs.openDiff(a);

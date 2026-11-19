@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Document } from './documents';
 import { holdLayout } from './layout-hold';
 import type { Monaco } from './monaco';
+import type { Reveal } from './tabs.svelte';
 import TextEditor from './TextEditor.svelte';
 
 let target: HTMLElement;
@@ -30,6 +31,8 @@ function setup() {
 		layout: vi.fn(),
 		saveViewState: vi.fn((): unknown => null),
 		restoreViewState: vi.fn(),
+		setPosition: vi.fn(),
+		revealPositionInCenter: vi.fn(),
 	};
 	const monaco = { editor: { create: vi.fn(() => editor) } } as unknown as Monaco;
 	const loader = vi.fn(async () => monaco);
@@ -48,7 +51,16 @@ function setup() {
 type Setup = ReturnType<typeof setup>;
 
 function show(s: Setup, path: string) {
-	const props = $state({ path, shown: 1, readOnly: false, report: vi.fn(), loader: s.loader, documents: s.documents });
+	const props = $state({
+		path,
+		shown: 1,
+		readOnly: false,
+		report: vi.fn(),
+		loader: s.loader,
+		documents: s.documents,
+		reveal: undefined as Reveal | undefined,
+		onrevealed: vi.fn(),
+	});
 	target = document.createElement('div');
 	document.body.append(target);
 	shown = mount(TextEditor, { target, props });
@@ -330,5 +342,47 @@ describe('TextEditor', () => {
 		await settle();
 		expect(target.querySelector('.error')?.textContent).toBe('not UTF-8 text');
 		expect(props.report).toHaveBeenCalledWith('a.ts could not be read: not UTF-8 text');
+	});
+});
+
+describe('TextEditor going to a link’s line', () => {
+	const a = '/tmp/repo/a.ts';
+	// Three lines of 4, 0 and 9 characters.
+	const lines = (name: string) =>
+		({ model: { name, getLineCount: () => 3, getLineMaxColumn: (n: number) => [5, 1, 10][n - 1] } }) as unknown as Document;
+
+	it('goes there once it holds the path, over the place it left there, and says it did', async () => {
+		const s = setup();
+		const props = show(s, a);
+		const r = { path: a, line: 3, col: 99 };
+		props.reveal = r;
+		flushSync();
+		await settle();
+		expect(s.editor.setPosition).not.toHaveBeenCalled();
+		const d = lines('a');
+		d.view = 'left' as unknown as Document['view'];
+		s.read(a).resolve(d);
+		await settle();
+		const end = { lineNumber: 3, column: 10 };
+		expect(s.editor.setPosition).toHaveBeenCalledExactlyOnceWith(end);
+		expect(s.editor.revealPositionInCenter).toHaveBeenCalledExactlyOnceWith(end);
+		expect(s.editor.restoreViewState.mock.invocationCallOrder[0]).toBeLessThan(s.editor.setPosition.mock.invocationCallOrder[0]);
+		expect(props.onrevealed).toHaveBeenCalledExactlyOnceWith(r);
+	});
+
+	it('goes there at each click while it holds the path, and not for another path', async () => {
+		const s = setup();
+		const props = show(s, a);
+		await settle();
+		s.read(a).resolve(lines('a'));
+		await settle();
+		props.reveal = { path: a, line: 2, col: 4 };
+		flushSync();
+		props.reveal = { path: a, line: 1 };
+		flushSync();
+		props.reveal = { path: '/tmp/repo/b.ts', line: 1 };
+		flushSync();
+		expect(s.editor.setPosition.mock.calls).toEqual([[{ lineNumber: 2, column: 1 }], [{ lineNumber: 1, column: 1 }]]);
+		expect(props.onrevealed).toHaveBeenCalledTimes(2);
 	});
 });

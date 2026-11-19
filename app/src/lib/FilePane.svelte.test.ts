@@ -6,6 +6,7 @@ import FilePane from './FilePane.svelte';
 import { stubs } from './DiffView.stub.svelte';
 import { documents } from './documents';
 import { readText, viewPath } from './files';
+import type { Reveal } from './tabs.svelte';
 
 const hoisted = vi.hoisted(() => {
 	const editor = { setModel: () => {}, getModel: () => null, focus: () => {}, dispose: () => {}, updateOptions: () => {} };
@@ -37,7 +38,7 @@ vi.mock('./DiffView.svelte', async () => ({ default: (await import('./DiffView.s
 let target: HTMLElement;
 let shown: ReturnType<typeof mount> | undefined;
 
-function show(path: string, where: { repo?: string; home?: string } = {}) {
+function show(path: string, where: { repo?: string; home?: string; reveal?: Reveal; onrevealed?: (r: Reveal) => void } = {}) {
 	const props = $state({ path, ...where, onclose: vi.fn(), onopenfile: vi.fn(), report: vi.fn() });
 	target = document.createElement('div');
 	document.body.append(target);
@@ -160,6 +161,32 @@ describe('FilePane markdown', () => {
 		await settle();
 		expect(vi.mocked(readText).mock.calls.map(([p]) => p)).toEqual(['/tmp/repo/four.md', '/tmp/repo/six.md']);
 		expect(target.querySelector('.markdown .body')?.innerHTML).toBe('<p>/tmp/repo/six.md</p>');
+	});
+});
+
+describe('FilePane with a link’s line', () => {
+	it('drops it for a preview or a picture, and leaves it to the editor for text and Source', async () => {
+		const onrevealed = vi.fn();
+		const props = show('/tmp/repo/a.md', { onrevealed, reveal: { path: '/tmp/repo/a.md', line: 3 } });
+		await settle();
+		expect(onrevealed).toHaveBeenCalledExactlyOnceWith({ path: '/tmp/repo/a.md', line: 3 });
+		for (const path of ['/tmp/repo/b.png', '/tmp/repo/c.ts']) {
+			onrevealed.mockClear();
+			Object.assign(props, { path, reveal: { path, line: 3 } });
+			flushSync();
+			await settle();
+			expect(onrevealed, path).toHaveBeenCalledTimes(path.endsWith('.png') ? 1 : 0);
+		}
+		Object.assign(props, { path: '/tmp/repo/a.md', reveal: undefined });
+		flushSync();
+		await settle();
+		button('Source').click();
+		await settle();
+		onrevealed.mockClear();
+		props.reveal = { path: '/tmp/repo/a.md', line: 3 };
+		flushSync();
+		await settle();
+		expect(onrevealed).not.toHaveBeenCalled();
 	});
 });
 

@@ -17,6 +17,7 @@
 	import MarkdownView from './MarkdownView.svelte';
 	import { barPath } from './paths';
 	import { fileName } from './tabs';
+	import type { Reveal } from './tabs.svelte';
 	import TextEditor from './TextEditor.svelte';
 
 	let {
@@ -27,6 +28,8 @@
 		repo,
 		home,
 		onopenfile,
+		reveal,
+		onrevealed,
 	}: {
 		// A file's path, or a diff tab's key (changes.ts).
 		path: string;
@@ -38,6 +41,9 @@
 		onopenfile: (path: string) => void;
 		report: (message: string) => void;
 		readOnly?: boolean;
+		// Where a link asked to go in the file, which only the editor can.
+		reveal?: Reveal;
+		onrevealed?: (r: Reveal) => void;
 	} = $props();
 
 	// A view keeps the path it was judged for: the path prop changes before the
@@ -144,6 +150,12 @@
 		return { state: 'view', path: asked, kind, src: await fileUrl(canonical) };
 	}
 
+	// A preview, a picture or a diff has no line to go to: the place is
+	// dropped, so switching to Source later does not jump there.
+	$effect(() => {
+		if (reveal?.path === path && shown.state === 'view' && shown.path === path && !inEditor(shown)) onrevealed?.(reveal);
+	});
+
 	const failed = () => report(`${fileName(path)} could not be shown`);
 </script>
 
@@ -177,7 +189,7 @@
 	{/if}
 	{#if textPath !== undefined}
 		<div class="text" hidden={!showsEditor}>
-			<TextEditor bind:this={editor} path={textPath} shown={textShown} {report} {readOnly} />
+			<TextEditor bind:this={editor} path={textPath} shown={textShown} {report} {readOnly} {reveal} {onrevealed} />
 		</div>
 	{/if}
 	{#if markdown !== undefined && !source}

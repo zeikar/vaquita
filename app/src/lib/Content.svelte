@@ -52,7 +52,7 @@
 			{/key}
 		{:else if tabs.active !== undefined && !isSessionTab(tabs.active)}
 			{@const path = tabs.active}
-			<FilePane bind:this={tabs.filePane} {path} repo={tabs.root} home={startup.home} readOnly={startup.updating} onclose={() => void tabs.close([path])} onopenfile={(p) => tabs.openFromTree(p)} report={(m) => manager.report(m)} />
+			<FilePane bind:this={tabs.filePane} {path} repo={tabs.root} home={startup.home} readOnly={startup.updating} onclose={() => void tabs.close([path])} onopenfile={(p) => tabs.openFromTree(p)} report={(m) => manager.report(m)} reveal={tabs.reveal} onrevealed={tabs.revealed} />
 		{/if}
 		{#if tabs.group === undefined}
 			<AppWelcome bind:this={tabs.appWelcome} version={startup.version} addDisabled={$manager.status !== 'connected'} onaddrepo={() => void layout.addRepo?.open()} onnewsession={tabs.newSession} />

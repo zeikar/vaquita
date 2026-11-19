@@ -2,8 +2,9 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { documents as shared, type Document, type Documents } from './documents';
 	import { layoutHeld } from './layout-hold';
-	import { EDITOR_OPTIONS, loadMonaco, type Monaco } from './monaco';
+	import { cursorAt, EDITOR_OPTIONS, loadMonaco, type Monaco } from './monaco';
 	import { fileName } from './tabs';
+	import type { Reveal } from './tabs.svelte';
 
 	type Editor = import('./monaco-setup').editor.IStandaloneCodeEditor;
 
@@ -14,6 +15,8 @@
 		readOnly = false,
 		loader = loadMonaco,
 		documents = shared,
+		reveal,
+		onrevealed,
 	}: {
 		path: string;
 		// Raised each time the path is shown, the same one again included: its
@@ -23,6 +26,9 @@
 		readOnly?: boolean;
 		loader?: () => Promise<Monaco>;
 		documents?: Pick<Documents, 'openDocument' | 'refresh'>;
+		// Where a link asked to go in a file; taken once the editor holds it.
+		reveal?: Reveal;
+		onrevealed?: (r: Reveal) => void;
 	} = $props();
 
 	let host: HTMLElement;
@@ -54,6 +60,21 @@
 		reload();
 		if (view) editor?.restoreViewState(view);
 	}
+
+	// After the view the document left was restored, which it overrides, so
+	// a link's line shows whether or not the file was open.
+	function goToReveal(): void {
+		const r = reveal;
+		const model = editor?.getModel();
+		if (!editor || !model || !r || loaded !== r.path) return;
+		const at = cursorAt(r, model);
+		editor.setPosition(at);
+		editor.revealPositionInCenter(at);
+		onrevealed?.(r);
+	}
+
+	// Also when the editor holds the file already, which sets no model.
+	$effect(goToReveal);
 
 	// False while there is nothing to type into yet, so the caller can focus
 	// something else.
@@ -140,6 +161,7 @@
 				loaded = asked;
 				current = doc;
 				doc.around = keepingPlace;
+				goToReveal();
 				// The pane took the focus while Monaco loaded or the file was read,
 				// so that typing never reached the terminal; it belongs here now.
 				const at = document.activeElement;

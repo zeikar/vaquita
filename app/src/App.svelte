@@ -33,7 +33,7 @@
 		connect: (endpoint, handlers) => new DaemonConnection(endpoint, handlers),
 		createTerminal: (cols, rows) => createTerminal(cols, rows),
 		createView: (term, core, cwd) =>
-			new TermView(term, core, (m, tone) => manager.report(m, tone), cwd, (path) => tabs.openFile(cwd, path), () => tabs.active !== undefined && isSessionTab(tabs.active)),
+			new TermView(term, core, (m, tone) => manager.report(m, tone), cwd, (path, at) => tabs.openFile(cwd, path, false, at), () => tabs.active !== undefined && isSessionTab(tabs.active)),
 		notifier: { show: (n) => notifier.show(n) },
 	});
 	// Typed, as the manager's views read it: inferred, its type and the
