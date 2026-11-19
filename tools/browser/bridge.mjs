@@ -332,6 +332,42 @@ function pathExists({ path: p, host }) {
 	}
 }
 
+// A rough copy of the Rust find_names: per name, the one file of that name
+// among what git lists at the folder's toplevel (none outside a repo) and the
+// folder's own, counted once, when the disk has it; else false. It reads git's
+// list on every call and has none of the Rust side's bounds.
+function findNames(folder, names) {
+	const dir = folder === '~' || folder.startsWith('~/') ? os.homedir() + folder.slice(1) : folder;
+	let top;
+	let listed = [];
+	try {
+		top = toplevelOf(dir);
+	} catch {
+		// Outside a repo the folder's own file is all there is.
+	}
+	if (top) {
+		const r = git(top, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
+		if (r.status !== 0) return names.map(() => null);
+		listed = r.stdout.split('\0').filter((p) => p && !p.endsWith('/'));
+	}
+	const real = (p) => {
+		try {
+			return fs.realpathSync(p);
+		} catch {
+			return p;
+		}
+	};
+	return names.map((name) => {
+		if (!name || name.includes('/') || name === '.' || name === '..') return false;
+		const files = new Map();
+		for (const p of listed) if (path.basename(p) === name) files.set(real(path.join(top, p)), path.join(top, p));
+		const own = path.join(dir, name);
+		if (fs.existsSync(own) && !files.has(real(own))) files.set(real(own), own);
+		const [only] = files.values();
+		return files.size === 1 && fs.existsSync(only) ? only : false;
+	});
+}
+
 const unknown = new Set();
 function run(cmd, args) {
 	switch (cmd) {
@@ -375,6 +411,8 @@ function run(cmd, args) {
 			}
 		case 'paths_exist':
 			return args.paths.map(pathExists);
+		case 'find_names':
+			return findNames(args.folder, args.names);
 		case 'read_text': {
 			const text = fs.readFileSync(args.path, 'utf8');
 			return { text, stamp: stamp(args.path) };

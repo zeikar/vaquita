@@ -2,7 +2,10 @@
 // shows its target on hover when it exists and nothing when it does not, a
 // shell variable is a path only when its command assigns it and the expansion
 // exists, the disk is asked once for a row and then not again for a while, and
-// a web link beside a path still links.
+// a web link beside a path still links. A bare file name links to the one file
+// of that name in the repo, asked once for a row and then cached, and not when
+// two files share it or only an ignored folder has it; the starting folder's
+// own file counts with the repo's, an ignored one too.
 // node checks/links.mjs <dir>, after run.sh up <dir>; see check.sh.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -88,6 +91,7 @@ const type = async (line) => {
 	await page.keyboard.press('Enter');
 };
 const calls = (off) => bridge.since(off).filter((l) => l.startsWith('invoke paths_exist'));
+const nameCalls = (off) => bridge.since(off).filter((l) => l.startsWith('invoke find_names'));
 
 await sidebar.locator('li > button.row', { hasText: 'repo shell' }).waitFor({ timeout: 10000 });
 await sidebar.locator('li > button.row', { hasText: 'repo shell' }).click();
@@ -181,6 +185,58 @@ await step('a web link beside a path still links', async () => {
 	const c = calls(off);
 	say('the row asked the disk once', c.length === 1, c);
 	await shot(page, '03-url-and-path');
+});
+
+await step('a bare file name links to the one file in the repo that has it', async () => {
+	// A twin of src/index.ts, untracked and not ignored, so git lists both.
+	fs.writeFileSync(path.join(repo, 'docs/index.ts'), 'example\n');
+	const out = 'util.ts:12 index.ts index.js';
+	await type(`echo ${out}`);
+	const i = await until(() => outputRow(out), (n) => n >= 0);
+	say('the output row is there', i >= 0, i);
+	await leaveRow(i);
+	const off = bridge.offset();
+	await hover(i, 'util.ts:12');
+	const t = await until(title, Boolean, 3000);
+	say('hovering the name shows the one file of that name', t === path.join(repo, 'src/lib/util.ts'), t);
+	await sleep(300);
+	const asked = nameCalls(off);
+	say('the row asks for its names once', asked.length === 1, asked);
+	say('and asks the disk nothing', calls(off).length === 0, calls(off));
+	await shot(page, '04-name');
+	await leaveRow(i);
+	const off2 = bridge.offset();
+	await hover(i, 'util.ts:12');
+	await until(title, Boolean, 3000);
+	await sleep(300);
+	const again = nameCalls(off2);
+	say('coming back at once asks nothing', again.length === 0, again);
+	await leaveRow(i);
+	await hover(i, 'index.ts');
+	await sleep(600);
+	const shared = await title();
+	say('a name two files share shows nothing', shared === '', shared);
+	await leaveRow(i);
+	await hover(i, 'index.js');
+	await sleep(600);
+	const ignored = await title();
+	say('a name only an ignored folder has shows nothing', ignored === '', ignored);
+});
+
+await step("the starting folder's own file counts with the repo's", async () => {
+	const out = 'README.md .env';
+	await type(`echo ${out}`);
+	const i = await until(() => outputRow(out), (n) => n >= 0);
+	say('the output row is there', i >= 0, i);
+	await leaveRow(i);
+	await hover(i, 'README.md');
+	await sleep(600);
+	const shared = await title();
+	say('README.md, which src/lib has too, shows nothing', shared === '', shared);
+	await leaveRow(i);
+	await hover(i, '.env');
+	const t = await until(title, Boolean, 3000);
+	say('.env, ignored and only in the starting folder, shows its file', t === path.join(repo, '.env'), t);
 });
 
 await browser.close();
