@@ -189,7 +189,9 @@
 	{/if}
 	{#if textPath !== undefined}
 		<div class="text" hidden={!showsEditor}>
-			<TextEditor bind:this={editor} path={textPath} shown={textShown} {report} {readOnly} {reveal} {onrevealed} />
+			<!-- Only while it shows this path: an editor hidden under a preview may
+			     still hold the file, and the preview drops the place. -->
+			<TextEditor bind:this={editor} path={textPath} shown={textShown} {report} {readOnly} reveal={showsEditor && textPath === path ? reveal : undefined} {onrevealed} />
 		</div>
 	{/if}
 	{#if markdown !== undefined && !source}

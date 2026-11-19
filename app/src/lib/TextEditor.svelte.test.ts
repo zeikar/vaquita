@@ -380,9 +380,34 @@ describe('TextEditor going to a link’s line', () => {
 		flushSync();
 		props.reveal = { path: a, line: 1 };
 		flushSync();
+		props.reveal = { path: a, line: 400 };
+		flushSync();
 		props.reveal = { path: '/tmp/repo/b.ts', line: 1 };
 		flushSync();
-		expect(s.editor.setPosition.mock.calls).toEqual([[{ lineNumber: 2, column: 1 }], [{ lineNumber: 1, column: 1 }]]);
-		expect(props.onrevealed).toHaveBeenCalledTimes(2);
+		expect(s.editor.setPosition.mock.calls).toEqual([[{ lineNumber: 2, column: 1 }], [{ lineNumber: 1, column: 1 }], [{ lineNumber: 3, column: 1 }]]);
+		expect(props.onrevealed).toHaveBeenCalledTimes(3);
+	});
+
+	it('counts the line in the file as this show read it again, for a document read before', async () => {
+		const s = setup();
+		const props = show(s, a);
+		await settle();
+		// Read when the file had one line; an agent has since made it three.
+		let count = 1;
+		const d = { model: { name: 'a', getLineCount: () => count, getLineMaxColumn: (n: number) => (n <= count ? 6 : 1) } } as unknown as Document;
+		s.read(a).resolve(d);
+		await settle();
+		const refreshed = deferred<void>();
+		s.documents.refresh.mockReturnValueOnce(refreshed.promise);
+		props.reveal = { path: a, line: 3, col: 2 };
+		props.shown++;
+		flushSync();
+		await settle();
+		expect(s.editor.setPosition).not.toHaveBeenCalled();
+		count = 3;
+		refreshed.resolve();
+		await settle();
+		expect(s.editor.setPosition).toHaveBeenCalledExactlyOnceWith({ lineNumber: 3, column: 2 });
+		expect(props.onrevealed).toHaveBeenCalledTimes(1);
 	});
 });

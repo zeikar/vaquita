@@ -9,9 +9,22 @@ import { readText, viewPath } from './files';
 import type { Reveal } from './tabs.svelte';
 
 const hoisted = vi.hoisted(() => {
-	const editor = { setModel: () => {}, getModel: () => null, focus: () => {}, dispose: () => {}, updateOptions: () => {} };
+	let held: unknown = null;
+	const editor = {
+		setModel: (m: unknown) => void (held = m),
+		getModel: () => held,
+		focus: () => {},
+		dispose: () => {},
+		updateOptions: () => {},
+		saveViewState: () => null,
+		restoreViewState: () => {},
+		setPosition: vi.fn(),
+		revealPositionInCenter: () => {},
+	};
 	const model = (text: string) => ({
 		getValue: () => text,
+		getLineCount: () => 1,
+		getLineMaxColumn: () => text.length + 1,
 		getAlternativeVersionId: () => 1,
 		onDidChangeContent: () => {},
 		dispose: () => {},
@@ -20,7 +33,7 @@ const hoisted = vi.hoisted(() => {
 		editor: { create: vi.fn(() => editor), createModel: vi.fn(model) },
 		Uri: { file: (p: string) => p },
 	};
-	return { monaco };
+	return { monaco, editor };
 });
 
 vi.mock('./files', () => ({
@@ -166,6 +179,7 @@ describe('FilePane markdown', () => {
 
 describe('FilePane with a link’s line', () => {
 	it('drops it for a preview or a picture, and leaves it to the editor for text and Source', async () => {
+		hoisted.editor.setPosition.mockClear();
 		const onrevealed = vi.fn();
 		const props = show('/tmp/repo/a.md', { onrevealed, reveal: { path: '/tmp/repo/a.md', line: 3 } });
 		await settle();
@@ -175,7 +189,9 @@ describe('FilePane with a link’s line', () => {
 			Object.assign(props, { path, reveal: { path, line: 3 } });
 			flushSync();
 			await settle();
-			expect(onrevealed, path).toHaveBeenCalledTimes(path.endsWith('.png') ? 1 : 0);
+			// Dropped for the picture, taken by the editor for the text.
+			expect(onrevealed, path).toHaveBeenCalledExactlyOnceWith({ path, line: 3 });
+			expect(hoisted.editor.setPosition, path).toHaveBeenCalledTimes(path.endsWith('.png') ? 0 : 1);
 		}
 		Object.assign(props, { path: '/tmp/repo/a.md', reveal: undefined });
 		flushSync();
@@ -183,10 +199,28 @@ describe('FilePane with a link’s line', () => {
 		button('Source').click();
 		await settle();
 		onrevealed.mockClear();
+		hoisted.editor.setPosition.mockClear();
 		props.reveal = { path: '/tmp/repo/a.md', line: 3 };
 		flushSync();
 		await settle();
-		expect(onrevealed).not.toHaveBeenCalled();
+		expect(hoisted.editor.setPosition).toHaveBeenCalledTimes(1);
+		expect(onrevealed).toHaveBeenCalledExactlyOnceWith({ path: '/tmp/repo/a.md', line: 3 });
+	});
+
+	it('leaves it to the preview to drop while the hidden editor still holds the file', async () => {
+		const onrevealed = vi.fn();
+		const props = show('/tmp/repo/e.md', { onrevealed });
+		await settle();
+		button('Source').click();
+		await settle();
+		button('Preview').click();
+		await settle();
+		hoisted.editor.setPosition.mockClear();
+		props.reveal = { path: '/tmp/repo/e.md', line: 1 };
+		flushSync();
+		await settle();
+		expect(hoisted.editor.setPosition).not.toHaveBeenCalled();
+		expect(onrevealed).toHaveBeenCalledExactlyOnceWith({ path: '/tmp/repo/e.md', line: 1 });
 	});
 });
 

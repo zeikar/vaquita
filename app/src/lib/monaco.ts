@@ -1,4 +1,3 @@
-import type { LineCol } from './file-links';
 import { fileName } from './tabs';
 import { MONO_FONT } from './theme';
 
@@ -41,11 +40,4 @@ export function languageFor(monaco: Pick<Monaco, 'languages'>, path: string): st
 		}
 	}
 	return best.id;
-}
-
-// Monaco's position for a link's line and column, kept within the file: a line
-// past the last is the last, and a column past a line's end is its end.
-export function cursorAt(at: LineCol, model: { getLineCount(): number; getLineMaxColumn(line: number): number }): { lineNumber: number; column: number } {
-	const lineNumber = Math.min(at.line, model.getLineCount());
-	return { lineNumber, column: Math.min(at.col ?? 1, model.getLineMaxColumn(lineNumber)) };
 }

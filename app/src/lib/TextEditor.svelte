@@ -2,7 +2,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { documents as shared, type Document, type Documents } from './documents';
 	import { layoutHeld } from './layout-hold';
-	import { cursorAt, EDITOR_OPTIONS, loadMonaco, type Monaco } from './monaco';
+	import { EDITOR_OPTIONS, loadMonaco, type Monaco } from './monaco';
 	import { fileName } from './tabs';
 	import type { Reveal } from './tabs.svelte';
 
@@ -61,20 +61,26 @@
 		if (view) editor?.restoreViewState(view);
 	}
 
-	// After the view the document left was restored, which it overrides, so
-	// a link's line shows whether or not the file was open.
-	function goToReveal(): void {
+	// The show whose model is set, its view restored and its file read again:
+	// only then does the model hold the lines a link counted, as an agent may
+	// have grown a file whose document was read before.
+	let ready = $state.raw<{ path: string; shown: number }>();
+
+	// Over the view the document left, and also when the editor holds the
+	// file already, which sets no model. A line past the last goes to the
+	// last, a column past a line's end to its end.
+	$effect(() => {
+		// Read before any return: the model is no state, so it reruns on these.
 		const r = reveal;
+		const set = r?.path === path && ready?.path === path && ready.shown === shown;
 		const model = editor?.getModel();
-		if (!editor || !model || !r || loaded !== r.path) return;
-		const at = cursorAt(r, model);
+		if (!r || !set || !editor || !model) return;
+		const lineNumber = Math.min(r.line, model.getLineCount());
+		const at = { lineNumber, column: Math.min(r.col ?? 1, model.getLineMaxColumn(lineNumber)) };
 		editor.setPosition(at);
 		editor.revealPositionInCenter(at);
 		onrevealed?.(r);
-	}
-
-	// Also when the editor holds the file already, which sets no model.
-	$effect(goToReveal);
+	});
 
 	// False while there is nothing to type into yet, so the caller can focus
 	// something else.
@@ -134,7 +140,7 @@
 
 	$effect(() => {
 		const asked = path;
-		void shown;
+		const showing = shown;
 		const ed = editor;
 		if (!ed) return;
 		const n = ++request;
@@ -147,7 +153,7 @@
 		error = undefined;
 		// Before the open, so that only a document that was already there is
 		// read again; a new one has just been read.
-		documents.refresh(asked, () => n === request).catch((e) => {
+		const refreshed = documents.refresh(asked, () => n === request).catch((e) => {
 			if (n === request) report(`${fileName(asked)} could not be read again: ${message(e)}`);
 		});
 		documents.openDocument(asked).then(
@@ -161,7 +167,9 @@
 				loaded = asked;
 				current = doc;
 				doc.around = keepingPlace;
-				goToReveal();
+				void refreshed.then(() => {
+					if (n === request) ready = { path: asked, shown: showing };
+				});
 				// The pane took the focus while Monaco loaded or the file was read,
 				// so that typing never reached the terminal; it belongs here now.
 				const at = document.activeElement;
