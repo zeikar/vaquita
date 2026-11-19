@@ -11,6 +11,7 @@ import {
 	wholeValue,
 	type LinkText,
 	type Bounds,
+	type LineCol,
 	type PathHit,
 } from './file-links';
 import type { NameFinder, PathChecker } from './path-exists';
@@ -29,8 +30,9 @@ const DEFAULT_FG = 0;
 
 type LineText = { text: string; cells: CellPos[] };
 
+// A click also hands on where in the file the path's line suffix points.
 export interface LinkHandlers {
-	activate(e: MouseEvent, text: LinkText): void;
+	activate(e: MouseEvent, text: LinkText, at?: LineCol): void;
 	hover(e: MouseEvent, text: string): void;
 	leave(e: MouseEvent, text: string): void;
 }
@@ -122,8 +124,9 @@ type Opening = { start: number; end: number; target?: string };
 
 // A path to link, by its first and last cells; expanded when its text began
 // with a shell variable the path stands for. A named one is a bare file name,
-// path being the name as it stands: which file it is the finder says.
-type Span = { first: CellPos; last: CellPos; path: string; expanded?: boolean; named?: boolean };
+// path being the name as it stands: which file it is the finder says. at is
+// its line suffix's position.
+type Span = { first: CellPos; last: CellPos; path: string; expanded?: boolean; named?: boolean; at?: LineCol };
 
 // What a path is resolved by: a target and its first cell, which says which of
 // its command's assignments came before it, to a path, or to nothing when the
@@ -161,14 +164,14 @@ function colourBreak(a: LineText, i: number, b: LineText, j: number): boolean {
 	return bounds.endsAt(1) || bounds.startsAt(1);
 }
 
-function located(first: CellPos, last: CellPos, target: string, resolve: Resolve): Span | undefined {
+function located(first: CellPos, last: CellPos, target: string, resolve: Resolve, at?: LineCol): Span | undefined {
 	const path = resolve(target, first);
 	if (path === undefined) return undefined;
-	return varPath(target) ? { first, last, path, expanded: true } : { first, last, path };
+	return varPath(target) ? { first, last, path, expanded: true, at } : { first, last, path, at };
 }
 
 function span(line: LineText, hit: PathHit, resolve: Resolve): Span | undefined {
-	return located(line.cells[hit.start], line.cells[hit.end - 1], hit.target, resolve);
+	return located(line.cells[hit.start], line.cells[hit.end - 1], hit.target, resolve, hit.at);
 }
 
 // Whether a piece ends its line at the right edge, before a hard break.
@@ -272,7 +275,7 @@ function join(buffer: BufferLike, line: LineText, rest: boolean, resolve: Resolv
 	const got = findPaths(joined.text, colourBounds(joined))[0];
 	if (got?.start !== 0) return undefined;
 	const last = joined.cells[got.end - 1];
-	const whole = located(line.cells[start], last, got.target, resolve);
+	const whole = located(line.cells[start], last, got.target, resolve, got.at);
 	if (!whole) return undefined;
 	const lead = target === undefined ? undefined : span(line, { start, end, target }, resolve);
 	const parts = lead ? [lead] : [];
@@ -467,7 +470,7 @@ function rowEntries(buffer: BufferLike, cwd: string, y: number): Entry[] {
 		if (k === lines.length - 1) {
 			for (const hit of findPaths(here.text, colourBounds(here), true)) {
 				const s = hit.name
-					? { first: here.cells[hit.start], last: here.cells[hit.end - 1], path: hit.target, named: true }
+					? { first: here.cells[hit.start], last: here.cells[hit.end - 1], path: hit.target, named: true, at: hit.at }
 					: span(here, hit, resolve);
 				if (!s) continue;
 				found.push({ ...s, by: !free(s.first) ? taker : f?.first === s.first ? f : undefined });
@@ -500,7 +503,7 @@ function rowLinks(
 ): ILink[] | undefined {
 	const links: ILink[] = [];
 	for (const entry of entries) {
-		const { first, last, parts, lead, by, expanded, named } = entry;
+		const { first, last, parts, lead, by, expanded, named, at } = entry;
 		let path = entry.path;
 		if (named) {
 			const found = find(path);
@@ -520,7 +523,7 @@ function rowLinks(
 		links.push({
 			range,
 			text: path,
-			activate: (e) => handlers.activate(e, text),
+			activate: (e) => handlers.activate(e, text, at),
 			hover: (e) => handlers.hover(e, path),
 			leave: (e) => handlers.leave(e, path),
 		});

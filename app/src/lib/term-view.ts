@@ -7,7 +7,7 @@ import { clipboardProvider } from './clipboard-provider';
 import { installHangulFix, type HangulFix } from './hangul-fix';
 import { keyHandler } from './keys';
 import { layoutHeld } from './layout-hold';
-import { activateUri, type LinkText } from './file-links';
+import { activateUri, type LineCol, type LinkText } from './file-links';
 import type { Tone, ViewLike } from './manager';
 import { createNameFinder, pathChecker } from './path-exists';
 import { pathLinkProvider } from './path-link-provider';
@@ -46,7 +46,7 @@ export class TermView implements ViewLike {
 		private readonly core: SessionCore,
 		private readonly report: (message: string, tone?: Tone) => void,
 		private readonly cwd: string,
-		private readonly onView: (path: string) => void,
+		private readonly onView: (path: string, at?: LineCol) => void,
 		// False while something covers the terminal, such as a file tab, which
 		// typing must not pass through to it.
 		private readonly mayFocus: () => boolean,
@@ -75,16 +75,18 @@ export class TermView implements ViewLike {
 		// disk on hover and drops a path that is not there, and looks up which file
 		// a bare file name names, from the starting folder's repo, linking it only
 		// when there is one. Both only filter what is underlined: a click still
-		// goes through activateUri.
-		const activate = (e: MouseEvent, uri: LinkText) => activateUri(e, uri, this.report, this.onView);
+		// goes through activateUri. Only the path provider hands on a position:
+		// xterm calls linkHandler's activate with the link's range third.
+		const activate = (e: MouseEvent, uri: LinkText, at?: LineCol) => activateUri(e, uri, at, this.report, this.onView);
+		const activateUrl = (e: MouseEvent, uri: string) => activate(e, uri);
 		const hover = (_e: MouseEvent, uri: string) => {
 			container.title = uri;
 		};
 		const leave = () => {
 			container.title = '';
 		};
-		this.term.options.linkHandler = { activate, hover, leave, allowNonHttpProtocols: true };
-		this.term.loadAddon(new WebLinksAddon(activate, { hover, leave }));
+		this.term.options.linkHandler = { activate: activateUrl, hover, leave, allowNonHttpProtocols: true };
+		this.term.loadAddon(new WebLinksAddon(activateUrl, { hover, leave }));
 		this.term.registerLinkProvider(pathLinkProvider(this.term.buffer, this.cwd, { activate, hover, leave }, pathChecker, createNameFinder(this.cwd)));
 		this.term.loadAddon(new ClipboardAddon(undefined, clipboardProvider(() => this.core.pendingReplay > 0, this.report)));
 		this.term.attachCustomKeyEventHandler(

@@ -47,7 +47,7 @@ async function cmdClick(t: Terminal, y: number, cwd: string, missing: string) {
 		if (path === missing) throw 'no such file';
 		return { action: 'opened' };
 	};
-	const handlers: LinkHandlers = { ...noop, activate: (e, text) => activateUri(e, text, (m) => said.push(m), () => {}, invoker) };
+	const handlers: LinkHandlers = { ...noop, activate: (e, text, at) => activateUri(e, text, at, (m) => said.push(m), () => {}, invoker) };
 	links(t, y, cwd, handlers)![0].activate({ metaKey: true } as MouseEvent, '');
 	// The invoker settles in microtasks, all run before a timer.
 	await new Promise((r) => setTimeout(r));
@@ -500,6 +500,7 @@ function checked(t: Terminal, cwd: string, disk: Disk = {}) {
 	};
 	const replies: (ILink[] | undefined)[] = [];
 	const clicks: unknown[] = [];
+	const places: unknown[] = [];
 	const hovers: string[] = [];
 	const invoker: ExistsInvoker = (paths) => {
 		batches.push(paths.map((q) => q.path));
@@ -509,7 +510,10 @@ function checked(t: Terminal, cwd: string, disk: Disk = {}) {
 	};
 	const handlers: LinkHandlers = {
 		...noop,
-		activate: (_e, text) => void clicks.push(text),
+		activate: (_e, text, at) => {
+			clicks.push(text);
+			places.push([text, at]);
+		},
 		hover: (_e, text) => void hovers.push(text),
 	};
 	const finder = names ? createNameFinder(cwd, nameInvoker) : undefined;
@@ -526,6 +530,12 @@ function checked(t: Terminal, cwd: string, disk: Disk = {}) {
 			clicks.length = 0;
 			for (const l of reply ?? []) l.activate({} as MouseEvent, '');
 			return [...clicks];
+		},
+		// The same with the position each click hands on beside its text.
+		clickAt(reply: ILink[] | undefined) {
+			places.length = 0;
+			for (const l of reply ?? []) l.activate({} as MouseEvent, '');
+			return [...places];
 		},
 		// What a hover on each link of the reply hands the hover handler.
 		hover(reply: ILink[] | undefined) {
@@ -545,6 +555,19 @@ describe('pathLinkProvider with an existence check', () => {
 	const frames = '/tmp/repo/in/battle_b_frames.png';
 	const out = '/tmp/repo/out.png';
 	const outSpan = { start: { x: 39, y: 1 }, end: { x: 55, y: 1 }, text: out };
+
+	it('hands a click a line suffix’s position, the link’s text and hover staying the path', async () => {
+		const [a, b] = ['/tmp/repo/a.ts', '/tmp/repo/b.ts'];
+		const c = checked(await term(80, 'see /tmp/repo/a.ts:40:5 and /tmp/repo/b.ts'), '/tmp/repo', { exists: [a, b] });
+		c.provide(1);
+		await settle();
+		expect(c.replies.map((r) => spans(r)?.map((l) => l.text))).toEqual([[a, b]]);
+		expect(c.hover(c.replies[0])).toEqual([a, b]);
+		expect(c.clickAt(c.replies[0])).toEqual([
+			[a, { line: 40, col: 5 }],
+			[b, undefined],
+		]);
+	});
 
 	it('links only the paths that exist', async () => {
 		const c = checked(await term(80, montage), '/tmp/repo', { exists: [out] });
@@ -709,6 +732,13 @@ describe('pathLinkProvider with shell variables', () => {
 			expect(c.hover(c.replies[0]), `row ${y}`).toEqual(want.map((l) => l.text));
 			expect(c.click(c.replies[0]), `row ${y}`).toEqual(want.map((l) => l.text));
 		}
+	});
+
+	it('hands a click an expansion’s line suffix', async () => {
+		const c = checked(await term(80, 'S=/tmp/a && cat $S/x.ts:7:2'), '/tmp/repo', { exists: ['/tmp/a/x.ts'] });
+		c.provide(1);
+		await settle();
+		expect(c.clickAt(c.replies[0])).toEqual([['/tmp/a/x.ts', { line: 7, col: 2 }]]);
 	});
 
 	it('links only the expansions the disk has', async () => {
@@ -933,6 +963,16 @@ describe('pathLinkProvider with file names', () => {
 		expect(c.click(c.replies[0])).toEqual([termView, aTs]);
 		expect(c.nameBatches).toEqual([['term-view.ts', 'a.ts']]);
 		expect(c.batches).toEqual([]);
+	});
+
+	it('hands a click a name’s line suffix', async () => {
+		const c = checked(await term(80, updated), cwd, { names: named });
+		c.provide(1);
+		await settle();
+		expect(c.clickAt(c.replies[0])).toEqual([
+			[termView, undefined],
+			[aTs, { line: 12 }],
+		]);
 	});
 
 	it('links no name and asks nothing with no finder', async () => {

@@ -99,9 +99,23 @@ describe('findPaths', () => {
 		expect(findPaths('../b/c.ts')[0].target).toBe('../b/c.ts');
 	});
 
-	it('keeps a line and column suffix in the range but not the target', () => {
+	it('keeps a line and column suffix in the range but not the target, which it gives as at', () => {
 		const line = 'at src/lib/links.ts:12:3';
-		expect(findPaths(line)).toEqual([{ start: 3, end: line.length, target: 'src/lib/links.ts' }]);
+		expect(findPaths(line)).toEqual([{ start: 3, end: line.length, target: 'src/lib/links.ts', at: { line: 12, col: 3 } }]);
+	});
+
+	it('gives a line alone, a suffix before a full stop, and no at without a suffix', () => {
+		expect(findPaths('see /tmp/a.ts:40')).toEqual([{ start: 4, end: 16, target: '/tmp/a.ts', at: { line: 40 } }]);
+		expect(findPaths('see /tmp/a.ts:40:5')).toEqual([{ start: 4, end: 18, target: '/tmp/a.ts', at: { line: 40, col: 5 } }]);
+		expect(findPaths('see /tmp/a.ts:12.')).toEqual([{ start: 4, end: 16, target: '/tmp/a.ts', at: { line: 12 } }]);
+		expect(findPaths('see /tmp/a.ts')).toEqual([{ start: 4, end: 13, target: '/tmp/a.ts' }]);
+	});
+
+	it('gives no line 0 or one past a safe integer, and leaves out a column 0', () => {
+		expect(findPaths('/tmp/a.ts:0')[0].at).toBeUndefined();
+		expect(findPaths('/tmp/a.ts:99999999999999999999:3')[0].at).toBeUndefined();
+		expect(findPaths('/tmp/a.ts:7:0')[0].at).toEqual({ line: 7 });
+		expect(findPaths('/tmp/a.ts:007:99999999999999999999')[0].at).toEqual({ line: 7 });
 	});
 
 	it('finds file URIs printed as text', () => {
@@ -147,7 +161,7 @@ describe('findPaths', () => {
 	});
 
 	it('drops the line suffix from file URIs', () => {
-		expect(findPaths('file:///tmp/a.ts:12:3')).toEqual([{ start: 0, end: 21, target: 'file:///tmp/a.ts' }]);
+		expect(findPaths('file:///tmp/a.ts:12:3')).toEqual([{ start: 0, end: 21, target: 'file:///tmp/a.ts', at: { line: 12, col: 3 } }]);
 	});
 
 	it('reports string offsets after wide characters', () => {
@@ -168,7 +182,7 @@ describe('findPaths', () => {
 		expect(findPaths('ls ${S}/a/b.png')).toEqual([{ start: 3, end: 15, target: '${S}/a/b.png' }]);
 		expect(findPaths('cat "$S/x.png"')).toEqual([{ start: 5, end: 13, target: '$S/x.png' }]);
 		expect(findPaths('S=$B/party-battle')).toEqual([{ start: 2, end: 17, target: '$B/party-battle' }]);
-		expect(findPaths('at $S/a.ts:12')).toEqual([{ start: 3, end: 13, target: '$S/a.ts' }]);
+		expect(findPaths('at $S/a.ts:12')).toEqual([{ start: 3, end: 13, target: '$S/a.ts', at: { line: 12 } }]);
 		for (const l of ['$S', '$S/', '${S}', '$5/month', '${S:-x}/a.png', '$(pwd)/a.png']) {
 			expect(findPaths(`ls ${l}`), l).toEqual([]);
 		}
@@ -187,8 +201,9 @@ describe('findPaths with names', () => {
 	});
 
 	it('keeps a line suffix in the range but not the target', () => {
-		expect(names('at a.ts:12')).toEqual([{ start: 3, end: 10, target: 'a.ts', name: true }]);
-		expect(names('at a.ts:12:3')).toEqual([{ start: 3, end: 12, target: 'a.ts', name: true }]);
+		expect(names('at a.ts:12')).toEqual([{ start: 3, end: 10, target: 'a.ts', name: true, at: { line: 12 } }]);
+		expect(names('at a.ts:12:3')).toEqual([{ start: 3, end: 12, target: 'a.ts', name: true, at: { line: 12, col: 3 } }]);
+		expect(names('see a.ts:12.')).toEqual([{ start: 4, end: 11, target: 'a.ts', name: true, at: { line: 12 } }]);
 	});
 
 	it('leaves wrapping, a full stop and an option outside the range', () => {
@@ -339,6 +354,21 @@ describe('openPath', () => {
 		expect(said).toEqual([]);
 	});
 
+	it('hands a position to onView with a viewable file only', async () => {
+		const viewed: unknown[] = [];
+		const onView = (p: string, at?: unknown) => void viewed.push([p, at]);
+		await openPath('/tmp/a.ts', '', () => {}, onView, fakeInvoker({ action: 'view', path: '/tmp/real/a.ts' }).invoker, undefined, { line: 3, col: 2 });
+		await openPath('/tmp/a.ts', '', () => {}, onView, fakeInvoker({ action: 'view', path: '/tmp/real/a.ts' }).invoker);
+		expect(viewed).toEqual([
+			['/tmp/real/a.ts', { line: 3, col: 2 }],
+			['/tmp/real/a.ts', undefined],
+		]);
+		for (const r of [{ action: 'opened' } as const, { action: 'revealed', why: 'x' } as const, 'boom']) {
+			await openPath('/tmp/a.ts', '', () => {}, onView, fakeInvoker(r).invoker, undefined, { line: 3 });
+		}
+		expect(viewed).toHaveLength(2);
+	});
+
 	it('reports a rejection, string or Error', async () => {
 		const said: string[] = [];
 		await openPath('/tmp/a', '', (m) => said.push(m), () => {}, fakeInvoker('no such file').invoker);
@@ -351,7 +381,7 @@ describe('activateUri', () => {
 	function click(text: string, metaKey: boolean) {
 		const { invoker, calls } = fakeInvoker({ action: 'opened' });
 		const opened: string[] = [];
-		activateUri({ metaKey } as MouseEvent, text, () => {}, () => {}, invoker, (u) => void opened.push(u));
+		activateUri({ metaKey } as MouseEvent, text, undefined, () => {}, () => {}, invoker, (u) => void opened.push(u));
 		return { calls, opened };
 	}
 
@@ -383,6 +413,14 @@ describe('activateUri', () => {
 	it('ignores other schemes', () => {
 		for (const t of ['javascript:alert(1)', 'ssh://host']) expect(click(t, true)).toEqual({ calls: [], opened: [] });
 	});
+
+	it('hands a position to onView with the viewable file', async () => {
+		const viewed: unknown[] = [];
+		const { invoker } = fakeInvoker({ action: 'view', path: '/tmp/a.ts' });
+		activateUri({ metaKey: true } as MouseEvent, '/tmp/a.ts', { line: 40, col: 5 }, () => {}, (p, at) => void viewed.push([p, at]), invoker);
+		await new Promise((r) => setTimeout(r));
+		expect(viewed).toEqual([['/tmp/a.ts', { line: 40, col: 5 }]]);
+	});
 });
 
 describe('activateUri with a fallback', () => {
@@ -392,7 +430,7 @@ describe('activateUri with a fallback', () => {
 		const { invoker, calls } = fakeInvoker(...results);
 		// Only a report that is no failure passes a tone.
 		const said: string[] = [];
-		activateUri({ metaKey } as MouseEvent, pair, (m, tone) => said.push(tone ? `${tone}: ${m}` : m), () => {}, invoker);
+		activateUri({ metaKey } as MouseEvent, pair, undefined, (m, tone) => said.push(tone ? `${tone}: ${m}` : m), () => {}, invoker);
 		// The invoker settles in microtasks, all run before a timer.
 		await new Promise((r) => setTimeout(r));
 		return { tried: calls.map((c) => c.path), said };
@@ -414,6 +452,14 @@ describe('activateUri with a fallback', () => {
 			tried: [...pair],
 			said: [switched],
 		});
+	});
+
+	it('opens the fallback without the joined path’s position', async () => {
+		const { invoker } = fakeInvoker('no such file', { action: 'view', path: pair[1] });
+		const viewed: unknown[] = [];
+		activateUri({ metaKey: true } as MouseEvent, pair, { line: 3 }, () => {}, (p, at) => void viewed.push([p, at]), invoker);
+		await new Promise((r) => setTimeout(r));
+		expect(viewed).toEqual([[pair[1], undefined]]);
 	});
 
 	it('reports when neither exists', async () => {

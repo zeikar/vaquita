@@ -7,10 +7,15 @@ import type { Tone } from './manager';
 export type OpenResult = { action: 'opened' } | { action: 'revealed'; why: string } | { action: 'view'; path: string };
 export type Invoker = (path: string, host: string) => Promise<OpenResult>;
 
+// A line and column in a file, both counted from 1, as a :line[:col] suffix
+// gives them.
+export type LineCol = { line: number; col?: number };
+
 // start and end are string indices into the line; the link provider maps them to
 // terminal cells, where a wide character takes two. name marks a bare file name,
-// which names no place by itself: the app looks up which file it is.
-export type PathHit = { start: number; end: number; target: string; name?: true };
+// which names no place by itself: the app looks up which file it is. at is
+// what a line suffix in the range says, for the editor to go to.
+export type PathHit = { start: number; end: number; target: string; name?: true; at?: LineCol };
 
 // What a click on a link hands the gate: its text, or a path joined across a
 // line break (see path-link-provider) with a path it replaced, the one on the
@@ -70,6 +75,15 @@ const LINE_SUFFIX = /:\d+(?::\d+)?$/;
 // a segment and of separators and line suffixes, so whitespace and prose
 // punctuation such as ( or , end it.
 const RUN = new RegExp(`[${SEG_CHARS}/~=:]+`, 'uy');
+
+// Terminal output is untrusted, so a number no file has, 0 or one past a safe
+// integer, gives no line, and no column beside a line; the editor keeps the
+// rest within the file.
+function lineCol(suffix: string): LineCol | undefined {
+	const [line, col] = suffix.slice(1).split(':').map(Number);
+	if (!(line >= 1 && Number.isSafeInteger(line))) return undefined;
+	return col >= 1 && Number.isSafeInteger(col) ? { line, col } : { line };
+}
 
 function isPath(text: string): boolean {
 	if (text === '~') return true;
@@ -134,7 +148,10 @@ export function findPaths(line: string, bounds: Bounds = NO_BOUNDS, names = fals
 			name = true;
 		}
 		if (target !== undefined) {
-			hits.push(name ? { start: i, end: stopRun, target, name: true } : { start: i, end: stopRun, target });
+			const hit: PathHit = name ? { start: i, end: stopRun, target, name: true } : { start: i, end: stopRun, target };
+			const at = token.length > bare.length ? lineCol(token.slice(bare.length)) : undefined;
+			if (at) hit.at = at;
+			hits.push(hit);
 			i = runEnd;
 		} else {
 			i++;
@@ -215,22 +232,26 @@ export function wholeValue(target: string, covered: string, after: string, quote
 	return VALUE_END.test(after);
 }
 
+// at goes only to a file the app shows: a file another app opens, or Finder
+// reveals, has no place in it the app could go to.
 export async function openPath(
 	path: string,
 	host: string,
 	report: (m: string, tone?: Tone) => void,
-	onView: (path: string) => void,
+	onView: (path: string, at?: LineCol) => void,
 	invoker: Invoker = defaultInvoker,
 	fallback?: string,
+	at?: LineCol,
 ): Promise<void> {
 	try {
 		const r = await invoker(path, host);
 		if (r.action === 'revealed') report(`revealed in Finder, not opened: ${path} (${r.why})`, 'info');
-		else if (r.action === 'view') onView(r.path);
+		else if (r.action === 'view') onView(r.path, at);
 	} catch (e) {
 		// open_path's word for a path that does not exist, the one failure that
 		// says a joined path was a wrong guess. The fallback may be another file
-		// than the one the hover named, so the switch is told.
+		// than the one the hover named, so the switch is told, and opens at no
+		// line: the line was the joined path's.
 		if (fallback !== undefined && errText(e) === 'no such file') {
 			report(`${path}: no such file, opening ${fallback}`, 'info');
 			return openPath(fallback, host, report, onView, invoker);
@@ -248,11 +269,13 @@ export function gateTarget(text: string): { path: string; host: string } | undef
 }
 
 // The only place that decides whether a click on terminal text opens anything.
+// at is where in the file the link's text pointed, from a line suffix.
 export function activateUri(
 	e: MouseEvent,
 	text: LinkText,
+	at: LineCol | undefined,
 	report: (m: string, tone?: Tone) => void,
-	onView: (path: string) => void,
+	onView: (path: string, at?: LineCol) => void,
 	invoker: Invoker = defaultInvoker,
 	opener?: Opener,
 ): void {
@@ -261,7 +284,7 @@ export function activateUri(
 	const target = gateTarget(uri);
 	if (target) {
 		// The fallback is another path on the clicked row; a file URL has none.
-		void openPath(target.path, target.host, report, onView, invoker, uri.startsWith('file:') ? undefined : fallback);
+		void openPath(target.path, target.host, report, onView, invoker, uri.startsWith('file:') ? undefined : fallback, at);
 		return;
 	}
 	openExternal(uri, (err) => report(`open ${uri}: ${errText(err)}`), opener);
