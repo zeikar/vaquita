@@ -213,7 +213,7 @@ pub(crate) fn io_error(e: std::io::Error) -> String {
 
 /// The absolute path a file URL or a path in the output names, for this Mac.
 /// Shared by resolve and exists, so what one refuses the other does too.
-fn locate(path: &str, host: &str, home: &Path) -> Result<PathBuf, String> {
+pub(crate) fn locate(path: &str, host: &str, home: &Path) -> Result<PathBuf, String> {
     if !is_local_host(host) {
         return Err(format!("not this Mac: {host}"));
     }
@@ -261,7 +261,12 @@ pub(crate) fn resolve(path: &str, host: &str, home: &Path, handler: &dyn Fn(&Pat
 /// opens it.
 fn exists(path: &str, host: &str, home: &Path) -> Option<bool> {
     let Ok(path) = locate(path, host, home) else { return Some(false) };
-    match std::fs::metadata(&path) {
+    on_disk(&path)
+}
+
+/// Whether the disk has an absolute path, by exists's rules.
+pub(crate) fn on_disk(path: &Path) -> Option<bool> {
+    match std::fs::metadata(path) {
         Ok(_) => Some(true),
         Err(e) if is_missing(e.kind()) => Some(false),
         Err(_) => None,
@@ -279,14 +284,14 @@ pub struct PathQuery {
 // waiting. So only a few batches run at once, and a slot comes back when the
 // stats end, not when the caller gives up.
 const BATCHES: usize = 4;
-static SLOTS: Slots = Slots::new(BATCHES);
+pub(crate) static SLOTS: Slots = Slots::new(BATCHES);
 
-struct Slots {
+pub(crate) struct Slots {
     taken: AtomicUsize,
     cap: usize,
 }
 
-struct Slot<'a>(&'a Slots);
+pub(crate) struct Slot<'a>(&'a Slots);
 
 impl Slots {
     const fn new(cap: usize) -> Self {
@@ -294,7 +299,7 @@ impl Slots {
     }
 
     /// A slot, or None at once when all are taken: nothing waits.
-    fn take(&self) -> Option<Slot<'_>> {
+    pub(crate) fn take(&self) -> Option<Slot<'_>> {
         self.taken.try_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < self.cap).then_some(n + 1)).ok()?;
         Some(Slot(self))
     }

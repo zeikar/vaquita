@@ -6,6 +6,7 @@ mod helper_copy;
 mod home;
 mod launchd;
 mod menu;
+mod names;
 mod notify;
 mod open_path;
 mod panic_log;
@@ -189,6 +190,7 @@ pub fn run() {
         .manage(watch::Watches::default())
         .manage(repo_watch::RepoWatch::default())
         .manage(conversations::Cache::default())
+        .manage(names::Lists::default())
         .setup(|app| {
             notify::setup(app.handle());
             // Without the menu the app still updates on its timed checks.
@@ -209,6 +211,7 @@ pub fn run() {
             notify::take_notification_click,
             open_path::open_path,
             open_path::paths_exist,
+            names::find_names,
             files::view_path,
             files::view_image,
             files::read_text,

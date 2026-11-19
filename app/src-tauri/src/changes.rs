@@ -103,11 +103,18 @@ pub(crate) fn failed(what: &str, out: &Output) -> String {
 pub(crate) fn toplevel(folder: &Path) -> Result<PathBuf, String> {
     let mut cmd = git(folder)?;
     cmd.args(["rev-parse", "--show-toplevel"]);
-    let out = run(cmd)?;
+    toplevel_of(&run(cmd)?)
+}
+
+pub(crate) const NOT_A_REPO: &str = "not a git repository";
+
+/// What `rev-parse --show-toplevel` said: the toplevel, `not a git
+/// repository`, or why it failed.
+pub(crate) fn toplevel_of(out: &Output) -> Result<PathBuf, String> {
     match out.status.code() {
         Some(0) => Ok(PathBuf::from(std::ffi::OsStr::from_bytes(out.stdout.strip_suffix(b"\n").unwrap_or(&out.stdout)))),
-        Some(128) if String::from_utf8_lossy(&out.stderr).contains("not a git repository") => Err("not a git repository".to_string()),
-        _ => Err(failed("git rev-parse", &out)),
+        Some(128) if String::from_utf8_lossy(&out.stderr).contains(NOT_A_REPO) => Err(NOT_A_REPO.to_string()),
+        _ => Err(failed("git rev-parse", out)),
     }
 }
 
