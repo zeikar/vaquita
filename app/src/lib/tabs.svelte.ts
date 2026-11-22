@@ -77,14 +77,16 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// Whether the lists are the daemon's current ones, for what drops or
 	// leaves a tab on their word.
 	private readonly listed = $derived(this.state.status === 'connected' && this.state.reposListed);
-	readonly groupTabs = $derived.by(() => {
-		if (this.group === undefined) return [];
-		const sids = this.state.reposListed ? [...this.placed].flatMap(([sid, key]) => (key === this.group ? [sid] : [])) : [];
-		return arrangeGroup(this.groups[this.group] ?? [], sids);
-	});
+	readonly groupTabs = $derived(this.group === undefined ? [] : this.tabsOf(this.group));
 	// The repo whose tree the file panel shows: the shown group, unless that
 	// is no repo.
 	readonly root = $derived(this.group !== OTHER ? this.group : undefined);
+
+	// A group's tabs: its stored order with its sessions' tabs added.
+	private tabsOf(key: string): string[] {
+		const sids = this.state.reposListed ? [...this.placed].flatMap(([sid, k]) => (k === key ? [sid] : [])) : [];
+		return arrangeGroup(this.groups[key] ?? [], sids);
+	}
 
 	private readonly manager: SessionManager<T, V>;
 	private readonly documents: TabDocuments;
@@ -247,12 +249,13 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// A repo's name in the sidebar shows its welcome. A session of that repo
 	// stays selected, its terminal covered as by a file; any other is
 	// deselected, so the repo is the selection. Not under the new-session
-	// dialog, which keeps what it opened over, as show does.
-	openWelcome(repo: string): void {
+	// dialog, which keeps what it opened over, as show does. tab is what shows
+	// over it, for a step that returns to a tab.
+	openWelcome(repo: string, tab = WELCOME): void {
 		if (this.dialogOpen) return;
 		if (this.selectedRow === undefined || groupKey(this.selectedRow.info.cwd, this.state.repos) !== repo) this.manager.deselect();
 		this.group = repo;
-		void this.show(WELCOME);
+		void this.show(tab);
 	}
 
 	// The Other group's name, shown while it holds file tabs, selects them:
@@ -264,6 +267,20 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 		this.group = OTHER;
 		const next = fallback(this.recent.get(OTHER) ?? [], this.groupTabs);
 		if (next !== undefined) void this.show(next);
+	}
+
+	// ⌥⌘↑/↓: the next repo in the sidebar's order, Other last while it has tabs,
+	// wrapping as tabs do. A repo shows the tab it showed last in this run, else
+	// its welcome: not a tab picked for someone who has not looked at the repo.
+	// Nothing before the daemon's list, which would make the stops the empty one.
+	stepRepo(by: number): void {
+		if (this.dialogOpen || !this.state.reposListed) return;
+		const stops = this.tabsOf(OTHER).length > 0 ? [...this.state.repos, OTHER] : this.state.repos;
+		const to = neighbour(stops, this.group, by);
+		if (to === undefined || to === this.group) return;
+		if (to === OTHER) return this.openOther();
+		const tabs = this.tabsOf(to);
+		this.openWelcome(to, this.recent.get(to)?.find((p) => tabs.includes(p)) ?? WELCOME);
 	}
 
 	// What shows takes the focus, so that typing never reaches a terminal

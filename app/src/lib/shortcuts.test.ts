@@ -20,7 +20,7 @@ beforeEach(() => {
 });
 
 function fakes() {
-	const tabs = { newSession: vi.fn(), step: vi.fn(), showAt: vi.fn(), save: vi.fn(), closeActive: vi.fn() };
+	const tabs = { newSession: vi.fn(), step: vi.fn(), stepRepo: vi.fn(), showAt: vi.fn(), save: vi.fn(), closeActive: vi.fn() };
 	const layout = { toggleSidebar: vi.fn(), togglePanel: vi.fn() };
 	const manager = { report: vi.fn() };
 	return { tabs, layout, manager };
@@ -53,6 +53,8 @@ describe('windowShortcut', () => {
 		['⌃⇧Tab', { key: 'Tab', ctrlKey: true, shiftKey: true }, (f) => f.tabs.step, [-1]],
 		['⌥⌘←', { key: 'ArrowLeft', metaKey: true, altKey: true }, (f) => f.tabs.step, [-1]],
 		['⌥⌘→', { key: 'ArrowRight', metaKey: true, altKey: true }, (f) => f.tabs.step, [1]],
+		['⌥⌘↑', { key: 'ArrowUp', metaKey: true, altKey: true }, (f) => f.tabs.stepRepo, [-1]],
+		['⌥⌘↓', { key: 'ArrowDown', metaKey: true, altKey: true }, (f) => f.tabs.stepRepo, [1]],
 		['⌘1', { key: '1', metaKey: true }, (f) => f.tabs.showAt, [1]],
 		['⌘9', { key: '9', metaKey: true }, (f) => f.tabs.showAt, [9]],
 		['⌘S', { key: 's', metaKey: true }, (f) => f.tabs.save, []],

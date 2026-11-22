@@ -259,6 +259,147 @@ describe('Tabs', () => {
 			expect(state().selected).toBeUndefined();
 		});
 
+		describe('stepping between repos', () => {
+			const other = '/tmp/other';
+			const oa = `${other}/a.md`;
+			const ob = `${other}/b.md`;
+			// Two repos, file tabs and a session in each (session 1 in repo, 2 in other); no group yet.
+			async function two() {
+				localStorage.setItem(TABS_KEY, JSON.stringify({ [repo]: [a, b], [other]: [oa, ob] }));
+				const t = await make([info(1), { ...info(2), cwd: other }]);
+				t.c.emit.repos([repo, other]);
+				return t;
+			}
+
+			it('steps forward and back round the repos in list order', async () => {
+				const { tabs } = await two();
+				tabs.group = repo;
+				tabs.stepRepo(1);
+				expect(tabs.group).toBe(other);
+				tabs.stepRepo(1);
+				expect(tabs.group).toBe(repo);
+				tabs.stepRepo(-1);
+				expect(tabs.group).toBe(other);
+			});
+
+			it('opens a repo not viewed yet on its welcome, deselecting the other repo\'s session', async () => {
+				const { tabs, m, state } = await two();
+				tabs.group = repo;
+				m.select(1);
+				tabs.stepRepo(1);
+				expect(tabs.group).toBe(other);
+				expect(tabs.active).toBe(WELCOME);
+				expect(state().selected).toBeUndefined();
+			});
+
+			it("comes back to a session's tab shown last, selecting the session", async () => {
+				const { tabs, state } = await two();
+				tabs.group = other;
+				await tabs.show(oa);
+				await tabs.show('session:2');
+				tabs.stepRepo(-1);
+				flushSync();
+				expect(state().selected).toBeUndefined();
+				tabs.stepRepo(1);
+				flushSync();
+				expect(tabs.group).toBe(other);
+				expect(tabs.active).toBe('session:2');
+				expect(state().selected).toBe(2);
+			});
+
+			it('comes back to a file tab shown last, leaving no session selected', async () => {
+				const { tabs, state } = await two();
+				tabs.group = other;
+				await tabs.show('session:2');
+				await tabs.show(oa);
+				tabs.stepRepo(-1);
+				flushSync();
+				tabs.stepRepo(1);
+				flushSync();
+				expect(tabs.group).toBe(other);
+				expect(tabs.active).toBe(oa);
+				expect(state().selected).toBeUndefined();
+			});
+
+			it('skips a recent tab that was closed', async () => {
+				const { tabs } = await two();
+				tabs.group = other;
+				await tabs.show(oa);
+				await tabs.show(ob);
+				tabs.stepRepo(-1);
+				// The tab leaves while its group is not the shown one, as a repo list can move it.
+				tabs.groups = { ...tabs.groups, [other]: [oa] };
+				tabs.stepRepo(1);
+				expect(tabs.group).toBe(other);
+				expect(tabs.active).toBe(oa);
+			});
+
+			it('lands on the first repo going forward from no group, the last going back', async () => {
+				const { tabs } = await two();
+				expect(tabs.group).toBeUndefined();
+				tabs.stepRepo(1);
+				expect(tabs.group).toBe(repo);
+				tabs.group = undefined;
+				tabs.stepRepo(-1);
+				expect(tabs.group).toBe(other);
+			});
+
+			it('has no Other stop while Other has no tabs', async () => {
+				const { tabs } = await two();
+				tabs.group = other;
+				tabs.stepRepo(1);
+				expect(tabs.group).toBe(repo);
+			});
+
+			it('has Other as a stop with a file tab there, shown as openOther shows it', async () => {
+				const x = '/tmp/x.md';
+				localStorage.setItem(TABS_KEY, JSON.stringify({ [OTHER]: [x] }));
+				const { tabs, c } = await make();
+				c.emit.repos([repo]);
+				tabs.group = repo;
+				tabs.stepRepo(1);
+				expect(tabs.group).toBe(OTHER);
+				expect(tabs.active).toBe(x);
+				tabs.stepRepo(1);
+				expect(tabs.group).toBe(repo);
+			});
+
+			it('has Other as a stop for a session outside every repo', async () => {
+				const t = await make([info(1), { ...info(2), cwd: '/tmp/elsewhere' }]);
+				t.c.emit.repos([repo]);
+				t.tabs.group = repo;
+				t.tabs.stepRepo(1);
+				expect(t.tabs.group).toBe(OTHER);
+				expect(t.tabs.active).toBe('session:2');
+			});
+
+			it('does nothing when the only stop shows', async () => {
+				const { tabs, c } = await make();
+				c.emit.repos([repo]);
+				tabs.group = repo;
+				tabs.stepRepo(1);
+				tabs.stepRepo(-1);
+				expect(tabs.group).toBe(repo);
+				expect(tabs.active).toBeUndefined();
+			});
+
+			it('does nothing under the dialog', async () => {
+				const { tabs } = await two();
+				tabs.group = repo;
+				tabs.dialogOpen = true;
+				tabs.stepRepo(1);
+				expect(tabs.group).toBe(repo);
+			});
+
+			it('does nothing before the repo list', async () => {
+				localStorage.setItem(TABS_KEY, JSON.stringify({ [repo]: [a], [OTHER]: ['/tmp/x.md'] }));
+				const { tabs } = await make();
+				tabs.group = repo;
+				tabs.stepRepo(1);
+				expect(tabs.group).toBe(repo);
+			});
+		});
+
 		it('starts a new session in the shown repo, else the last folder, else nowhere', async () => {
 			const { tabs } = await make();
 			tabs.group = repo;

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { isNewSessionShortcut, isNextTabShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut, keyHandler, swallowsKeypress, tabNumber, translateKey } from './keys';
+import { isNewSessionShortcut, isNextRepoShortcut, isNextTabShortcut, isPrevRepoShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut, keyHandler, swallowsKeypress, tabNumber, translateKey } from './keys';
 
 function key(type: string, init: Partial<KeyboardEvent>): KeyboardEvent {
 	return { type, key: 'Enter', keyCode: 13, isComposing: false, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, ...init } as KeyboardEvent;
@@ -210,6 +210,26 @@ describe('isPrevTabShortcut and isNextTabShortcut', () => {
 		expect(isNextTabShortcut(tab({ metaKey: true }))).toBe(false);
 		expect(isNextTabShortcut(tab({ altKey: true }))).toBe(false);
 		expect(isNextTabShortcut(tab({ keyCode: 229 }))).toBe(false);
+	});
+});
+
+describe('isPrevRepoShortcut and isNextRepoShortcut', () => {
+	const arrow = (name: string, init: Partial<KeyboardEvent> = {}) => key('keydown', { key: name, keyCode: 0, metaKey: true, altKey: true, ...init });
+
+	it('are Option+Cmd+Up and Option+Cmd+Down', () => {
+		expect(isPrevRepoShortcut(arrow('ArrowUp'))).toBe(true);
+		expect(isNextRepoShortcut(arrow('ArrowDown'))).toBe(true);
+		expect(isNextRepoShortcut(arrow('ArrowUp'))).toBe(false);
+		expect(isPrevRepoShortcut(arrow('ArrowDown'))).toBe(false);
+		expect(isPrevRepoShortcut(arrow('ArrowLeft'))).toBe(false);
+		expect(isNextRepoShortcut(arrow('ArrowRight'))).toBe(false);
+	});
+
+	it('are not their variants', () => {
+		for (const init of [{ altKey: false }, { metaKey: false }, { shiftKey: true }, { ctrlKey: true }, { keyCode: 229 }]) {
+			expect(isPrevRepoShortcut(arrow('ArrowUp', init)), JSON.stringify(init)).toBe(false);
+			expect(isNextRepoShortcut(arrow('ArrowDown', init)), JSON.stringify(init)).toBe(false);
+		}
 	});
 });
 

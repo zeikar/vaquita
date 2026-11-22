@@ -113,6 +113,17 @@ export function isNextTabShortcut(ev: KeyboardEvent): boolean {
 	return isCtrlTab(ev, false) || isCmdOptionArrow(ev, 'ArrowRight');
 }
 
+// Option+Cmd+Up and Option+Cmd+Down, the previous and next repo. Page keys, not
+// menu items: Monaco's add-cursor-above/below and the terminal's key handler
+// cancel them before a menu would see them.
+export function isPrevRepoShortcut(ev: KeyboardEvent): boolean {
+	return isCmdOptionArrow(ev, 'ArrowUp');
+}
+
+export function isNextRepoShortcut(ev: KeyboardEvent): boolean {
+	return isCmdOptionArrow(ev, 'ArrowDown');
+}
+
 // Cmd+1 to Cmd+9, the tab at that position. A page shortcut like Cmd+T: AppKit
 // binds nothing to Cmd+digit and the page sees the key before any menu would.
 export function tabNumber(ev: KeyboardEvent): number | undefined {
