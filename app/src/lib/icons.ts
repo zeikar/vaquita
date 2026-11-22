@@ -27,8 +27,8 @@ no trademark; the marks only name the products they stand for.
 */
 
 // Path data only. The micro icons are Heroicons (16x16, solid), but for `sidebar` and `sidebar-right`, drawn here
-// in their style as Heroicons has none; the file tree's icons are Heroicons (24x24, outline, drawn with a stroke);
-// the two brand marks are Simple Icons (24x24).
+// in their style as Heroicons has none; the file tree's icons are Heroicons (24x24, outline, drawn with a stroke),
+// and so is `keyboard`, drawn here in that style for the same reason; the two brand marks are Simple Icons (24x24).
 export type IconName =
 	| 'claude'
 	| 'openai'
@@ -63,7 +63,8 @@ export type IconName =
 	| 'view-columns'
 	| 'bars-3'
 	| 'arrow-top-right-on-square'
-	| 'square-2-stack';
+	| 'square-2-stack'
+	| 'keyboard';
 
 export interface IconData {
 	viewBox: string;
@@ -241,5 +242,11 @@ export const icons: Record<IconName, IconData> = {
 	'square-2-stack': {
 		viewBox: '0 0 16 16',
 		d: 'M5 6.5A1.5 1.5 0 0 1 6.5 5h6A1.5 1.5 0 0 1 14 6.5v6a1.5 1.5 0 0 1-1.5 1.5h-6A1.5 1.5 0 0 1 5 12.5v-6Z M3.5 2A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11V6.5a3 3 0 0 1 3-3H11A1.5 1.5 0 0 0 9.5 2h-6Z',
+	},
+	// The keys are points: a stroke a hair long, its round caps a dot.
+	keyboard: {
+		viewBox: '0 0 24 24',
+		d: 'M4.5 6h15a2.25 2.25 0 0 1 2.25 2.25v7.5A2.25 2.25 0 0 1 19.5 18h-15a2.25 2.25 0 0 1-2.25-2.25v-7.5A2.25 2.25 0 0 1 4.5 6Zm3 9h9M6 9h.008M9 9h.008M12 9h.008M15 9h.008M18 9h.008M7.5 12h.008M10.5 12h.008M13.5 12h.008M16.5 12h.008',
+		stroke: true,
 	},
 };

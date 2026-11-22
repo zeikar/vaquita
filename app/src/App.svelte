@@ -13,6 +13,7 @@
 	import Notices from './lib/Notices.svelte';
 	import type { Notifier } from './lib/notify';
 	import { isSessionTab } from './lib/session-tabs';
+	import ShortcutList from './lib/ShortcutList.svelte';
 	import Sidebar from './lib/Sidebar.svelte';
 	import StatusBar from './lib/StatusBar.svelte';
 	import { Tabs } from './lib/tabs.svelte';
@@ -63,6 +64,11 @@
 		onclose={() => (tabs.dialogOpen = false)}
 		fallbackFocus={tabs.focusContent}
 	/>
+	<!-- Mounted only while open, so the new-session dialog stays the page's one
+	     dialog otherwise, and each open starts at the top. -->
+	{#if tabs.shortcutsOpen}
+		<ShortcutList onclose={() => (tabs.shortcutsOpen = false)} fallbackFocus={tabs.focusContent} />
+	{/if}
 	<Content />
 	<!-- Unmounted, not hidden, while it is off, so nothing of the tree or the
 	     changes runs and no folder is watched. -->

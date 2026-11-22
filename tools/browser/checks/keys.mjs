@@ -4,7 +4,10 @@
 // file's tab, ⌥⌘↑ and ⌥⌘↓ step through the repos and Other (also from an
 // editor, which would add a cursor, and not under the new-session dialog), and
 // ⌘⇧C and ⌘⇧X start Claude or Codex in the shown repo, or open the dialog on
-// that kind where no repo is shown.
+// that kind where no repo is shown. The shortcut list holds the focus and
+// the keys while it is open, closes on Escape, a backdrop click and the
+// menu's close, scrolls inside itself in a short window, and opens from the
+// app welcome.
 // node checks/keys.mjs <dir>, after run.sh up <dir>; see check.sh.
 import path from 'node:path';
 import { openApp, recorder, sleep, until } from './lib.mjs';
@@ -31,6 +34,14 @@ const panel = page.locator('aside.files');
 const active = () => page.evaluate(() => document.querySelector('.tabs .tab.active .label')?.textContent ?? null);
 const dialog = page.locator('dialog[aria-labelledby="new-session-title"]');
 const dialogOpen = () => dialog.evaluate((d) => d.open);
+// Mounted only while open.
+const list = page.locator('dialog[aria-labelledby="shortcuts-title"]');
+const listOpen = async () => (await list.count()) > 0 && (await list.evaluate((d) => d.open));
+const focusInList = () => page.evaluate(() => !!document.activeElement?.closest('dialog[aria-labelledby="shortcuts-title"]'));
+const openList = async () => {
+	await page.evaluate(() => window.__vqFire('tab', 'shortcuts'));
+	return until(listOpen, Boolean, 3000);
+};
 const sessionRows = sidebar.locator('li:has(> button.row)');
 const tabs = () =>
 	page.evaluate(() =>
@@ -207,6 +218,106 @@ await step('Shift+Meta+C and Shift+Meta+X start an agent', async () => {
 	await until(dialogOpen, (o) => !o, 3000);
 });
 
+await step('the shortcut list over a terminal', async () => {
+	await sidebar.locator('li > button.row', { hasText: 'repo shell' }).click();
+	await until(active, (l) => l === 'repo shell', 3000);
+	await until(terminalFocused, Boolean, 3000);
+	const before = { active: await active(), tabs: await tabs(), rows: await sessionRows.count(), row: await lastRow() };
+	say('the menu item opens the list, the focus inside it', (await openList()) && (await until(focusInList, Boolean, 3000)), 'open');
+	await shot(page, '05-shortcut-list');
+	const ring = () => page.evaluate(() => getComputedStyle(document.querySelector('dialog[aria-labelledby="shortcuts-title"] .scroller')).outlineStyle);
+	const rings = [await ring()];
+	await page.keyboard.press('Tab');
+	await page.keyboard.press('Tab');
+	rings.push(await ring());
+	say('its scroller shows no ring on open, and one once Tab came round to it', rings[0] === 'none' && rings[1] === 'solid', rings);
+	await page.keyboard.type('qz');
+	await sleep(300);
+	let row = await lastRow();
+	say('keys typed under it reach no terminal', row === before.row, row);
+	await page.keyboard.press('Meta+1');
+	await page.keyboard.press('Alt+Meta+ArrowDown');
+	await page.keyboard.press('Meta+t');
+	await sleep(300);
+	const under = { active: await active(), rows: await sessionRows.count(), dialog: await dialogOpen(), list: await listOpen(), focus: await focusInList() };
+	say('Meta+1, Alt+Meta+ArrowDown and Meta+t switch and open nothing', under.active === before.active && under.rows === before.rows && !under.dialog && under.list && under.focus, under);
+	await page.keyboard.press('Escape');
+	const gone = await until(() => list.count(), (c) => c === 0, 3000);
+	say('Escape closes it, the terminal focused again', gone === 0 && (await until(terminalFocused, Boolean, 3000)), { gone });
+	await page.keyboard.type('W');
+	row = await until(lastRow, (r) => r.endsWith('W'), 3000);
+	say('a typed key lands on its row', row.startsWith(before.row) && row.length > before.row.length && row.endsWith('W'), row);
+	await page.keyboard.press('Control+u');
+
+	await openList();
+	const box = await list.boundingBox();
+	await page.mouse.click(box.x + 4, box.y + box.height / 2);
+	await list.locator('#shortcuts-title').click();
+	await list.locator('li').first().click();
+	await sleep(200);
+	say('clicks on its own padding, its title and a row leave it open, the focus in it', (await listOpen()) && (await focusInList()), box);
+	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(2, 2);
+	await page.mouse.up();
+	await sleep(200);
+	say('a press inside it released on the backdrop leaves it open', await listOpen(), 'open');
+	await page.mouse.click(2, 2);
+	const out = await until(() => list.count(), (c) => c === 0, 3000);
+	say('a click on the backdrop closes it, the terminal focused again', out === 0 && (await until(terminalFocused, Boolean, 3000)), { out });
+
+	await openList();
+	await page.evaluate(() => window.__vqFire('tab', 'close'));
+	const closed = await until(() => list.count(), (c) => c === 0, 3000);
+	await sleep(200);
+	const after = await tabs();
+	say("the menu's close closes the list and nothing else", closed === 0 && JSON.stringify(after) === JSON.stringify(before.tabs), { closed, after });
+});
+
+// At 900 × 420 it fits; at 300 high its rows overflow and scroll.
+await step('the shortcut list in a short window', async () => {
+	const size = page.viewportSize();
+	const geo = () =>
+		page.evaluate(() => {
+			const d = document.querySelector('dialog[aria-labelledby="shortcuts-title"]');
+			const r = (el) => el.getBoundingClientRect();
+			const s = d.querySelector('.scroller');
+			// The lowest row, in whichever column.
+			const last = [...d.querySelectorAll('li')].reduce((a, b) => (r(b).bottom > r(a).bottom ? b : a));
+			return { dialog: r(d), title: r(d.querySelector('#shortcuts-title')), scroller: r(s), top: s.scrollTop, overflows: s.scrollHeight > s.clientHeight, last: r(last), lastText: last.textContent };
+		});
+	const scrollToLast = () =>
+		page.evaluate(() => {
+			const rows = [...document.querySelectorAll('dialog[aria-labelledby="shortcuts-title"] li')];
+			rows.reduce((a, b) => (b.getBoundingClientRect().bottom > a.getBoundingClientRect().bottom ? b : a)).scrollIntoView({ block: 'nearest' });
+		});
+	const inside = (a, b) => a.top >= b.top - 0.5 && a.bottom <= b.bottom + 0.5 && a.left >= b.left - 0.5 && a.right <= b.right + 0.5;
+	try {
+		for (const height of [420, 300]) {
+			await page.setViewportSize({ width: 900, height });
+			const view = { top: 0, left: 0, bottom: height, right: 900 };
+			await openList();
+			let g = await geo();
+			say(`at 900 × ${height} the list fits the window, its title shown`, inside(g.dialog, view) && inside(g.title, g.dialog), g);
+			await shot(page, `06-shortcut-list-${height}`);
+			await scrollToLast();
+			g = await geo();
+			const scrolled = height === 420 || (g.overflows && g.top > 0);
+			say(`its lowest row is in view inside the list, the title still shown${height === 300 ? ', scrolled there' : ''}`, scrolled && inside(g.last, g.scroller) && inside(g.title, view), g);
+			if (height === 300) await shot(page, '06-shortcut-list-300-scrolled');
+			await page.keyboard.press('Escape');
+			await until(() => list.count(), (c) => c === 0, 3000);
+		}
+		await openList();
+		const top = (await geo()).top;
+		say('reopened, it is at the top again', top === 0, top);
+		await page.keyboard.press('Escape');
+		await until(() => list.count(), (c) => c === 0, 3000);
+	} finally {
+		await page.setViewportSize(size);
+	}
+});
+
 await step('with the app welcome shown', async () => {
 	await page.evaluate(() => localStorage.removeItem('vaquita.selected'));
 	await page.reload();
@@ -225,6 +336,21 @@ await step('with the app welcome shown', async () => {
 	await page.keyboard.press('Alt+Meta+ArrowUp');
 	const a = await until(active, (l) => l === 'tmp shell', 3000);
 	say('Alt+Meta+ArrowUp then shows Other', a === 'tmp shell', a);
+});
+
+await step('the shortcut list from the app welcome', async () => {
+	await page.evaluate(() => localStorage.removeItem('vaquita.selected'));
+	await page.reload();
+	await sidebar.locator('li > button.row', { hasText: 'repo shell' }).waitFor({ timeout: 10000 });
+	const hello = page.locator('.hello');
+	await hello.waitFor({ timeout: 5000 });
+	await hello.locator('button.act', { hasText: 'Keyboard shortcuts' }).click();
+	say('its Keyboard shortcuts row opens the list', await until(listOpen, Boolean, 3000), 'open');
+	await shot(page, '07-shortcut-list-welcome');
+	await page.keyboard.press('Escape');
+	const gone = await until(() => list.count(), (c) => c === 0, 3000);
+	const inHello = await until(() => page.evaluate(() => !!document.activeElement?.closest('.hello')), Boolean, 3000);
+	say('Escape closes it, the focus inside the welcome', gone === 0 && inHello, { gone, inHello });
 });
 
 await browser.close();

@@ -11,9 +11,10 @@ function show(props: { version?: string; addDisabled?: boolean } = {}) {
 	document.body.append(target);
 	const onaddrepo = vi.fn();
 	const onnewsession = vi.fn();
-	shown = mount(AppWelcome, { target, props: { addDisabled: false, ...props, onaddrepo, onnewsession } });
+	const onshortcuts = vi.fn();
+	shown = mount(AppWelcome, { target, props: { addDisabled: false, ...props, onaddrepo, onnewsession, onshortcuts } });
 	flushSync();
-	return { onaddrepo, onnewsession, welcome: shown as { focus(): void } };
+	return { onaddrepo, onnewsession, onshortcuts, welcome: shown as { focus(): void } };
 }
 
 const button = (text: string) =>
@@ -35,6 +36,7 @@ describe('AppWelcome', () => {
 		expect(button('Add a repo')).toBeTruthy();
 		expect(button('New session').querySelector('kbd')?.textContent).toBe('⌘T');
 		expect(button('Add a repo').querySelector('kbd')).toBeNull();
+		expect(button('Keyboard shortcuts').querySelector('svg')?.dataset.icon).toBe('keyboard');
 		expect(target.textContent).toContain('Or drop a folder on the sidebar.');
 		expect(target.textContent).toContain('0.1.19');
 	});
@@ -45,11 +47,16 @@ describe('AppWelcome', () => {
 	});
 
 	it('calls back from each action', () => {
-		const { onaddrepo, onnewsession } = show();
+		const { onaddrepo, onnewsession, onshortcuts } = show();
 		button('Add a repo').click();
 		expect(onaddrepo).toHaveBeenCalledTimes(1);
 		expect(onnewsession).not.toHaveBeenCalled();
 		button('New session').click();
+		expect(onnewsession).toHaveBeenCalledTimes(1);
+		expect(onshortcuts).not.toHaveBeenCalled();
+		button('Keyboard shortcuts').click();
+		expect(onshortcuts).toHaveBeenCalledTimes(1);
+		expect(onaddrepo).toHaveBeenCalledTimes(1);
 		expect(onnewsession).toHaveBeenCalledTimes(1);
 	});
 

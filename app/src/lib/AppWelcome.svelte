@@ -7,11 +7,13 @@
 		addDisabled,
 		onaddrepo,
 		onnewsession,
+		onshortcuts,
 	}: {
 		version?: string;
 		addDisabled: boolean;
 		onaddrepo: () => void;
 		onnewsession: () => void;
+		onshortcuts: () => void;
 	} = $props();
 
 	let root: HTMLDivElement;
@@ -34,6 +36,9 @@
 			</button>
 			<button type="button" class="act" onclick={onnewsession}>
 				<Icon name="command-line" /><span>New session</span><kbd>⌘T</kbd>
+			</button>
+			<button type="button" class="act" onclick={onshortcuts}>
+				<Icon name="keyboard" /><span>Keyboard shortcuts</span>
 			</button>
 		</div>
 		<p class="foot">Or drop a folder on the sidebar.</p>
