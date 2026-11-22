@@ -19,6 +19,9 @@
 //! The file panel's key comes the same way, on the same event. It is ⌥⌘B because
 //! AppKit binds nothing to it (it does bind ⌃B and ⌥⌃B) and it mirrors ⌘B, which
 //! hides the sidebar.
+//!
+//! Help ▸ Keyboard Shortcuts opens the page's shortcut list over the same event.
+//! It has no key, so the list stays reachable from the menu without taking one.
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Wry};
@@ -29,6 +32,7 @@ const CLOSE_ID: &str = "tab-close";
 const PREV_ID: &str = "tab-prev";
 const NEXT_ID: &str = "tab-next";
 const FILES_ID: &str = "view-files";
+const SHORTCUTS_ID: &str = "help-shortcuts";
 
 const CLOSE_KEY: &str = "CmdOrCtrl+W";
 
@@ -52,6 +56,7 @@ fn tab_action(id: &str) -> Option<&'static str> {
         PREV_ID => Some("prev"),
         NEXT_ID => Some("next"),
         FILES_ID => Some("files"),
+        SHORTCUTS_ID => Some("shortcuts"),
         _ => None,
     }
 }
@@ -75,6 +80,10 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             view.insert(&PredefinedMenuItem::separator(app)?, VIEW_ITEMS.len())?;
         }
         None => eprintln!("vaquita: the default menu has no View; the tab shortcuts are left out"),
+    }
+    match find(&submenus, "Help")? {
+        Some(help) => help.append(&MenuItem::with_id(app, SHORTCUTS_ID, "Keyboard Shortcuts", true, None::<&str>)?)?,
+        None => eprintln!("vaquita: the default menu has no Help; the shortcut list is left out of the menu"),
     }
     app.set_menu(menu)?;
     app.on_menu_event(|app, event| {
@@ -188,5 +197,15 @@ mod tests {
             let parsed = key.parse::<Accelerator>().unwrap_or_else(|e| panic!("{key}: {e}"));
             assert_eq!((parsed.modifiers(), parsed.key()), (mods, code), "{key}");
         }
+    }
+
+    #[test]
+    fn tab_action_names_each_item_and_ignores_others() {
+        assert_eq!(tab_action(CLOSE_ID), Some("close"));
+        assert_eq!(tab_action(PREV_ID), Some("prev"));
+        assert_eq!(tab_action(NEXT_ID), Some("next"));
+        assert_eq!(tab_action(FILES_ID), Some("files"));
+        assert_eq!(tab_action(SHORTCUTS_ID), Some("shortcuts"));
+        assert_eq!(tab_action("nope"), None);
     }
 }
