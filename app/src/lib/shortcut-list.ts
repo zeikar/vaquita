@@ -86,7 +86,8 @@ export const SHORTCUTS: Section[] = [
 	{
 		title: 'Terminal',
 		entries: [
-			{ does: 'Start and end of line', keys: [terminal({ key: 'ArrowLeft', meta: true }), terminal({ key: 'ArrowRight', meta: true })] },
+			{ does: 'Start of line', keys: [terminal({ key: 'ArrowLeft', meta: true })] },
+			{ does: 'End of line', keys: [terminal({ key: 'ArrowRight', meta: true })] },
 			{ does: 'New line without sending', keys: [terminal({ key: 'Enter', shift: true })] },
 			{ does: 'Open a link or path', keys: [{ by: 'mouse', label: '⌘-click' }] },
 		],
