@@ -36,7 +36,7 @@ function fakes(sel: number | null = 3, active: string | null = 'session:3') {
 	const store = writable<ManagerState>({ ...base, selected });
 	const manager = { subscribe: store.subscribe, addRepo: vi.fn(), report: vi.fn() };
 	const view = { sendInput: vi.fn() };
-	const tabs = { active: active ?? undefined, selectedView: vi.fn(() => (selected === undefined ? undefined : view)), show: vi.fn(async () => {}) };
+	const tabs = { active: active ?? undefined, modalOpen: false, selectedView: vi.fn(() => (selected === undefined ? undefined : view)), show: vi.fn(async () => {}) };
 	const aside = { getBoundingClientRect: () => ({ left: 0, right: 200, top: 0, bottom: 600 }) } as HTMLElement;
 	const deps = { manager, tabs, sidebar: () => aside } as unknown as DropDeps;
 	return { manager, view, tabs, deps };
@@ -74,6 +74,15 @@ describe('dropped', () => {
 		expect(f.view.sendInput).not.toHaveBeenCalled();
 		expect(f.tabs.show).not.toHaveBeenCalled();
 		expect(f.manager.addRepo).not.toHaveBeenCalled();
+		expect(f.manager.report).not.toHaveBeenCalled();
+	});
+
+	it('types nothing and shows no tab while a modal covers the terminal', () => {
+		const f = fakes(3, '/tmp/repo/README.md');
+		f.tabs.modalOpen = true;
+		dropped(['/tmp/c'], { x: 500, y: 300 }, f.deps);
+		expect(f.view.sendInput).not.toHaveBeenCalled();
+		expect(f.tabs.show).not.toHaveBeenCalled();
 		expect(f.manager.report).not.toHaveBeenCalled();
 	});
 

@@ -228,9 +228,9 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 		});
 	}
 
-	// The new-session dialog or the shortcut list is open: nothing switches and
-	// nothing else takes the focus.
-	private get modalOpen(): boolean {
+	// The new-session dialog or the shortcut list is open: nothing switches,
+	// nothing else takes the focus and no file drop is typed.
+	get modalOpen(): boolean {
 		return this.dialogOpen || this.shortcutsOpen;
 	}
 

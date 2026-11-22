@@ -8,7 +8,7 @@ import { isTauri } from './tauri';
 
 export type DropDeps = {
 	manager: Pick<SessionManager, 'subscribe' | 'addRepo' | 'report'>;
-	tabs: Pick<Tabs, 'active' | 'selectedView' | 'show'>;
+	tabs: Pick<Tabs, 'active' | 'selectedView' | 'show' | 'modalOpen'>;
 	sidebar: () => HTMLElement | undefined;
 };
 
@@ -22,7 +22,8 @@ export function dropped(paths: string[], { x, y }: { x: number; y: number }, { m
 	}
 	const sid = get(manager).selected;
 	const view = tabs.selectedView();
-	if (sid === undefined || !view) return;
+	// A modal covers the terminal, and typing never reaches one that cannot be seen.
+	if (sid === undefined || !view || tabs.modalOpen) return;
 	// The paths go to the terminal, so its tab shows.
 	if (tabs.active !== sessionTab(sid)) void tabs.show(sessionTab(sid));
 	try {
