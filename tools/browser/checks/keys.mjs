@@ -1,7 +1,10 @@
 // The keys a session's terminal and the tab bar take: ⌘← and ⌘→ go to the
 // ends of the line being typed, a ⌘ press during a composition types nothing
-// twice, and ⌥⌘← and ⌥⌘→ step through the tabs, from the terminal and from a
-// file's tab.
+// twice, ⌥⌘← and ⌥⌘→ step through the tabs, from the terminal and from a
+// file's tab, ⌥⌘↑ and ⌥⌘↓ step through the repos and Other (also from an
+// editor, which would add a cursor, and not under the new-session dialog), and
+// ⌘⇧C and ⌘⇧X start Claude or Codex in the shown repo, or open the dialog on
+// that kind where no repo is shown.
 // node checks/keys.mjs <dir>, after run.sh up <dir>; see check.sh.
 import path from 'node:path';
 import { openApp, recorder, sleep, until } from './lib.mjs';
@@ -26,6 +29,17 @@ await page.reload();
 const sidebar = page.locator('main > aside:not(.files)');
 const panel = page.locator('aside.files');
 const active = () => page.evaluate(() => document.querySelector('.tabs .tab.active .label')?.textContent ?? null);
+const dialog = page.locator('dialog[aria-labelledby="new-session-title"]');
+const dialogOpen = () => dialog.evaluate((d) => d.open);
+const sessionRows = sidebar.locator('li:has(> button.row)');
+const tabs = () =>
+	page.evaluate(() =>
+		[...document.querySelectorAll('.tabs .tab')].map((t) => ({
+			label: t.querySelector('.label')?.textContent,
+			icon: t.querySelector('svg')?.getAttribute('data-icon'),
+			active: t.classList.contains('active'),
+		})),
+	);
 const terminalFocused = () => page.evaluate(() => !!document.activeElement?.classList.contains('xterm-helper-textarea'));
 // The last row of the shown terminal with text on it, nbsp as spaces.
 const lastRow = () =>
@@ -117,6 +131,100 @@ await step('Alt+Meta+ArrowLeft and Alt+Meta+ArrowRight step through the tabs', a
 	await sleep(200);
 	const row = await lastRow();
 	say('nothing was typed into the terminal', !/[\[;]\d*[CD]|\^\[/.test(row), row);
+});
+
+await step('Alt+Meta+ArrowDown and Alt+Meta+ArrowUp step through the repos and Other', async () => {
+	await page.keyboard.press('Alt+Meta+ArrowDown');
+	let a = await until(active, (l) => l === 'tmp shell', 3000);
+	say('Alt+Meta+ArrowDown from the repo: Other, tmp shell active, its terminal focused', a === 'tmp shell' && (await until(terminalFocused, Boolean, 3000)), a);
+	await shot(page, '02-other');
+	await page.keyboard.press('Alt+Meta+ArrowDown');
+	a = await until(active, (l) => l === 'repo shell', 3000);
+	say('again wraps to the repo, repo shell viewed last there', a === 'repo shell' && (await until(terminalFocused, Boolean, 3000)), a);
+	say('not its welcome', (await page.locator('.repo-hello').count()) === 0, a);
+	await page.keyboard.press('Alt+Meta+ArrowUp');
+	a = await until(active, (l) => l === 'tmp shell', 3000);
+	say('Alt+Meta+ArrowUp wraps back to Other', a === 'tmp shell', a);
+	await page.keyboard.press('Alt+Meta+ArrowDown');
+	await until(active, (l) => l === 'repo shell', 3000);
+	await sleep(200);
+	const row = await lastRow();
+	say('nothing was typed into either terminal', !/[\[;]\d*[ABCD]|\^\[/.test(row), row);
+});
+
+await step('Alt+Meta+ArrowDown and Alt+Meta+ArrowUp from an editor', async () => {
+	if ((await panel.count()) === 0) await page.locator('footer .files-toggle').click();
+	await panel.locator('.tree button.row', { hasText: 'package.json' }).dblclick();
+	await page.locator('.monaco-editor').first().waitFor({ timeout: 10000 });
+	await page.locator('.monaco-editor .view-lines').first().click();
+	let a = await until(active, (l) => l === 'package.json', 3000);
+	say('package.json shown, the editor clicked', a === 'package.json', a);
+	await page.keyboard.press('Alt+Meta+ArrowDown');
+	a = await until(active, (l) => l === 'tmp shell', 3000);
+	say('Alt+Meta+ArrowDown from the editor: Other', a === 'tmp shell', a);
+	await page.keyboard.press('Alt+Meta+ArrowUp');
+	a = await until(active, (l) => l === 'package.json', 3000);
+	say('Alt+Meta+ArrowUp comes back to package.json', a === 'package.json', a);
+	await sleep(200);
+	const cursors = await page.locator('.monaco-editor:visible .cursor').count();
+	say('the editor shows one cursor', cursors === 1, cursors);
+	await page.keyboard.press('Alt+Meta+ArrowLeft');
+	await until(active, (l) => l !== 'package.json', 3000);
+});
+
+await step('the repo keys under the new-session dialog', async () => {
+	const rows = await sessionRows.count();
+	const before = await active();
+	await page.keyboard.press('Meta+t');
+	say('Meta+t opens the dialog', await until(dialogOpen, (o) => o, 3000), 'open');
+	await page.keyboard.press('Alt+Meta+ArrowDown');
+	await page.keyboard.press('Shift+Meta+C');
+	await sleep(300);
+	const a = await active();
+	say('Alt+Meta+ArrowDown and Shift+Meta+C switch nothing and add no row', a === before && (await dialogOpen()) && (await sessionRows.count()) === rows, { a, rows: await sessionRows.count() });
+	await page.keyboard.press('Escape');
+	say('Escape closes it', await until(dialogOpen, (o) => !o, 3000).then((o) => !o), 'closed');
+});
+
+await step('Shift+Meta+C and Shift+Meta+X start an agent', async () => {
+	const rows = await sessionRows.count();
+	await page.keyboard.press('Shift+Meta+C');
+	let n = await until(() => sessionRows.count(), (c) => c === rows + 1);
+	let t = await until(tabs, (l) => l.at(-1)?.icon === 'claude' && l.at(-1)?.active, 3000);
+	say('Shift+Meta+C in the repo: a row, a last active claude tab, no dialog', n === rows + 1 && t.at(-1)?.active && t.at(-1)?.icon === 'claude' && !(await dialogOpen()), { rows: n, tabs: t });
+	await page.keyboard.press('Shift+Meta+X');
+	n = await until(() => sessionRows.count(), (c) => c === rows + 2);
+	t = await until(tabs, (l) => l.at(-1)?.icon === 'openai' && l.at(-1)?.active, 3000);
+	say('Shift+Meta+X likewise, openai icon', n === rows + 2 && t.at(-1)?.active && t.at(-1)?.icon === 'openai' && !(await dialogOpen()), { rows: n, tabs: t });
+	await shot(page, '03-started');
+	await page.keyboard.press('Alt+Meta+ArrowDown');
+	await until(active, (l) => l === 'tmp shell', 3000);
+	await page.keyboard.press('Shift+Meta+C');
+	const opened = await until(dialogOpen, (o) => o, 3000);
+	const checked = await dialog.locator('input[type=radio][value="claude"]').isChecked();
+	say('with Other shown, Shift+Meta+C opens the dialog on Claude, adds no row', opened && checked && (await sessionRows.count()) === rows + 2, { opened, checked });
+	await page.keyboard.press('Escape');
+	await until(dialogOpen, (o) => !o, 3000);
+});
+
+await step('with the app welcome shown', async () => {
+	await page.evaluate(() => localStorage.removeItem('vaquita.selected'));
+	await page.reload();
+	await sidebar.locator('li > button.row', { hasText: 'repo shell' }).waitFor({ timeout: 10000 });
+	await sleep(500);
+	await page.keyboard.press('Shift+Meta+X');
+	const opened = await until(dialogOpen, (o) => o, 3000);
+	const checked = await dialog.locator('input[type=radio][value="codex"]').isChecked();
+	say('Shift+Meta+X opens the dialog on Codex', opened && checked, { opened, checked });
+	await page.keyboard.press('Escape');
+	await until(dialogOpen, (o) => !o, 3000);
+	await page.keyboard.press('Alt+Meta+ArrowDown');
+	const hello = await until(() => page.locator('.repo-hello').count(), (c) => c > 0, 3000);
+	say('Alt+Meta+ArrowDown shows the repo welcome, as the reload began a new run with none viewed', hello > 0, hello);
+	await shot(page, '04-repo-welcome');
+	await page.keyboard.press('Alt+Meta+ArrowUp');
+	const a = await until(active, (l) => l === 'tmp shell', 3000);
+	say('Alt+Meta+ArrowUp then shows Other', a === 'tmp shell', a);
 });
 
 await browser.close();
