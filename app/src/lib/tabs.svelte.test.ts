@@ -202,6 +202,29 @@ describe('Tabs', () => {
 			expect(tabs.active).toBe('session:2');
 		});
 
+		it("changes nothing under the shortcut list, but shows a session's tab", async () => {
+			const { tabs, c, row } = await shown();
+			answer(c, 1);
+			const p = panes(tabs);
+			await tabs.show(a);
+			p.file.mockClear();
+			tabs.openShortcuts();
+			expect(tabs.shortcutsOpen).toBe(true);
+			tabs.step(1);
+			tabs.showAt(2);
+			tabs.openWelcome(repo);
+			await tabs.show(b);
+			expect(tabs.active).toBe(a);
+			const view = row(1)!.view!;
+			const focuses = view.focuses;
+			tabs.refocus();
+			expect(view.focuses).toBe(focuses);
+			expect(p.file).not.toHaveBeenCalled();
+			await tabs.show('session:1');
+			expect(tabs.active).toBe('session:1');
+			expect(view.focuses).toBe(focuses);
+		});
+
 		it('shows a tab by its number, none past the last', async () => {
 			const { tabs } = await shown();
 			tabs.showAt(2);
@@ -391,6 +414,14 @@ describe('Tabs', () => {
 				expect(tabs.group).toBe(repo);
 			});
 
+			it('does nothing under the shortcut list', async () => {
+				const { tabs } = await two();
+				tabs.group = repo;
+				tabs.openShortcuts();
+				tabs.stepRepo(1);
+				expect(tabs.group).toBe(repo);
+			});
+
 			it('does nothing before the repo list', async () => {
 				localStorage.setItem(TABS_KEY, JSON.stringify({ [repo]: [a], [OTHER]: ['/tmp/x.md'] }));
 				const { tabs } = await make();
@@ -458,6 +489,19 @@ describe('Tabs', () => {
 			tabs.dialogOpen = true;
 			tabs.startAgent('claude');
 			expect(create).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('under the shortcut list', () => {
+		it('starts no session and opens no dialog', async () => {
+			const { tabs, m } = await make();
+			const create = vi.spyOn(m, 'create');
+			tabs.group = repo;
+			tabs.openShortcuts();
+			tabs.startAgent('claude');
+			tabs.newSession();
+			expect(create).not.toHaveBeenCalled();
+			expect(tabs.dialogOpen).toBe(false);
 		});
 	});
 
@@ -657,6 +701,26 @@ describe('Tabs', () => {
 			answer.resolve(true);
 			await closing;
 			expect(t.c.requests.filter((r) => r[0] === 'kill')).toEqual([['kill', 1], ['kill', 3]]);
+		});
+
+		it('closes the shortcut list first, then the dialog, and leaves the shown tab', async () => {
+			localStorage.setItem(TABS_KEY, JSON.stringify({ [repo]: [a, b] }));
+			const t = await make();
+			t.tabs.group = repo;
+			await t.tabs.show(a);
+			t.tabs.openShortcuts();
+			t.tabs.closeActive();
+			expect(t.tabs.shortcutsOpen).toBe(false);
+			expect(t.tabs.active).toBe(a);
+			expect(t.tabs.groups[repo]).toEqual([a, b]);
+			t.tabs.dialogOpen = true;
+			t.tabs.openShortcuts();
+			t.tabs.closeActive();
+			expect(t.tabs.shortcutsOpen).toBe(false);
+			expect(t.tabs.dialogOpen).toBe(true);
+			t.tabs.closeActive();
+			expect(t.tabs.dialogOpen).toBe(false);
+			expect(t.tabs.groups[repo]).toEqual([a, b]);
 		});
 
 		it('kills nothing when the question about a working session is declined', async () => {
@@ -864,6 +928,19 @@ describe('Tabs', () => {
 			tabs.dialogOpen = false;
 			flushSync();
 			expect(tabs.group).toBe('/tmp/r5');
+		});
+
+		it('opens a new repo\'s welcome once the shortcut list closes', async () => {
+			const { tabs, c } = await make([]);
+			c.emit.repos([repo]);
+			flushSync();
+			tabs.openShortcuts();
+			c.emit.repos([repo, r2]);
+			flushSync();
+			expect(tabs.group).toBeUndefined();
+			tabs.shortcutsOpen = false;
+			flushSync();
+			expect(tabs.group).toBe(r2);
 		});
 
 		it('covers the terminal under a file or a welcome', async () => {

@@ -60,6 +60,10 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	dialogOpen = $state(false);
 	dialogCwd = $state('');
 	dialogCmd = $state('');
+	// The keyboard shortcut list, a modal like the dialog: it covers the content
+	// and holds the focus. It may open over the dialog; closing goes the other
+	// way round.
+	shortcutsOpen = $state(false);
 	// Set by each open from a link with a line, a new object each time, so a
 	// click on the tab already showing goes there again. One shot: the editor
 	// takes it once it holds the file, and it is dropped when the file shows
@@ -210,9 +214,10 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 		// there and opens nothing. Of several at once, as from a drop of many
 		// folders, the last in the list opens, so one welcome shows.
 		$effect(() => {
-			// Under the dialog nothing is consumed, so that its close, which reruns
-			// this, still finds the additions that came meanwhile.
-			if (!this.state.reposListed || this.dialogOpen) return;
+			// Under the dialog or the list nothing is consumed, so that its
+			// close, which reruns this, still finds the additions that came
+			// meanwhile.
+			if (!this.state.reposListed || this.modalOpen) return;
 			const repos = this.state.repos;
 			if (repos === this.knownRepos) return;
 			const prev = this.knownRepos;
@@ -222,6 +227,16 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 			if (added !== undefined) untrack(() => this.openWelcome(added));
 		});
 	}
+
+	// The new-session dialog or the shortcut list is open: nothing switches and
+	// nothing else takes the focus.
+	private get modalOpen(): boolean {
+		return this.dialogOpen || this.shortcutsOpen;
+	}
+
+	openShortcuts = (): void => {
+		this.shortcutsOpen = true;
+	};
 
 	stop(): void {
 		for (const s of this.stops) s();
@@ -253,7 +268,7 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// dialog, which keeps what it opened over, as show does. tab is what shows
 	// over it, for a step that returns to a tab.
 	openWelcome(repo: string, tab = WELCOME): void {
-		if (this.dialogOpen) return;
+		if (this.modalOpen) return;
 		if (this.selectedRow === undefined || groupKey(this.selectedRow.info.cwd, this.state.repos) !== repo) this.manager.deselect();
 		this.group = repo;
 		void this.show(tab);
@@ -263,7 +278,7 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// the way back to edits that moved there when their repo was removed. Its
 	// most recent tab shows, as closing one would go; no welcome, it is no repo.
 	openOther(): void {
-		if (this.dialogOpen) return;
+		if (this.modalOpen) return;
 		if (this.selectedRow === undefined || groupKey(this.selectedRow.info.cwd, this.state.repos) !== OTHER) this.manager.deselect();
 		this.group = OTHER;
 		const next = fallback(this.recent.get(OTHER) ?? [], this.groupTabs);
@@ -275,7 +290,7 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// its welcome: not a tab picked for someone who has not looked at the repo.
 	// Nothing before the daemon's list, which would make the stops the empty one.
 	stepRepo(by: number): void {
-		if (this.dialogOpen || !this.state.reposListed) return;
+		if (this.modalOpen || !this.state.reposListed) return;
 		const stops = this.tabsOf(OTHER).length > 0 ? [...this.state.repos, OTHER] : this.state.repos;
 		const to = neighbour(stops, this.group, by);
 		if (to === undefined || to === this.group) return;
@@ -293,9 +308,9 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 		else this.filePane?.focus();
 	};
 
-	// Under the new-session dialog the dialog keeps the focus.
+	// Under the new-session dialog or the shortcut list it keeps the focus.
 	refocus = (): void => {
-		if (!this.dialogOpen) this.focusContent();
+		if (!this.modalOpen) this.focusContent();
 	};
 
 	// No file and no welcome under the new-session dialog: it gives the focus
@@ -303,7 +318,7 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// cover. A session's tab can show, as when the session it creates is
 	// selected; the dialog keeps the focus then.
 	async show(path: string | undefined): Promise<void> {
-		if (this.dialogOpen && path !== undefined && !isSessionTab(path)) return;
+		if (this.modalOpen && path !== undefined && !isSessionTab(path)) return;
 		if (this.reveal?.path !== path) this.reveal = undefined;
 		this.active = path;
 		const sid = path === undefined ? undefined : tabSid(path);
@@ -319,14 +334,14 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// A repo's welcome with no tabs has nothing to step to. Nothing switches
 	// under the new-session dialog, which keeps what it opened over.
 	step(by: number): void {
-		if (this.dialogOpen) return;
+		if (this.modalOpen) return;
 		const next = neighbour(this.groupTabs, this.active, by);
 		if (next !== undefined) void this.show(next);
 	}
 
 	// ⌘1-9: the group's tab at that place, counted from 1.
 	showAt(n: number): void {
-		if (!this.dialogOpen && n <= this.groupTabs.length) void this.show(this.groupTabs[n - 1]);
+		if (!this.modalOpen && n <= this.groupTabs.length) void this.show(this.groupTabs[n - 1]);
 	}
 
 	// The manager selects a notification's session only if that very session
@@ -354,14 +369,14 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// ⌘⇧C and ⌘⇧X: the shown repo's welcome buttons, without the welcome. With
 	// no repo shown there is no folder to start in, so the dialog asks for one.
 	startAgent(cmd: 'claude' | 'codex'): void {
-		if (this.dialogOpen) return;
+		if (this.modalOpen) return;
 		if (this.root !== undefined) void this.manager.create(this.root, cmd, '');
 		else this.openDialog(cmd);
 	}
 
 	// cmd is the kind the dialog starts on; empty is a shell.
 	private openDialog(cmd: string): void {
-		if (this.dialogOpen) return;
+		if (this.modalOpen) return;
 		this.dialogCwd = (this.group !== OTHER ? this.group : undefined) ?? load(LAST_CWD) ?? '';
 		this.dialogCmd = cmd;
 		this.dialogOpen = true;
@@ -502,9 +517,11 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	// ⌘W: the tab shown; the welcome is set aside like a tab while the group
 	// has tabs; otherwise the window, as the menu's Close Window did. A menu
 	// key reaches the page under the new-session dialog too, where it closes
-	// the dialog, as Escape does, and nothing behind it.
+	// the dialog, as Escape does, and nothing behind it; under the shortcut
+	// list, which may sit over the dialog, it closes the list first.
 	closeActive(): void {
-		if (this.dialogOpen) this.dialogOpen = false;
+		if (this.shortcutsOpen) this.shortcutsOpen = false;
+		else if (this.dialogOpen) this.dialogOpen = false;
 		else if (this.active !== undefined && this.active !== WELCOME) void this.close([this.active]);
 		else if (this.active === WELCOME && this.groupTabs.length > 0) void this.show(fallback((this.group !== undefined && this.recent.get(this.group)) || [], this.groupTabs));
 		else this.closeWindow().catch((e) => this.manager.report(`closing the window failed: ${e instanceof Error ? e.message : String(e)}`));

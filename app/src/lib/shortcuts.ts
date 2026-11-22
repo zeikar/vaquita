@@ -33,7 +33,7 @@ export function windowShortcut(tabs: Pick<Tabs, 'newSession' | 'startAgent' | 's
 }
 
 // The menu's tab actions and its files item; returns what stops listening.
-export function watchMenu(tabs: Pick<Tabs, 'closeActive' | 'step'>, layout: Pick<Layout, 'togglePanel'>, manager: Pick<SessionManager, 'report'>): () => void {
+export function watchMenu(tabs: Pick<Tabs, 'closeActive' | 'step' | 'openShortcuts'>, layout: Pick<Layout, 'togglePanel'>, manager: Pick<SessionManager, 'report'>): () => void {
 	const unlisten = onTabAsked((a) => {
 		switch (a) {
 			case 'close':
@@ -44,6 +44,8 @@ export function watchMenu(tabs: Pick<Tabs, 'closeActive' | 'step'>, layout: Pick
 				return tabs.step(1);
 			case 'files':
 				return layout.togglePanel();
+			case 'shortcuts':
+				return tabs.openShortcuts();
 		}
 	});
 	unlisten.catch((e) => manager.report(`tab shortcuts unavailable: ${e instanceof Error ? e.message : String(e)}`));

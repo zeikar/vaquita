@@ -21,7 +21,7 @@ beforeEach(() => {
 });
 
 function fakes() {
-	const tabs = { newSession: vi.fn(), startAgent: vi.fn(), step: vi.fn(), stepRepo: vi.fn(), showAt: vi.fn(), save: vi.fn(), closeActive: vi.fn() };
+	const tabs = { newSession: vi.fn(), startAgent: vi.fn(), step: vi.fn(), stepRepo: vi.fn(), showAt: vi.fn(), save: vi.fn(), closeActive: vi.fn(), openShortcuts: vi.fn() };
 	const layout = { toggleSidebar: vi.fn(), togglePanel: vi.fn() };
 	const manager = { report: vi.fn() };
 	return { tabs, layout, manager };
@@ -134,6 +134,8 @@ describe('watchMenu', () => {
 		expect(f.tabs.step).toHaveBeenLastCalledWith(1);
 		menu.run!('files');
 		expect(f.layout.togglePanel).toHaveBeenCalledTimes(1);
+		menu.run!('shortcuts');
+		expect(f.tabs.openShortcuts).toHaveBeenCalledTimes(1);
 		stop();
 		await settle();
 		expect(menu.unlistened).toBe(1);

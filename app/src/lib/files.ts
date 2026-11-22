@@ -50,10 +50,10 @@ export async function previewImage(file: string, src: string, repo?: string): Pr
 	return fileUrl(await call<string>('view_image', { file, src, repo: repo ?? null }));
 }
 
-export type TabAction = 'close' | 'prev' | 'next' | 'files';
+export type TabAction = 'close' | 'prev' | 'next' | 'files' | 'shortcuts';
 
 function isTabAction(v: unknown): v is TabAction {
-	return v === 'close' || v === 'prev' || v === 'next' || v === 'files';
+	return v === 'close' || v === 'prev' || v === 'next' || v === 'files' || v === 'shortcuts';
 }
 
 // Runs run on each action the View menu sends (the tabs' and the file panel's); resolves to a function that
