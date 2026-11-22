@@ -1,5 +1,5 @@
 import { onTabAsked } from './files';
-import { isNewSessionShortcut, isNextRepoShortcut, isNextTabShortcut, isPrevRepoShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut, tabNumber } from './keys';
+import { agentShortcut, isNewSessionShortcut, isNextRepoShortcut, isNextTabShortcut, isPrevRepoShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut, tabNumber } from './keys';
 import type { Layout } from './layout.svelte';
 import type { SessionManager } from './manager';
 import type { Tabs } from './tabs.svelte';
@@ -8,16 +8,18 @@ import type { Tabs } from './tabs.svelte';
 // its textarea and the terminal never sees the key. ⌃Tab and ⌃⇧Tab are
 // here and not in the menu, as AppKit would run its key-view loop on them;
 // ⌥⌘← and ⌥⌘→ are here beside them, and so are ⌥⌘↑ and ⌥⌘↓, which the
-// editor and the terminal would take. The menu has ⌘⇧[ and ⌘⇧].
-export function windowShortcut(tabs: Pick<Tabs, 'newSession' | 'step' | 'stepRepo' | 'showAt' | 'save'>, layout: Pick<Layout, 'toggleSidebar'>): (e: KeyboardEvent) => void {
+// editor and the terminal would take; ⌘⇧C and ⌘⇧X start an agent. The menu has ⌘⇧[ and ⌘⇧].
+export function windowShortcut(tabs: Pick<Tabs, 'newSession' | 'startAgent' | 'step' | 'stepRepo' | 'showAt' | 'save'>, layout: Pick<Layout, 'toggleSidebar'>): (e: KeyboardEvent) => void {
 	return (e) => {
 		const n = tabNumber(e);
+		const agent = agentShortcut(e);
 		if (isNewSessionShortcut(e)) tabs.newSession();
 		else if (isSidebarShortcut(e)) layout.toggleSidebar();
 		else if (isPrevTabShortcut(e)) tabs.step(-1);
 		else if (isNextTabShortcut(e)) tabs.step(1);
 		else if (isPrevRepoShortcut(e)) tabs.stepRepo(-1);
 		else if (isNextRepoShortcut(e)) tabs.stepRepo(1);
+		else if (agent !== undefined) tabs.startAgent(agent);
 		else if (n !== undefined) tabs.showAt(n);
 		else if (isSaveShortcut(e)) tabs.save();
 		else return;

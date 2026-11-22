@@ -130,3 +130,11 @@ export function tabNumber(ev: KeyboardEvent): number | undefined {
 	if (!ev.metaKey || ev.ctrlKey || ev.altKey || ev.shiftKey || belongsToIME(ev)) return undefined;
 	return /^[1-9]$/.test(ev.key) ? Number(ev.key) : undefined;
 }
+
+// Cmd+Shift+C and Cmd+Shift+X, which start Claude or Codex. Page keys like
+// Cmd+T: AppKit's key bindings have neither. Lower-cased for Caps Lock.
+export function agentShortcut(ev: KeyboardEvent): 'claude' | 'codex' | undefined {
+	if (!ev.metaKey || !ev.shiftKey || ev.ctrlKey || ev.altKey || belongsToIME(ev)) return undefined;
+	const k = ev.key.toLowerCase();
+	return k === 'c' ? 'claude' : k === 'x' ? 'codex' : undefined;
+}

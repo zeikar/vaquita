@@ -57,6 +57,7 @@
 		open={tabs.dialogOpen}
 		repos={$manager.repos}
 		defaultCwd={tabs.dialogCwd}
+		defaultCmd={tabs.dialogCmd}
 		disabled={$manager.creating || $manager.status !== 'connected'}
 		oncreate={(cwd, cmd, name) => manager.create(cwd, cmd, name)}
 		onclose={() => (tabs.dialogOpen = false)}

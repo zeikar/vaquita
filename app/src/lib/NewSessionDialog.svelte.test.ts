@@ -18,11 +18,12 @@ async function end(ok: boolean) {
 	flushSync();
 }
 
-function show(init: { defaultCwd?: string; repos?: string[]; disabled?: boolean } = {}) {
+function show(init: { defaultCwd?: string; defaultCmd?: string; repos?: string[]; disabled?: boolean } = {}) {
 	const props = $state({
 		open: true,
 		repos: init.repos ?? ['/tmp/repo', '/tmp/repo-feature'],
 		defaultCwd: init.defaultCwd ?? '',
+		defaultCmd: init.defaultCmd ?? '',
 		disabled: init.disabled ?? false,
 		oncreate: vi.fn((_cwd: string, _cmd: string, _name: string) => new Promise<boolean>((resolve) => (settle = resolve))),
 		onclose: vi.fn(),
@@ -123,6 +124,14 @@ describe('NewSessionDialog', () => {
 		expect(p.oncreate).not.toHaveBeenCalled();
 		expect(p.onclose).not.toHaveBeenCalled();
 		expect(localStorage.getItem('vaquita.cwd')).toBeNull();
+	});
+
+	it('starts on defaultCmd, and creates with it', () => {
+		const p = show({ defaultCwd: '/tmp/repo', defaultCmd: 'codex' });
+		expect(radio('Codex').checked).toBe(true);
+		expect(radio('Shell').checked).toBe(false);
+		click(create());
+		expect(p.oncreate).toHaveBeenCalledWith('/tmp/repo', 'codex', '');
 	});
 
 	it('creates with the chosen kind and the trimmed name, remembers the folder, and closes once the create succeeds', async () => {

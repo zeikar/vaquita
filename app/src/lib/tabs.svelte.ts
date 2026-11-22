@@ -59,6 +59,7 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 	appWelcome?: ReturnType<typeof AppWelcome>;
 	dialogOpen = $state(false);
 	dialogCwd = $state('');
+	dialogCmd = $state('');
 	// Set by each open from a link with a line, a new object each time, so a
 	// click on the tab already showing goes there again. One shot: the editor
 	// takes it once it holds the file, and it is dropped when the file shows
@@ -348,11 +349,23 @@ export class Tabs<T extends ManagedTerm = ManagedTerm, V extends TabView = TabVi
 
 	// The dialog starts in the shown repo, else in the folder it last created
 	// a session in, else in the home folder.
-	newSession = (): void => {
+	newSession = (): void => this.openDialog('');
+
+	// ⌘⇧C and ⌘⇧X: the shown repo's welcome buttons, without the welcome. With
+	// no repo shown there is no folder to start in, so the dialog asks for one.
+	startAgent(cmd: 'claude' | 'codex'): void {
+		if (this.dialogOpen) return;
+		if (this.root !== undefined) void this.manager.create(this.root, cmd, '');
+		else this.openDialog(cmd);
+	}
+
+	// cmd is the kind the dialog starts on; empty is a shell.
+	private openDialog(cmd: string): void {
 		if (this.dialogOpen) return;
 		this.dialogCwd = (this.group !== OTHER ? this.group : undefined) ?? load(LAST_CWD) ?? '';
+		this.dialogCmd = cmd;
 		this.dialogOpen = true;
-	};
+	}
 
 	// A ⌘-clicked file in a session's terminal; cwd is its starting folder.
 	// Unpinned, it opens as the group's preview. A dirty document opens pinned:

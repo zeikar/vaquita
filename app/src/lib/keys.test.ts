@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { isNewSessionShortcut, isNextRepoShortcut, isNextTabShortcut, isPrevRepoShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut, keyHandler, swallowsKeypress, tabNumber, translateKey } from './keys';
+import { agentShortcut, isNewSessionShortcut, isNextRepoShortcut, isNextTabShortcut, isPrevRepoShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut, keyHandler, swallowsKeypress, tabNumber, translateKey } from './keys';
 
 function key(type: string, init: Partial<KeyboardEvent>): KeyboardEvent {
 	return { type, key: 'Enter', keyCode: 13, isComposing: false, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, ...init } as KeyboardEvent;
@@ -251,5 +251,26 @@ describe('tabNumber', () => {
 	});
 	it('ignores a key that belongs to an IME', () => {
 		expect(tabNumber(d({ keyCode: 229 }))).toBeUndefined();
+	});
+});
+
+describe('agentShortcut', () => {
+	const d = (init: Partial<KeyboardEvent>) => key('keydown', { key: 'c', keyCode: 67, metaKey: true, shiftKey: true, ...init });
+
+	it('is claude for Cmd+Shift+C and codex for Cmd+Shift+X, with Caps Lock too', () => {
+		expect(agentShortcut(d({}))).toBe('claude');
+		expect(agentShortcut(d({ key: 'x' }))).toBe('codex');
+		expect(agentShortcut(d({ key: 'C' }))).toBe('claude');
+		expect(agentShortcut(d({ key: 'X' }))).toBe('codex');
+	});
+	it('ignores the keys without Shift, with Ctrl or Option, or without Cmd', () => {
+		expect(agentShortcut(d({ shiftKey: false }))).toBeUndefined();
+		expect(agentShortcut(d({ key: 'x', shiftKey: false }))).toBeUndefined();
+		expect(agentShortcut(d({ altKey: true }))).toBeUndefined();
+		expect(agentShortcut(d({ ctrlKey: true }))).toBeUndefined();
+		expect(agentShortcut(d({ metaKey: false }))).toBeUndefined();
+	});
+	it('ignores a key that belongs to an IME', () => {
+		expect(agentShortcut(d({ keyCode: 229 }))).toBeUndefined();
 	});
 });

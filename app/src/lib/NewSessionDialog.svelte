@@ -15,6 +15,7 @@
 		open,
 		repos,
 		defaultCwd,
+		defaultCmd,
 		disabled,
 		oncreate,
 		onclose,
@@ -24,6 +25,8 @@
 		repos: string[];
 		// Read when the dialog opens. Empty is the home folder.
 		defaultCwd: string;
+		// Read when the dialog opens. Empty is Shell.
+		defaultCmd: string;
 		disabled: boolean;
 		// An empty cmd starts a shell.
 		// Resolves true once the session exists, false if it could not be created.
@@ -70,7 +73,7 @@
 		opener = document.activeElement;
 		untrack(() => {
 			cwd = defaultCwd;
-			cmd = '';
+			cmd = defaultCmd;
 			name = '';
 			error = '';
 			waiting = false;

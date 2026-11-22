@@ -421,6 +421,46 @@ describe('Tabs', () => {
 		});
 	});
 
+	describe('starting an agent', () => {
+		it('creates it in the shown repo with no name and no dialog', async () => {
+			const { tabs, m } = await make();
+			const create = vi.spyOn(m, 'create');
+			tabs.group = repo;
+			tabs.startAgent('claude');
+			expect(create).toHaveBeenCalledWith(repo, 'claude', '');
+			expect(tabs.dialogOpen).toBe(false);
+		});
+
+		it('opens the dialog on that kind with no repo shown, and newSession resets it', async () => {
+			const { tabs, m } = await make();
+			const create = vi.spyOn(m, 'create');
+			localStorage.setItem(LAST_CWD, '/tmp/last');
+			tabs.group = OTHER;
+			tabs.startAgent('codex');
+			expect(tabs.dialogOpen).toBe(true);
+			expect(tabs.dialogCmd).toBe('codex');
+			expect(tabs.dialogCwd).toBe('/tmp/last');
+			tabs.dialogOpen = false;
+			tabs.group = undefined;
+			tabs.startAgent('claude');
+			expect(tabs.dialogCmd).toBe('claude');
+			expect(tabs.dialogCwd).toBe('/tmp/last');
+			tabs.dialogOpen = false;
+			tabs.newSession();
+			expect(tabs.dialogCmd).toBe('');
+			expect(create).not.toHaveBeenCalled();
+		});
+
+		it('does nothing under the dialog', async () => {
+			const { tabs, m } = await make();
+			const create = vi.spyOn(m, 'create');
+			tabs.group = repo;
+			tabs.dialogOpen = true;
+			tabs.startAgent('claude');
+			expect(create).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('opening', () => {
 		it('opens a preview, replaced by the next file, a dirty one pinned, each saved', async () => {
 			const c = `${repo}/c.md`;

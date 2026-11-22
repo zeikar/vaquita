@@ -20,7 +20,7 @@ beforeEach(() => {
 });
 
 function fakes() {
-	const tabs = { newSession: vi.fn(), step: vi.fn(), stepRepo: vi.fn(), showAt: vi.fn(), save: vi.fn(), closeActive: vi.fn() };
+	const tabs = { newSession: vi.fn(), startAgent: vi.fn(), step: vi.fn(), stepRepo: vi.fn(), showAt: vi.fn(), save: vi.fn(), closeActive: vi.fn() };
 	const layout = { toggleSidebar: vi.fn(), togglePanel: vi.fn() };
 	const manager = { report: vi.fn() };
 	return { tabs, layout, manager };
@@ -48,6 +48,8 @@ const settle = () => new Promise((r) => setTimeout(r));
 describe('windowShortcut', () => {
 	it.each<[string, Partial<KeyboardEvent>, (f: ReturnType<typeof fakes>) => ReturnType<typeof vi.fn>, unknown[]]>([
 		['⌘T', { key: 't', metaKey: true }, (f) => f.tabs.newSession, []],
+		['⌘⇧C', { key: 'c', metaKey: true, shiftKey: true }, (f) => f.tabs.startAgent, ['claude']],
+		['⌘⇧X', { key: 'x', metaKey: true, shiftKey: true }, (f) => f.tabs.startAgent, ['codex']],
 		['⌘B', { key: 'b', metaKey: true }, (f) => f.layout.toggleSidebar, []],
 		['⌃Tab', { key: 'Tab', ctrlKey: true }, (f) => f.tabs.step, [1]],
 		['⌃⇧Tab', { key: 'Tab', ctrlKey: true, shiftKey: true }, (f) => f.tabs.step, [-1]],
@@ -74,7 +76,7 @@ describe('windowShortcut', () => {
 	it('leaves any other key alone', () => {
 		const f = fakes();
 		const shortcut = windowShortcut(f.tabs, f.layout);
-		for (const init of [{ key: 'a' }, { key: 't' }, { key: 'w', metaKey: true }, { key: '0', metaKey: true }, { key: 'Tab' }, { key: 't', metaKey: true, isComposing: true }]) {
+		for (const init of [{ key: 'a' }, { key: 't' }, { key: 'w', metaKey: true }, { key: '0', metaKey: true }, { key: 'Tab' }, { key: 't', metaKey: true, isComposing: true }, { key: 't', metaKey: true, shiftKey: true }, { key: 'b', metaKey: true, shiftKey: true }]) {
 			const e = key(init);
 			shortcut(e);
 			expect(e.preventDefault).not.toHaveBeenCalled();
