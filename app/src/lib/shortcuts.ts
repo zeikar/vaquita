@@ -8,7 +8,11 @@ import type { Tabs } from './tabs.svelte';
 // its textarea and the terminal never sees the key. ⌃Tab and ⌃⇧Tab are
 // here and not in the menu, as AppKit would run its key-view loop on them;
 // ⌥⌘← and ⌥⌘→ are here beside them, and so are ⌥⌘↑ and ⌥⌘↓, which the
-// editor and the terminal would take; ⌘⇧C and ⌘⇧X start an agent. The menu has ⌘⇧[ and ⌘⇧].
+// editor and the terminal would take; ⌘⇧C and ⌘⇧X start an agent. The menu
+// has ⌘⇧[ and ⌘⇧].
+//
+// A key this handler takes goes into shortcut-list.ts too: its tests check the
+// list against this handler both ways.
 export function windowShortcut(tabs: Pick<Tabs, 'newSession' | 'startAgent' | 'step' | 'stepRepo' | 'showAt' | 'save'>, layout: Pick<Layout, 'toggleSidebar'>): (e: KeyboardEvent) => void {
 	return (e) => {
 		const n = tabNumber(e);

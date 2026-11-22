@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { agentShortcut, isNewSessionShortcut, isNextRepoShortcut, isNextTabShortcut, isPrevRepoShortcut, isPrevTabShortcut, isSaveShortcut, isSidebarShortcut, keyHandler, swallowsKeypress, tabNumber, translateKey } from './keys';
+import { chordLabel, chordsBy } from './shortcut-list';
 
 function key(type: string, init: Partial<KeyboardEvent>): KeyboardEvent {
 	return { type, key: 'Enter', keyCode: 13, isComposing: false, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, ...init } as KeyboardEvent;
@@ -48,6 +49,14 @@ describe('keyHandler', () => {
 		const handle = keyHandler(() => {}, () => {});
 		expect(handle(key('keydown', { key: 'Tab', keyCode: 9 }))).toBe(true);
 		expect(handle(key('keydown', { key: 'Tab', keyCode: 9, shiftKey: true }))).toBe(true);
+	});
+
+	it('handles every terminal chord of the shortcut list', () => {
+		const handle = keyHandler(() => {}, () => {});
+		for (const c of chordsBy('terminal')) {
+			const ev = key('keydown', { key: c.key, ctrlKey: !!c.ctrl, altKey: !!c.alt, metaKey: !!c.meta, shiftKey: !!c.shift, preventDefault: () => {} });
+			expect(handle(ev), chordLabel(c)).toBe(false);
+		}
 	});
 
 	it('passes plain Enter through', () => {

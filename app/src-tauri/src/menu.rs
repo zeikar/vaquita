@@ -32,6 +32,9 @@ const FILES_ID: &str = "view-files";
 
 const CLOSE_KEY: &str = "CmdOrCtrl+W";
 
+/// shortcut-list.test.ts reads the accelerators in this file (and CLOSE_KEY): a
+/// key changed here changes src/lib/shortcut-list.ts too.
+///
 /// Above Toggle Full Screen, the default View's only item: id, title, key.
 const VIEW_ITEMS: [(&str, &str, &str); 3] = [
     (PREV_ID, "Previous Tab", "CmdOrCtrl+Shift+["),

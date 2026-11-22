@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TabAction } from './files';
+import { chordLabel, chordsBy } from './shortcut-list';
 import { watchMenu, windowShortcut } from './shortcuts';
 
 const menu = vi.hoisted(() => ({
@@ -45,22 +46,26 @@ function key(init: Partial<KeyboardEvent>) {
 
 const settle = () => new Promise((r) => setTimeout(r));
 
+type Row = [string, Partial<KeyboardEvent>, (f: ReturnType<typeof fakes>) => ReturnType<typeof vi.fn>, unknown[]];
+
+const WINDOW_KEYS: Row[] = [
+	['⌘T', { key: 't', metaKey: true }, (f) => f.tabs.newSession, []],
+	['⌘⇧C', { key: 'c', metaKey: true, shiftKey: true }, (f) => f.tabs.startAgent, ['claude']],
+	['⌘⇧X', { key: 'x', metaKey: true, shiftKey: true }, (f) => f.tabs.startAgent, ['codex']],
+	['⌘B', { key: 'b', metaKey: true }, (f) => f.layout.toggleSidebar, []],
+	['⌃Tab', { key: 'Tab', ctrlKey: true }, (f) => f.tabs.step, [1]],
+	['⌃⇧Tab', { key: 'Tab', ctrlKey: true, shiftKey: true }, (f) => f.tabs.step, [-1]],
+	['⌥⌘←', { key: 'ArrowLeft', metaKey: true, altKey: true }, (f) => f.tabs.step, [-1]],
+	['⌥⌘→', { key: 'ArrowRight', metaKey: true, altKey: true }, (f) => f.tabs.step, [1]],
+	['⌥⌘↑', { key: 'ArrowUp', metaKey: true, altKey: true }, (f) => f.tabs.stepRepo, [-1]],
+	['⌥⌘↓', { key: 'ArrowDown', metaKey: true, altKey: true }, (f) => f.tabs.stepRepo, [1]],
+	['⌘1', { key: '1', metaKey: true }, (f) => f.tabs.showAt, [1]],
+	['⌘9', { key: '9', metaKey: true }, (f) => f.tabs.showAt, [9]],
+	['⌘S', { key: 's', metaKey: true }, (f) => f.tabs.save, []],
+];
+
 describe('windowShortcut', () => {
-	it.each<[string, Partial<KeyboardEvent>, (f: ReturnType<typeof fakes>) => ReturnType<typeof vi.fn>, unknown[]]>([
-		['⌘T', { key: 't', metaKey: true }, (f) => f.tabs.newSession, []],
-		['⌘⇧C', { key: 'c', metaKey: true, shiftKey: true }, (f) => f.tabs.startAgent, ['claude']],
-		['⌘⇧X', { key: 'x', metaKey: true, shiftKey: true }, (f) => f.tabs.startAgent, ['codex']],
-		['⌘B', { key: 'b', metaKey: true }, (f) => f.layout.toggleSidebar, []],
-		['⌃Tab', { key: 'Tab', ctrlKey: true }, (f) => f.tabs.step, [1]],
-		['⌃⇧Tab', { key: 'Tab', ctrlKey: true, shiftKey: true }, (f) => f.tabs.step, [-1]],
-		['⌥⌘←', { key: 'ArrowLeft', metaKey: true, altKey: true }, (f) => f.tabs.step, [-1]],
-		['⌥⌘→', { key: 'ArrowRight', metaKey: true, altKey: true }, (f) => f.tabs.step, [1]],
-		['⌥⌘↑', { key: 'ArrowUp', metaKey: true, altKey: true }, (f) => f.tabs.stepRepo, [-1]],
-		['⌥⌘↓', { key: 'ArrowDown', metaKey: true, altKey: true }, (f) => f.tabs.stepRepo, [1]],
-		['⌘1', { key: '1', metaKey: true }, (f) => f.tabs.showAt, [1]],
-		['⌘9', { key: '9', metaKey: true }, (f) => f.tabs.showAt, [9]],
-		['⌘S', { key: 's', metaKey: true }, (f) => f.tabs.save, []],
-	])('%s calls its one method and is cancelled and stopped', (_name, init, method, args) => {
+	it.each(WINDOW_KEYS)('%s calls its one method and is cancelled and stopped', (_name, init, method, args) => {
 		const f = fakes();
 		const e = key(init);
 		windowShortcut(f.tabs, f.layout)(e);
@@ -71,6 +76,36 @@ describe('windowShortcut', () => {
 		expect(all.reduce((n, fn) => n + fn.mock.calls.length, 0)).toBe(1);
 		expect(e.preventDefault).toHaveBeenCalledTimes(1);
 		expect(e.stopPropagation).toHaveBeenCalledTimes(1);
+	});
+
+	it("is cancelled for every window chord of the shortcut list, with one call", () => {
+		for (const c of chordsBy('window')) {
+			const f = fakes();
+			const e = key({ key: c.key, ctrlKey: !!c.ctrl, altKey: !!c.alt, metaKey: !!c.meta, shiftKey: !!c.shift });
+			windowShortcut(f.tabs, f.layout)(e);
+			const all = [...Object.values(f.tabs), ...Object.values(f.layout)];
+			expect(all.reduce((n, fn) => n + fn.mock.calls.length, 0), chordLabel(c)).toBe(1);
+			expect(e.preventDefault, chordLabel(c)).toHaveBeenCalledTimes(1);
+		}
+	});
+
+	it('has every row of the table above in the shortcut list', () => {
+		const listed = chordsBy('window').map(chordLabel);
+		for (const [name] of WINDOW_KEYS) expect(listed, name).toContain(name);
+	});
+
+	it('takes no key the shortcut list lacks', () => {
+		const listed = new Set(chordsBy('window').map(chordLabel));
+		const keys = [...'abcdefghijklmnopqrstuvwxyz0123456789', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Tab', 'Enter', '[', ']', 'Escape'];
+		for (const k of keys) {
+			for (let m = 0; m < 16; m++) {
+				const chord = { key: k, ctrl: !!(m & 1), alt: !!(m & 2), meta: !!(m & 4), shift: !!(m & 8) };
+				const f = fakes();
+				windowShortcut(f.tabs, f.layout)(key({ key: k, ctrlKey: chord.ctrl, altKey: chord.alt, metaKey: chord.meta, shiftKey: chord.shift }));
+				const calls = [...Object.values(f.tabs), ...Object.values(f.layout)].reduce((n, fn) => n + fn.mock.calls.length, 0);
+				if (calls > 0) expect(listed, chordLabel(chord)).toContain(chordLabel(chord));
+			}
+		}
 	});
 
 	it('leaves any other key alone', () => {
