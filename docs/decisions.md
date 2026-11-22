@@ -148,10 +148,13 @@ A kill reaches every process in the PTY's session, not just the shell's process 
 - **Panics unwind in a release build**, against the `panic = "abort"` that Tauri's app-size guide suggests. When the app answers a request the webview has already cancelled, which a video it streams does often, WebKit throws an Objective-C exception; wry catches it with objc2, which cannot catch anything under abort, so a video in a tab used to end the app now and then (0.1.29). Unwinding costs about 1 MB of the download.
 - **Notifications** use `UNUserNotificationCenter` directly from Rust. The notification plugin's older macOS path showed the notification and then dropped the click, and its newer backend missed clicks while the main thread was busy.
 - **Daily use.** The agents turn on mouse tracking, so Option-drag forces a selection; Shift+Enter sends `ESC CR`; ⌘← and ⌘→ send ⌃A and ⌃E, for the ends of the line; links go through the opener plugin, as `window.open` does nothing in WKWebView; a dropped file's path is typed into the PTY.
+- **One list of the shortcuts.** The list Help ▸ Keyboard Shortcuts shows is one module, `shortcut-list.ts`, which its tests hold to the window's key handler and the menu's accelerators both ways, so a key cannot be added or changed in one place and not the others. It is read-only, and the keys cannot be customised.
 
 ## Grouped by repo
 
 A session belongs to the registered repo whose path is the longest prefix of its folder, compared by path component (so `example-feature` does not land under `example`); the rest go under "other". The sidebar runs no git, watches nothing and polls nothing.
+
+Stepping to a repo with ⌥⌘↑ or ⌥⌘↓ shows the tab viewed last there in this app run, else the repo's welcome, not its first tab: a repo not looked at in this run opens on its welcome rather than on a tab picked for the user.
 
 Worktrees were dropped from the plan on 2026-10-23 because they were rarely used: no worktree level in the sidebar, no discovery, no git status, no PR state. The design kept for later:
 

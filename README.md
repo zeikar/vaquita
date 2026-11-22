@@ -20,7 +20,7 @@ vaquita is a lightweight ADE (agentic development environment) for macOS. It run
 
 ## Features
 
-- **Every agent in one sidebar.** Your repos are listed with their sessions under them. Start Claude Code, Codex or a shell in a repo from its header, its right-click menu or ⌘T.
+- **Every agent in one sidebar.** Your repos are listed with their sessions under them. Start Claude Code, Codex or a shell in a repo from its header, its right-click menu or ⌘T, and Claude Code or Codex in the repo you are in with ⌘⇧C or ⌘⇧X.
 - **See what each agent is doing.** A spinner while it works, ⚠ with the permission or question it waits on, ✓ or ✗ when its turn ends, and a dot until you have looked.
 - **Notifications that take you there.** A desktop notification when an agent finishes, fails or needs input; click it to open that session. The ones missed while the app was closed are summed up when it comes back.
 - **Sessions outlive the app.** Shells and agents run in a small daemon, `vaquitad`, so quitting or updating the app leaves them running. After a reboot, reopen a session and Claude Code or Codex resumes its conversation.

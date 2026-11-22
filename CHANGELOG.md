@@ -2,6 +2,12 @@
 
 Each release's notes open with its section here.
 
+## 0.1.32
+
+- ⌥⌘↑ and ⌥⌘↓ go to the previous and the next repo, showing the tab you viewed last there, else the repo's welcome; in the editor they take the place of adding a cursor above and below, which ⌥-click still does.
+- ⌘⇧C and ⌘⇧X start Claude Code or Codex in the shown repo, as its welcome's buttons do; with no repo shown they open New session on that kind.
+- Help ▸ Keyboard Shortcuts, and a row on the app's welcome, list the app's shortcuts.
+
 ## 0.1.31
 
 - A path in terminal output is a link only when the file exists, so text that merely looks like one, such as a misspelt path, is no longer underlined.
