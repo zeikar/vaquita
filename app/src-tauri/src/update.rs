@@ -90,6 +90,11 @@ pub async fn install_app_update(app: AppHandle, pending: State<'_, Pending>) -> 
 /// second instance in a tile of its own beside the one kept in the Dock. The
 /// new bundle is at the same path, and open keeps this process's environment,
 /// so a VAQUITA_HOME run stays in its home.
+///
+/// LaunchServices drops the app a beat after the process ends (tens of ms
+/// for a long-running app); an open before that sends a reopen event to the
+/// dead process (-600) and launches nothing, so the script also waits for
+/// lsappinfo to stop listing the pid. The 5 s cap still opens if it never does.
 fn relaunch_when_gone(app: &AppHandle) -> Result<(), String> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
@@ -99,7 +104,9 @@ fn relaunch_when_gone(app: &AppHandle) -> Result<(), String> {
     // vaquita.app/Contents/MacOS/vaquita
     let bundle = exe.ancestors().nth(3).filter(|b| b.extension().is_some_and(|e| e == "app")).ok_or("the app is not in a bundle")?;
     Command::new("/bin/sh")
-        .args(["-c", r#"while kill -0 "$1" 2>/dev/null; do sleep 0.1; done; exec /usr/bin/open "$2""#, "relaunch"])
+        .args(["-c", r#"while kill -0 "$1" 2>/dev/null; do sleep 0.1; done
+i=0; while [ -n "$(/usr/bin/lsappinfo find pid="$1")" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+exec /usr/bin/open "$2""#, "relaunch"])
         .arg(std::process::id().to_string())
         .arg(bundle)
         .stdin(Stdio::null())
