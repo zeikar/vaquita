@@ -2,6 +2,10 @@
 
 Each release's notes open with its section here.
 
+## 0.1.33
+
+- After an update the app reliably opens again; it sometimes quit without coming back. This takes effect from the next update on, since the version being replaced is the one that relaunches.
+
 ## 0.1.32
 
 - ⌥⌘↑ and ⌥⌘↓ go to the previous and the next repo, showing the tab you viewed last there, else the repo's welcome; in the editor they take the place of adding a cursor above and below, which ⌥-click still does.
