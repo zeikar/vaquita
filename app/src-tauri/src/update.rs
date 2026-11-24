@@ -94,7 +94,7 @@ pub async fn install_app_update(app: AppHandle, pending: State<'_, Pending>) -> 
 /// LaunchServices drops the app a beat after the process ends (tens of ms
 /// for a long-running app); an open before that sends a reopen event to the
 /// dead process (-600) and launches nothing, so the script also waits for
-/// lsappinfo to stop listing the pid. The 5 s cap still opens if it never does.
+/// lsappinfo to stop listing the pid. After about 5 s it opens anyway.
 fn relaunch_when_gone(app: &AppHandle) -> Result<(), String> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
